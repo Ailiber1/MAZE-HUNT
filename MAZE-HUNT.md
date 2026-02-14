@@ -192,7 +192,7 @@ Skeletonzombi.glb を読み込んだ後、以下のエフェクトを適用:
 Matrix × Horror / Neon Green × Dark / CRT Terminal
 ※FALL DODGE / LINKED BLOCKS_ と同一のデザイン体系を継承
 ※タイトル画面: マトリックス背景＋タイトルロゴは全面赤色（ホラー差別化）、UIパネルは緑
-※3Dゲーム画面内は緑基調
+※3Dゲーム画面内はステージごとに異なる電子回路発光色（緑→青→黄→紫→赤→シアン→オレンジ）
 
 プレイヤーカラー（最大4人）：
 ・P1: ピンク  (255, 50, 150)  — #ff3296
@@ -410,7 +410,7 @@ SVGシルエットによる2Dアニメーション（※本番実装ではGLBモ
 
 【表示内容】
 ・プレイヤーキャラ3体（P1ピンク / P2シアン / P3イエロー）が右方向へ走る
-・鬼キャラ1体（赤、目が赤く光る）が左後方から追いかける
+・鬼キャラ1体（目が赤く光る）が左後方から追いかける
 ・全キャラ画面右端に達したら左端にワープして繰り返し
 ・プレイヤー速度: 1.1px/frame（微揺れ付き） / 鬼速度: 0.9px/frame（通常時）
 
@@ -657,10 +657,10 @@ function updatePlayerMovement(delta) {
 |-------|-----------|-------|--------|---------|-----------|--------|-----------|
 | 1 | 10×10 | 1F | 1 | 90秒 | ×1.0 | 地下研究所（サイバーラボ） | 対角配置。ヒント矢印あり。出口固定 |
 | 2 | 12×12 | 1F | 1 | 120秒 | ×1.0 | 廃工場（錆びた機械・ギア） | 対角配置。ヒント矢印あり。出口固定 |
-| 3 | 16×16 | 2F | 2 | 180秒 | ×1.2 | 廃ビルオフィス（デスク・モニター） | 出口は2F。ヒント矢印なし。出口固定 |
-| 4 | 20×20 | 2F | 3 | 210秒 | ×1.3 | 地下下水道（水滴り・湿気・パイプ） | 出口は2F。ヒント矢印なし。出口固定 |
+| 3 | 16×16 | 2F | 2 | 180秒 | ×1.2 | 夜の西洋街路（石畳・街灯・教会） | 出口は2F（屋上・橋上）。ヒント矢印なし。出口固定 |
+| 4 | 20×20 | 2F | 3 | 210秒 | ×1.3 | 江戸の夜村（木造家屋・灯籠・井戸） | 出口は2F（見張り台・屋根上）。ヒント矢印なし。出口固定 |
 | 5（ファイナルステージ） | 24×24 | 3F | 4 | 270秒 | ×1.5 | 崩壊データセンター（サーバーラック崩壊） | 出口は3F。30秒ごとに出口がワープ。照明最小 |
-| ??? | 28×28 | 3F | 5 | 240秒 | ×1.6 | 異空間ラボ（紫エフェクト・歪んだ空間） | 出口が動く+フェイク出口3個。霧最濃 |
+| ??? | 28×28 | 3F | 5 | 240秒 | ×1.6 | 廃寺・鳥居（和風ホラー異空間） | 出口が動く+フェイク出口3個。霧最濃 |
 
 ※ 数値は目安。プレイテストで調整。
 ※ 隠しステージ「???」は通常プレイでは出現しない（後述の解放条件を参照）
@@ -912,14 +912,14 @@ function createExitMarker(x, z) {
       時間経過で回路配線の密度が増加（初期は疎、240秒後は画面いっぱいの回路に）
       ※他ステージの緑/青/黄/紫/赤と重複しないシアン色を使用
 ・床: グリッドライン付き（0x050a06）
-・装飾: 全ステージの装飾がランダムで混在（研究所の端末、工場の歯車、オフィスのデスク等）
+・装飾: 全ステージの装飾がランダムで混在（研究所の端末、工場の歯車、街灯、灯籠等）
 ・時間経過による環境変化:
-  0〜60秒: Stage 1風（明るめ、緑基調）
-  60〜120秒: Stage 2風（フォグ増加、オレンジ光混入）
-  120〜240秒: Stage 4風（シアン光、水滴音追加）
+  0〜60秒: Stage 1風（明るめ、緑回路基調）
+  60〜120秒: Stage 2風（フォグ増加、青光混入）
+  120〜240秒: Stage 4風（紫光、虫の音追加）
   240秒〜: Stage 5風（赤光増加、スパーク、照明減少）
 ・鬼: Skeletonzombi.glb（固定）
-・PointLight色: 時間経過で緑→オレンジ→シアン→赤にグラデーション変化
+・PointLight色: 時間経過で緑→青→紫→赤にグラデーション変化
 ・環境音: 時間経過で各ステージの環境音が順に追加されていく（重ねがけ）
 ・フォグ密度: 0.010（初期）→ 時間経過で0.003/分ずつ増加（最大0.025）
 
@@ -1027,7 +1027,7 @@ WINNER: P1 (ユーザーネーム) — 38pt
 | ネーム表示色 | 赤テキスト | 青テキスト |
 | チーム表示バッジ | 🔴 ONI | 🔵 RUNNER |
 
-・鬼チームのキャラモデルにはemissive赤を強めに適用（暗闇で目立つ）
+・鬼チームのキャラモデルには目のPointLight（赤）を追加（暗闘で視認可能）
 ・逃げチームはemissive青を控えめに適用（見つかりにくい）
 
 【鬼チームの操作】
@@ -1224,6 +1224,10 @@ Recursive Backtracker（再帰バックトラッカー）
 ・壁高: WH = 3.5m
 ・壁厚: 0.15m
 ・天井: あり（天井高 = WH = 3.5m）
+      ※屋外ステージ（Stage 3, 4, 隠しステージ）では天井メッシュを生成しない。
+      代わりに遥か上方に夜空用の大きなPlane（STAGE_THEMES[stageId].skyColor）を配置。
+      屋外ステージの壁高は同じ3.5mだが、壁の上端は開放されている（見上げると夜空が見える）。
+      2F構造の屋外ステージでは1Fの天井=2Fの床は存在する（歩道橋・屋根上の床面）。
 ・フロア高: FLOOR_H = 4m（壁高3.5m + 天井厚0.5m）
 ・サイズ: ステージごとに異なる（10×10 〜 24×24）
 ・フロア数: ステージごとに異なる（1F 〜 3F）
@@ -1235,11 +1239,11 @@ Recursive Backtracker（再帰バックトラッカー）
 
 | Stage | 迷路サイズ | フロア数 | 階段数 | 備考 |
 |-------|-----------|---------|--------|------|
-| 1     | 10×10     | 1F      | 0      | 平面のみ。チュートリアル |
-| 2     | 12×12     | 1F      | 0      | 平面。脱出ステージ入門 |
-| 3     | 16×16     | 2F      | 2-3    | 初の二階構造。階段で上下移動 |
-| 4     | 20×20     | 2F      | 3-4    | 広大な二階迷路。脱出ステージ |
-| 5（FINAL STAGE） | 24×24     | 3F      | 4-6    | 三階構造。最終ステージ |
+| 1     | 10×10     | 1F      | 0      | 平面のみ。チュートリアル（室内） |
+| 2     | 12×12     | 1F      | 0      | 平面。脱出ステージ入門（室内） |
+| 3     | 16×16     | 2F      | 2-3    | 初の二階構造（★屋外: 西洋街路）。2F=歩道橋・屋上 |
+| 4     | 20×20     | 2F      | 3-4    | 広大な二階迷路（★屋外: 和風村）。2F=見張り台・屋根上 |
+| 5（FINAL STAGE） | 24×24     | 3F      | 4-6    | 三階構造。最終ステージ（室内） |
 
 【フロア構造】
 ```
@@ -1277,17 +1281,20 @@ function createStairs(cellX, cellZ, fromFloor, toFloor, direction) {
     // スロープ本体（傾斜面）
     const rampGeo = new THREE.BoxGeometry(CL, 0.15, CL * 1.42);
     const rampMat = new THREE.MeshStandardMaterial({
-        color: 0x0a1a0e, roughness: 0.6, metalness: 0.3,
-        emissive: 0x001a08, emissiveIntensity: 0.08
+        color: CIRCUIT_COLORS[stageId].baseColor, // ステージの壁ベース色に連動
+        roughness: 0.6, metalness: 0.3,
+        emissive: CIRCUIT_COLORS[stageId].emissive,
+        emissiveIntensity: 0.08
     });
     const ramp = new THREE.Mesh(rampGeo, rampMat);
     ramp.rotation.x = -Math.atan2(FLOOR_H, CL); // 傾斜角
     ramp.position.set(x + CL/2, yBase + FLOOR_H/2, z + CL/2);
     group.add(ramp);
 
-    // 手すり（両側のネオンライン）
+    // 手すり（両側のネオンライン — ステージ回路色に連動）
     const railMat = new THREE.MeshBasicMaterial({
-        color: 0x00ff41, transparent: true, opacity: 0.3
+        color: CIRCUIT_COLORS[stageId].emissive, // ステージの回路発光色
+        transparent: true, opacity: 0.3
     });
     // 左手すり
     const railL = new THREE.Mesh(
@@ -1444,11 +1451,11 @@ function createExitZone(cellX, cellZ) {
 |---------|-----------|-----------|----------------|-----------|
 | Stage 1 | 緑 (Green) | #00ff41 | 0x0a1a0e | クリーンなサイバーラボ |
 | Stage 2 | 青 (Blue) | #0088ff | 0x081018 | 冷たい廃工場 |
-| Stage 3 | 黄色 (Yellow) | #ffcc00 | 0x181408 | 警告灯のオフィス |
-| Stage 4 | 紫 (Purple) | #aa44ff | 0x0e0818 | 不気味な地下水路 |
+| Stage 3 | 黄色 (Yellow) | #ffcc00 | 0x181408 | 夜の西洋街路（石壁に光る回路）|
+| Stage 4 | 紫 (Purple) | #aa44ff | 0x0e0818 | 江戸の夜村（木壁に妖しい紫光）|
 | Stage 5 | 赤 (Red) | #ff2020 | 0x180808 | 崩壊・危険・最終警告 |
 | スコアアタック | シアン (Cyan) | #00ffff | 0x081418 | 無機質な無限空間 |
-| 隠しステージ ??? | オレンジ (Orange) | #ff6600 | 0x181008 | 異常警告・未知の異空間 |
+| 隠しステージ ??? | オレンジ (Orange) | #ff6600 | 0x181008 | 廃寺・鳥居（和風ホラー異空間）|
 
 ※ 7色すべて重複なし。どのステージに入っても壁の色だけでどこにいるか判別可能。
 
@@ -1645,8 +1652,8 @@ function createCircuitWallMaterial(stageId) {
 |---------|------------|---------|
 | Stage 1 (緑) | 整然とした配線、ノード多め | 清潔なラボ。回路が均一に光る |
 | Stage 2 (青) | 配線が太め、チップ矩形多め | 工場機械の制御基板風 |
-| Stage 3 (黄色) | 配線がやや乱れ、一部断線表現 | 廃墟のオフィス機器。ちらつき多め |
-| Stage 4 (紫) | 配線が不規則、ノードが脈動 | emissiveIntensity を sine 変動（0.3〜0.6） |
+| Stage 3 (黄色) | 配線がやや乱れ、一部断線表現 | 石壁に這う回路。街灯のような温かい黄色。ちらつき多め |
+| Stage 4 (紫) | 配線が不規則、ノードが脈動 | 木壁に浮かぶ妖気。emissiveIntensity を sine 変動（0.3〜0.6） |
 | Stage 5 (赤) | 配線が断線だらけ、スパーク点滅 | 不気味に明滅。一部ノードが消失→再点灯 |
 | スコアアタック (シアン) | 時間経過で配線密度が増加 | 初期は疎、240秒後は画面いっぱいの回路に |
 | 隠しステージ (オレンジ) | 配線が有機的に脈動・蠕動 | emissiveIntensity が不規則に揺らぎ、壁が「生きている」印象 |
@@ -1729,7 +1736,8 @@ function generateMaze(cols, rows) {
   Stage1:緑 → Stage2:青 → Stage3:黄 → Stage4:紫 → Stage5:赤 → SA:シアン → ???:オレンジ
 壁の色だけでプレイヤーが現在のステージを直感的に判別できる。
 赤色回路は最終ステージ（Stage 5）専用で、不気味さ・危険を演出する。
-鬼キャラクターの自己発光はステージの壁色とは独立して赤系統を維持する。
+鬼キャラクターは3Dモデル（Mixamo）のテクスチャをそのまま使用し、emissive上書きしない。
+暗所視認性は目のPointLight（赤, #ff0000）のみで確保する。
 ※タイトル画面のマトリックス背景は全面赤色のホラー仕様。セクション5参照。
 
 ■ カラーパレット
@@ -1742,7 +1750,7 @@ function generateMaze(cols, rows) {
 | 壁回路発光 | Stage1:緑 / Stage2:青 / Stage3:黄 / Stage4:紫 / Stage5:赤 / SA:シアン / ???:オレンジ |
 | 床 | 0x050a06 |
 | 床グリッド | 壁回路色と同系色（opacity 0.04〜0.06） |
-| 鬼（唯一の赤系キャラ） | #cc1818 / #ff0040 |
+| 鬼の目 | #ff0000（PointLight、暗所視認性用） |
 | UI文字 | #00ff41 |
 | フラッシュライト | #00ff88 (サイバー緑) |
 
@@ -1761,17 +1769,23 @@ scene.fog = new THREE.FogExp2(0x000a05, 0.014);
 
 ■ 照明
 ```javascript
-// アンビエント
+// アンビエント（ステージ回路色に応じて色調を変更）
+// 以下はStage 1の例。各ステージで CIRCUIT_COLORS[stageId] から算出
 const ambient = new THREE.AmbientLight(0x002a14, 0.7);
 scene.add(ambient);
+// ※ Stage 2: 0x000a18, Stage 3: 0x141000, Stage 4: 0x0a0018, Stage 5: 0x140005
+//   スコアアタック: 0x001414, 隠し: 0x140a00
 
-// ヘミスフィア
+// ヘミスフィア（同様にステージ連動）
 const hemi = new THREE.HemisphereLight(0x004420, 0x000000, 0.5);
 scene.add(hemi);
+// ※ Stage 2: 0x002044, Stage 3: 0x443000, Stage 4: 0x200044, Stage 5: 0x440010
+//   スコアアタック: 0x004444, 隠し: 0x442000
 
-// 迷路内ランダムPointLight（35個）
-for (let i = 0; i < 35; i++) {
-    const colors = [0x00ff41, 0x00aaff, 0xff0040];
+// 迷路内ランダムPointLight（STAGE_THEMES[stageId].pointLightCount 個）
+const theme = STAGE_THEMES[stageId];
+for (let i = 0; i < theme.pointLightCount; i++) {
+    const colors = theme.pointLightColors; // ステージ別の色配列
     const light = new THREE.PointLight(
         colors[Math.floor(Math.random() * colors.length)],
         0.5 + Math.random() * 1.5,
@@ -1824,31 +1838,49 @@ for (let i = 0; i < 35; i++) {
 ・環境音: 金属の軋み音、蒸気の噴出音（ランダム間隔）、歯車の回転音（低い唸り）
 ・フォグ色: 0x040610（青みがかった暗色）
 
-【Stage 3: 廃ビルオフィス（デスク・モニター）】★回路色: 黄色 (#ffcc00)
-・壁: オフィス壁風（0x181408）+ 黄色電子回路発光テクスチャ
-      配線がやや乱れ、一部断線表現あり。廃墟の警告灯のような黄色い光。ちらつき多め。
-・床: カーペット風（0x060a08）、グリッドラインなし → 代わりにタイル模様（黄色 #ffcc00 微光）
-・装飾: 通路脇にデスク（BoxGeometry、天板 + 脚）【当たり判定あり】
-        デスク上にモニター（薄型Box、画面面にMeshBasicMaterial 緑発光 or ノイズ）【当たり判定なし】
-        倒れた椅子【当たり判定あり: 通路を部分的に狭める】
-        散乱した紙（薄いPlane、床にランダム配置）【当たり判定なし】
-・PointLight色: 黄(50%) / 白(30%) / オレンジ(20%)
-・環境音: 蛍光灯のちらつき音、ガラスが割れる遠い音（ランダム）、風の音
-・フォグ色: 0x080a04（黄色がかった暗色）
+【Stage 3: 夜の西洋街路（石畳・街灯・教会）】★回路色: 黄色 (#ffcc00) ★屋外ステージ
+・壁: 石造りの建物外壁風（0x181408）+ 黄色電子回路発光テクスチャ
+      石壁テクスチャの上に黄色回路が這うように光る。街灯の明かりのような温かい黄色。
+      壁は建物の外壁・石塀・教会の壁として機能する。
+・天井: なし（屋外）。代わりに暗い夜空（上方向 0x020308）
+      月なし・星なし（不気味な漆黒の夜空）
+・床: 石畳風（0x0a0a06）、グリッドラインなし → 代わりに石畳の目地模様（黄色 #ffcc00 微光、opacity 0.03）
+      水たまり（反射プレーン、ランダム配置）
+・装飾: 街灯（CylinderGeometry支柱 + SphereGeometry灯り、黄色PointLight）【当たり判定あり: 支柱部分のみ】
+        石造りのベンチ（Box、通路脇）【当たり判定あり】
+        教会の十字架（2F付近の壁面に配置、Box組み合わせ）【当たり判定なし: 壁面装飾】
+        壊れた馬車の車輪（TorusGeometry、地面に転がっている）【当たり判定あり】
+        木箱・樽（Box / CylinderGeometry、通路脇に積まれている）【当たり判定あり】
+        蔦（壁面に這う緑暗色のライン、Line / 薄いPlane）【当たり判定なし】
+・2F構造の解釈: 石造りの歩道橋・建物の屋上テラス・教会の回廊上部
+        階段 → 石段（テクスチャを石畳調に変更）
+・PointLight色: 黄(50%) / 白暖色(30%) / オレンジ(20%)
+・環境音: 遠くの教会の鐘（低く長い残響）、風の音（屋外らしい広がり）、
+        石畳を走る足音の反響（通常と異なるSE）、カラスの鳴き声（ランダム）
+・フォグ色: 0x080a04（黄色がかった夜霧）、屋外のため霧の広がりが大きい
 
-【Stage 4: 地下下水道（水滴り・湿気・パイプ）】★回路色: 紫 (#aa44ff)
-・壁: 湿ったコンクリート風（0x0e0818）+ 紫色電子回路発光テクスチャ
-      配線が不規則、ノードが脈動（emissiveIntensity を sine変動 0.3〜0.6）。不気味な紫光。
-      下部が変色（グラデーション: 壁下1/3が暗い紫）
-・床: 水たまり表現（反射するPlane、envMap or 半透明レイヤー、0x030608）
-      グリッドライン紫 #aa44ff（opacity 0.04、水面下に沈む演出）
-・装飾: 天井・壁面に大型パイプ（CylinderGeometry、錆色 + 緑光ジョイント）【当たり判定なし: 壁面/天井固定】
-        壁面から水滴パーティクル（BufferGeometry + Points、シアン微粒子、上から下へ流れる）
-        通路に水たまりの反射光ゆらぎ（床PointLightのintensityをsine変動）
-        地面に壊れたバルブ・配管部品【当たり判定あり: 小さな障害物】
-・PointLight色: 紫(50%) / シアン(30%) / マゼンタ(20%)
-・環境音: 水滴のポタポタ音（3Dポジショナル、ランダム位置）、水流音（遠い）、金属反響
-・フォグ色: 0x060410（紫がかった暗色）
+【Stage 4: 江戸の夜村（木造家屋・灯籠・井戸）】★回路色: 紫 (#aa44ff) ★屋外ステージ
+・壁: 木造建築の外壁・板塀風（0x0e0818）+ 紫色電子回路発光テクスチャ
+      古い木の板目の上に紫回路が脈動しながら光る。不気味な妖気を感じる紫光。
+      配線が不規則、ノードが脈動（emissiveIntensity を sine変動 0.3〜0.6）。
+      壁は家屋の壁・板塀・土塀・蔵の壁として機能する。
+・天井: なし（屋外）。代わりに暗い夜空（上方向 0x040208）
+      薄い雲が流れるような演出（大きなPlane、ゆっくり移動、opacity 0.02〜0.04）
+・床: 土道風（0x060504）、砂利道テクスチャ
+      グリッドライン紫 #aa44ff（opacity 0.03、地面に這う妖気のような光）
+      水たまり（雨上がりの水溜まり、反射プレーン）
+・装飾: 石灯籠（CylinderGeometry台座 + Box笠、内部にPointLight紫光）【当たり判定あり】
+        井戸（CylinderGeometry + 屋根フレーム Box組み合わせ）【当たり判定あり】
+        木製の荷車（Box車体 + Torus車輪、通路脇）【当たり判定あり】
+        地蔵（小さなCylinder + Sphere頭部、交差点付近に配置、紫光を帯びる）【当たり判定なし: 小さい】
+        のぼり旗（薄いPlane、支柱CylinderGeometry、風で微揺れ）【当たり判定なし】
+        藁俵・米俵（Cylinder、通路脇に積まれている）【当たり判定あり】
+・2F構造の解釈: 見張り台（木製の物見やぐら）・屋根の上・太鼓橋
+        階段 → 木の梯子/木造階段（テクスチャを木目調に変更）
+・PointLight色: 紫(50%) / 赤紫(30%) / 冷白(20%)
+・環境音: 虫の音（鈴虫・コオロギ）、遠くの犬の遠吠え、風鈴の音（ランダム）、
+        木が軋む音、水滴のポタポタ音（井戸付近）
+・フォグ色: 0x060208（紫がかった夜霧）、地面近くが濃い（低層フォグ演出）
 
 【Stage 5 FINAL: 崩壊データセンター（サーバーラック崩壊）】★回路色: 赤 (#ff2020) ※不気味な赤回路
 ・壁: 破損した金属壁（0x180808）+ 赤色電子回路発光テクスチャ（不気味・断線演出付き）
@@ -1867,22 +1899,35 @@ for (let i = 0; i < 35; i++) {
 ・環境音: 電気のスパーク音、サーバーの冷却ファン異常音、崩落の遠い振動音
 ・フォグ色: 0x080408（暗い赤紫がかった色）
 
-【隠しステージ ???: 異空間ラボ（紫エフェクト・歪んだ空間）】★回路色: オレンジ (#ff6600) ※蠕動・脈動演出
-・壁: 半透明パネル風（0x181008）+ オレンジ色電子回路発光テクスチャ（蠕動演出付き）
+【隠しステージ ???: 廃寺・鳥居（和風ホラー異空間）】★回路色: オレンジ (#ff6600) ※蠕動・脈動演出 ★屋外ステージ
+・壁: 朽ちた寺院の土壁・木壁風（0x181008）+ オレンジ色電子回路発光テクスチャ（蠕動演出付き）
       回路パターンの UV座標が 0.5〜1.0秒 周期で微量シフト（配線が蠕動しているように見える）
       壁面が微妙に脈動（emissiveIntensityを不規則にsine変動 0.3〜0.7）
       一部の壁が一瞬消えて回路だけが浮かぶ（wallMaterial.opacity を 0→1 に 0.5秒で戻す）
-      scale.x を 1.0〜1.02 で sine変動（既存の膨張収縮仕様と連動）
-・床: 暗いオレンジがかった暗色（0x100a04）、グリッドラインがオレンジ（#ff6600, opacity 0.06）
-・装飾: 壁が呼吸するように膨張収縮（scale.x を 1.0〜1.02 でsine変動）
-        空間の歪みエフェクト（ポストプロセスでバレルディストーション、微弱）
-        浮遊する紫オーブ（SphereGeometry、半透明、ゆっくり回転しながら浮遊）【当たり判定なし】
-        ランダムに壁が一瞬消える（0.5秒だけ透明化、幻覚演出）
-        壊れた実験装置（BoxGeometry + CylinderGeometry）【当たり判定あり】
+      scale.x を 1.0〜1.02 で sine変動（壁が呼吸しているような不気味な膨張収縮）
+      壁は寺院の外壁・石垣・墓地の塀・朽ちた木塀として機能する。
+・天井: なし（屋外）。代わりに赤黒い異常な夜空（上方向 0x100400）
+      空が不自然にオレンジがかっている（終末感）
+・床: 苔むした石畳・土（0x100a04）、グリッドラインがオレンジ（#ff6600, opacity 0.06）
+      落ち葉が散らばっている（薄いPlane、ランダム回転・配置、茶〜暗赤色）【当たり判定なし】
+・装飾: 鳥居（Box + CylinderGeometry で構成、朱色 0x881100 + オレンジ発光エッジ）【当たり判定あり: 柱部分のみ】
+        → 迷路の主要交差点に配置（4〜6基）。遠くからの目印になる。
+        石灯籠（崩れかけ、CylinderGeometry + Box、内部に揺れるオレンジPointLight）【当たり判定あり】
+        墓石（Box、苔テクスチャ、通路脇に不規則に配置）【当たり判定あり】
+        壊れた鐘楼（CylinderGeometry鐘 + Box柱組み、1F〜2Fにまたがる大型装飾）【当たり判定あり: 柱部分】
+        しめ縄の切れ端（Line、壁面からぶら下がる）【当たり判定なし】
+        朽ちた仁王像（BoxGeometry + SphereGeometry、通路入口付近、オレンジ発光する目）【当たり判定あり】
+        浮遊する鬼火（SphereGeometry、半透明オレンジ、ゆっくり浮遊移動）【当たり判定なし】
+        → 鬼火はフェイクの光源。鬼の目のPointLightと誤認させるトラップ演出。
+・2F構造の解釈: 寺院の楼門上部・五重塔の回廊・崖上の境内
+        階段 → 石段（苔むした石畳テクスチャ）
+・3F構造の解釈: 塔の最上階・山上の奥の院
 ・PointLight色: オレンジ(50%) / マゼンタ(25%) / 暗赤(25%)
-・環境音: 低周波の不協和音ドローン、逆再生風の環境音、心臓の鼓動音（常時微かに）
-・フォグ色: 0x100804（オレンジがかった暗色フォグ）
+・環境音: 読経のような低い唸り（逆再生風）、風に揺れる鈴の音、カラスの群れ、
+        木が軋む不気味な音、遠くの太鼓の重低音、心臓の鼓動音（常時微かに）
+・フォグ色: 0x100804（オレンジがかった暗色フォグ）、霧最濃
 ・特殊: scene.fog を FogExp2 ではなく Fog にし、near/far をランダムに揺らす（視界が不安定）
+        空間の歪みエフェクト（ポストプロセスでバレルディストーション、微弱）
 
 ■ 装飾オブジェクト配置・当たり判定ルール
 迷路生成後、各ステージテーマに応じて装飾オブジェクトを自動配置する。
@@ -1892,14 +1937,14 @@ for (let i = 0; i < 35; i++) {
 ・当たり判定ありの装飾は通路幅の50%以下にする（完全封鎖しない）
 ・鬼AIのBFS経路上には当たり判定あり装飾を置かない（鬼が詰まるのを防止）
 ・装飾密度: 通路セル全体の10〜20%にランダム配置（ステージが進むほど増加）
-・壁面固定の装飾（モニター、パイプ、歯車等）は密度制限なし
+・壁面固定の装飾（モニター、歯車、蔦、しめ縄等）は密度制限なし
 
 【当たり判定の種類】
 | 種別 | 効果 | 例 |
 |------|------|-----|
-| BLOCK | 移動不可（壁と同じ扱い） | デスク、サーバーラック、機械 |
-| SLOW | 通過可能だが速度低下（×0.7） | ケーブル束、散乱物 |
-| NONE | 当たり判定なし（すり抜け） | 壁面装飾、天井装飾、パーティクル |
+| BLOCK | 移動不可（壁と同じ扱い） | サーバーラック、機械、街灯、石灯籠、井戸、鳥居柱 |
+| SLOW | 通過可能だが速度低下（×0.7） | ケーブル束、散乱物、落ち葉（屋外） |
+| NONE | 当たり判定なし（すり抜け） | 壁面装飾、パーティクル、のぼり旗、鬼火 |
 
 ```javascript
 // 装飾オブジェクト配置
@@ -1961,33 +2006,37 @@ const STAGE_THEMES = {
         circuitStyle: 'industrial',     // 太い配線、チップ多め
     },
     3: {
-        name: '廃ビルオフィス',
-        wallColor: 0x181408,            // ベース壁色（暗い黄系）
+        name: '夜の西洋街路',
+        outdoor: true,                  // ★屋外ステージ（天井なし）
+        wallColor: 0x181408,            // ベース壁色（石造り外壁）
         circuitColor: '#ffcc00',        // ★回路発光: 黄色
         circuitEmissive: 0xffcc00,
         circuitEmissiveIntensity: 0.45,
-        floorColor: 0x060a08,
+        floorColor: 0x0a0a06,           // 石畳
+        skyColor: 0x020308,             // 夜空（天井の代わり）
         fogColor: 0x080a04,
-        fogDensity: 0.014,
-        pointLightColors: [0xffcc00, 0xffcc00, 0xffffff, 0xff8800],
+        fogDensity: 0.012,              // 屋外のため霧がやや広い
+        pointLightColors: [0xffcc00, 0xffcc00, 0xfff8e0, 0xff8800],
         pointLightCount: 30,
         gridColor: 0xffcc00,
-        gridOpacity: 0,                 // グリッドなし（タイル模様）
+        gridOpacity: 0.03,              // 石畳の目地として控えめ
         circuitStyle: 'damaged',        // 一部断線、ちらつき多め
     },
     4: {
-        name: '地下下水道',
-        wallColor: 0x0e0818,            // ベース壁色（暗い紫系）
+        name: '江戸の夜村',
+        outdoor: true,                  // ★屋外ステージ（天井なし）
+        wallColor: 0x0e0818,            // ベース壁色（木造外壁・板塀）
         circuitColor: '#aa44ff',        // ★回路発光: 紫
         circuitEmissive: 0xaa44ff,
         circuitEmissiveIntensity: 0.5,
-        floorColor: 0x030608,
-        fogColor: 0x060410,
-        fogDensity: 0.018,
-        pointLightColors: [0xaa44ff, 0xaa44ff, 0x00aaff, 0xff00ff],
+        floorColor: 0x060504,           // 土道・砂利道
+        skyColor: 0x040208,             // 夜空（薄雲あり）
+        fogColor: 0x060208,
+        fogDensity: 0.016,              // 低層フォグ（地面近くが濃い）
+        pointLightColors: [0xaa44ff, 0xaa44ff, 0x8822cc, 0xe0e0ff],
         pointLightCount: 20,
         gridColor: 0xaa44ff,
-        gridOpacity: 0.04,
+        gridOpacity: 0.03,              // 妖気のような淡い光
         circuitStyle: 'pulsing',        // ノード脈動
     },
     5: {
@@ -2006,12 +2055,14 @@ const STAGE_THEMES = {
         circuitStyle: 'broken',         // 断線だらけ、スパーク連動
     },
     hidden: {
-        name: '異空間ラボ',
-        wallColor: 0x181008,            // ベース壁色（暗いオレンジ系）
+        name: '廃寺・鳥居',
+        outdoor: true,                  // ★屋外ステージ（天井なし）
+        wallColor: 0x181008,            // ベース壁色（朽ちた寺院壁）
         circuitColor: '#ff6600',        // ★回路発光: オレンジ
         circuitEmissive: 0xff6600,
         circuitEmissiveIntensity: 0.55,
-        floorColor: 0x100a04,
+        floorColor: 0x100a04,           // 苔むした石畳・土
+        skyColor: 0x100400,             // 赤黒い異常な夜空
         fogColor: 0x100804,
         fogDensity: 0.025,
         pointLightColors: [0xff6600, 0xff6600, 0xff6600, 0xff0066, 0x881100],
@@ -2049,9 +2100,10 @@ const STAGE_THEMES = {
 ・階段付近では上下フロアが視覚的に見通せる（天井に穴が開いている）
 
 ■ 装飾エフェクト
-・ワイヤーフレームエッジ + ネオンストライプ（壁面に薄緑の帯、MeshBasicMaterial, #00ff41, opacity 0.2）
-・浮遊ダストパーティクル（BufferGeometry + Points、緑の微粒子）
-・床グリッドライン（LineBasicMaterial, #00ff41, opacity 0.04）
+・電子回路発光壁テクスチャ（ステージ別の回路色で発光。CIRCUIT_COLORS参照）
+・ワイヤーフレームエッジ（LineBasicMaterial、ステージ回路色、opacity 0.2）
+・浮遊ダストパーティクル（BufferGeometry + Points、ステージ回路色の微粒子）
+・床グリッドライン（LineBasicMaterial, ステージ回路色, opacity 0.04〜0.06）
 ・CRTスキャンラインオーバーレイ
 ```css
 #crt-overlay {
@@ -2090,8 +2142,9 @@ const STAGE_THEMES = {
 | 現在フロア | GameState.player.currentFloor |
 
 ■ フラッシュライト
+全ステージ共通で白緑色（サイバー緑）。壁の回路色と独立させることで3Dモデルの視認性を確保。
 ```javascript
-const flashlight = new THREE.SpotLight(0x00ff88, 3, 30, 0.6, 0.3, 2);
+const flashlight = new THREE.SpotLight(0x00ff88, 3, 30, 0.6, 0.3, 2); // 全ステージ共通色
 flashlight.castShadow = true;
 camera.add(flashlight);
 camera.add(flashlight.target);
@@ -2153,9 +2206,8 @@ function loadOniModel(stageNum) {
             model.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
-                    // 赤い発光マテリアルに変更（暗所視認性確保）
-                    child.material.emissive = new THREE.Color(0x330000);
-                    child.material.emissiveIntensity = 0.15;
+                    // 3Dモデルのテクスチャをそのまま使用（emissive上書きしない）
+                    // 暗所視認性は目のPointLightで確保
                 }
             });
             resolve(model);
@@ -2165,24 +2217,50 @@ function loadOniModel(stageNum) {
 ```
 
 ■ 暗所での視認性対策
+3Dモデルのテクスチャをそのまま活かしつつ、控えめな赤い自己発光を追加する。
+プレイヤーが遠距離でも鬼の存在に気付けるようにするが、背景に溶け込まない程度に抑える。
+※Stage 5（赤壁）では鬼の発光色をやや橙寄りにして壁色との差別化を図る。
+
 ```javascript
-// 鬼モデルに追加するライト
-function addOniLights(oniGroup) {
-    // 体内発光
-    const innerLight = new THREE.PointLight(0xff2020, 1.5, 4);
-    innerLight.position.set(0, 1.1, 0);
-    oniGroup.add(innerLight);
+// 鬼モデルに追加するライト・発光
+function addOniLights(oniGroup, stageId) {
+    // 目（赤い発光点 ×2）— 遠距離で最初に目に入る
+    const eyeR = new THREE.PointLight(0xff0000, 2.0, 8);
+    eyeR.position.set(0.12, 1.65, 0.15);
+    oniGroup.add(eyeR);
 
-    // 頭上ライト
-    const headLight = new THREE.PointLight(0xff2020, 3, 18);
-    headLight.position.set(0, 2.5, 0);
-    oniGroup.add(headLight);
+    const eyeL = new THREE.PointLight(0xff0000, 2.0, 8);
+    eyeL.position.set(-0.12, 1.65, 0.15);
+    oniGroup.add(eyeL);
 
-    // 胴体ライト
-    const bodyLight = new THREE.PointLight(0xff1010, 2, 12);
-    bodyLight.position.set(0, 1.2, 0.3);
+    // 体内発光（控えめ）— 近〜中距離でシルエットが赤く浮かぶ
+    // Stage 5（赤壁）ではオレンジ寄りにして壁と差別化
+    const bodyColor = (stageId === 5) ? 0xff4400 : 0xff1010;
+    const bodyLight = new THREE.PointLight(bodyColor, 0.8, 6);
+    bodyLight.position.set(0, 1.1, 0);
     oniGroup.add(bodyLight);
 }
+
+// モデルへの emissive 適用（控えめ）
+function applyOniEmissive(model, stageId) {
+    const emColor = (stageId === 5) ? 0x331100 : 0x220000;
+    model.traverse((child) => {
+        if (child.isMesh) {
+            child.castShadow = true;
+            // テクスチャを潰さない程度の控えめな赤発光
+            child.material.emissive = new THREE.Color(emColor);
+            child.material.emissiveIntensity = 0.1;
+        }
+    });
+}
+```
+
+【発光の設計意図】
+・目のPointLight（intensity 2.0, 距離 8m）: 遠距離で赤い光点2つが見える。最初の「気付き」
+・体内PointLight（intensity 0.8, 距離 6m）: 中距離で体の周囲がうっすら赤く照らされる
+・emissive（0x220000, intensity 0.1）: 近距離でモデル表面がほんのり赤く光る
+・Stage 5専用: 体の発光をオレンジ寄り（0xff4400 / 0x331100）にし、赤壁との差別化を確保
+・全ステージ共通で鬼のシルエットは壁の回路色と明確に異なる赤系統
 ```
 
 ■ アニメーション
@@ -3561,17 +3639,21 @@ const AMBIENT_CONFIGS = {
         { type: 'drone', frequency: 45, volume: 0.04, interval: 0, duration: 999, waveform: 'sawtooth',
           filter: { type: 'lowpass', freq: 100 } }, // 歯車の唸り
     ],
-    3: [ // 廃ビルオフィス
-        { type: 'impact', frequency: 4000, volume: 0.02, interval: 4, duration: 0.02, waveform: 'square' }, // 蛍光灯チラつき
-        { type: 'impact', frequency: 800, volume: 0.06, interval: 20, duration: 0.15, waveform: 'triangle' }, // 遠いガラス割れ
-        { type: 'noise', volume: 0.03, interval: 0, duration: 999,
-          filter: { type: 'lowpass', freq: 400 } }, // 風の音（常時）
+    3: [ // 夜の西洋街路（屋外）
+        { type: 'impact', frequency: 200, volume: 0.04, interval: 30, duration: 3.0, waveform: 'sine',
+          filter: { type: 'lowpass', freq: 300 } }, // 遠くの教会の鐘（低く長い残響）
+        { type: 'noise', volume: 0.04, interval: 0, duration: 999,
+          filter: { type: 'lowpass', freq: 500 } }, // 屋外の風（常時、広がりのある音）
+        { type: 'impact', frequency: 1200, volume: 0.03, interval: 25, duration: 0.8, waveform: 'sawtooth',
+          filter: { type: 'bandpass', freq: 1500 } }, // カラスの鳴き声
     ],
-    4: [ // 地下下水道
-        { type: 'impact', frequency: 3500, volume: 0.06, interval: 2, duration: 0.03, waveform: 'sine' }, // 水滴ポタポタ
-        { type: 'drone', frequency: 80, volume: 0.05, interval: 0, duration: 999, waveform: 'sine',
-          filter: { type: 'lowpass', freq: 150 } }, // 遠い水流
-        { type: 'impact', frequency: 200, volume: 0.04, interval: 12, duration: 0.5, waveform: 'triangle' }, // 金属反響
+    4: [ // 江戸の夜村（屋外）
+        { type: 'drone', frequency: 4200, volume: 0.02, interval: 0, duration: 999, waveform: 'sine' }, // 虫の音（鈴虫、常時）
+        { type: 'drone', frequency: 4800, volume: 0.015, interval: 0, duration: 999, waveform: 'sine' }, // 虫の音（コオロギ）
+        { type: 'impact', frequency: 2000, volume: 0.03, interval: 20, duration: 1.2, waveform: 'sine',
+          filter: { type: 'bandpass', freq: 2500 } }, // 風鈴
+        { type: 'impact', frequency: 150, volume: 0.04, interval: 35, duration: 2.0, waveform: 'triangle',
+          filter: { type: 'lowpass', freq: 300 } }, // 遠くの犬の遠吠え
     ],
     5: [ // 崩壊データセンター
         { type: 'noise', volume: 0.07, interval: 8, duration: 0.1,
@@ -3580,11 +3662,15 @@ const AMBIENT_CONFIGS = {
           filter: { type: 'bandpass', freq: 300 } }, // ファン異常音
         { type: 'impact', frequency: 40, volume: 0.1, interval: 25, duration: 1.5, waveform: 'sine' }, // 遠い崩落振動
     ],
-    hidden: [ // 異空間ラボ
-        { type: 'drone', frequency: 55, volume: 0.06, interval: 0, duration: 999, waveform: 'sine' }, // 不協和ドローン
+    hidden: [ // 廃寺・鳥居（屋外・和風ホラー）
+        { type: 'drone', frequency: 55, volume: 0.06, interval: 0, duration: 999, waveform: 'sine' }, // 読経のような低い唸り
         { type: 'drone', frequency: 58, volume: 0.05, interval: 0, duration: 999, waveform: 'sine' }, // 微妙にずれた2音目→うねり
         { type: 'impact', frequency: 72, volume: 0.08, interval: 0.85, duration: 0.15, waveform: 'sine',
           filter: { type: 'lowpass', freq: 200 } }, // 心臓の鼓動（常時）
+        { type: 'impact', frequency: 1800, volume: 0.02, interval: 15, duration: 1.5, waveform: 'sine',
+          filter: { type: 'bandpass', freq: 2000 } }, // 風に揺れる鈴の音
+        { type: 'impact', frequency: 50, volume: 0.06, interval: 40, duration: 2.0, waveform: 'sine',
+          filter: { type: 'lowpass', freq: 80 } }, // 遠くの太鼓の重低音
     ],
     scoreAttack: [ // 無限回廊（初期=Stage1風、時間経過でレイヤー追加）
         { type: 'drone', frequency: 60, volume: 0.06, interval: 0, duration: 999, waveform: 'sine',
@@ -4328,9 +4414,12 @@ FALL DODGEのスクリーンショットと完全に同一のレイアウト構�
 ════════════════════════════════════════════════════
 APPENDIX A: 鬼モデル読み込みコード（Mixamo GLB方式）
 ════════════════════════════════════════════════════
-以下は Red Demon.html から抽出した鬼キャラクターの完全なビルドコード。
-セクション14の仕様に基づき、このコードを関数化してゲーム内に組み込む。
-ゲーム内では createOniModel() 関数として使用すること。
+ゲーム内では GitHub リポジトリの characters/ フォルダから GLB モデルを読み込む。
+GLBモデルのテクスチャをそのまま使用し、emissive上書きは行わない。
+暗所視認性は目のPointLight（0xff0000）のみで確保する。
+
+以下の createOniModel() はGLB読み込み失敗時のフォールバック用プロシージャルモデル。
+通常はGLBファイルを使用するため、このコードは非常時のみ使用される。
 
 ```javascript
 function createOniModel() {
@@ -4733,8 +4822,14 @@ const ONI = {
     stairSpeedMul: 0.7,    // 階段上速度倍率
     pathRecalcInterval: 0.5, // 秒
     catchDistance: 1.2,     // m
-    materialColor: 0xcc1818,
-    emissiveColor: 0x330000,
+    eyeLightColor: 0xff0000,
+    eyeLightIntensity: 2.0,
+    eyeLightDistance: 8,
+    bodyLightColor: 0xff1010,     // 体内発光（Stage5では0xff4400に変更）
+    bodyLightIntensity: 0.8,
+    bodyLightDistance: 6,
+    emissiveColor: 0x220000,      // 控えめ自己発光（Stage5では0x331100に変更）
+    emissiveIntensity: 0.1,
 };
 ```
 
