@@ -655,12 +655,12 @@ function updatePlayerMovement(delta) {
 
 | Stage | 迷路サイズ | フロア | 鬼の数 | 制限時間 | 鬼速度倍率 | テーマ | 出口の特徴 |
 |-------|-----------|-------|--------|---------|-----------|--------|-----------|
-| 1 | 10×10 | 1F | 1 | 75秒 | ×1.0 | 地下研究所（サイバーラボ） | 対角配置。ヒント矢印あり。出口固定 |
-| 2 | 12×12 | 1F | 1 | 90秒 | ×1.0 | 廃工場（錆びた機械・ギア） | 対角配置。ヒント矢印あり。出口固定 |
-| 3 | 16×16 | 2F | 2 | 100秒 | ×1.2 | 廃ビルオフィス（デスク・モニター） | 出口は2F。ヒント矢印なし。出口固定 |
-| 4 | 20×20 | 2F | 3 | 120秒 | ×1.3 | 地下下水道（水滴り・湿気・パイプ） | 出口は2F。ヒント矢印なし。出口固定 |
-| 5（ファイナルステージ） | 24×24 | 3F | 4 | 150秒 | ×1.5 | 崩壊データセンター（サーバーラック崩壊） | 出口は3F。30秒ごとに出口がワープ。照明最小 |
-| ??? | 28×28 | 3F | 5 | 120秒 | ×1.6 | 異空間ラボ（紫エフェクト・歪んだ空間） | 出口が動く+フェイク出口3個。霧最濃 |
+| 1 | 10×10 | 1F | 1 | 90秒 | ×1.0 | 地下研究所（サイバーラボ） | 対角配置。ヒント矢印あり。出口固定 |
+| 2 | 12×12 | 1F | 1 | 120秒 | ×1.0 | 廃工場（錆びた機械・ギア） | 対角配置。ヒント矢印あり。出口固定 |
+| 3 | 16×16 | 2F | 2 | 180秒 | ×1.2 | 廃ビルオフィス（デスク・モニター） | 出口は2F。ヒント矢印なし。出口固定 |
+| 4 | 20×20 | 2F | 3 | 210秒 | ×1.3 | 地下下水道（水滴り・湿気・パイプ） | 出口は2F。ヒント矢印なし。出口固定 |
+| 5（ファイナルステージ） | 24×24 | 3F | 4 | 270秒 | ×1.5 | 崩壊データセンター（サーバーラック崩壊） | 出口は3F。30秒ごとに出口がワープ。照明最小 |
+| ??? | 28×28 | 3F | 5 | 240秒 | ×1.6 | 異空間ラボ（紫エフェクト・歪んだ空間） | 出口が動く+フェイク出口3個。霧最濃 |
 
 ※ 数値は目安。プレイテストで調整。
 ※ 隠しステージ「???」は通常プレイでは出現しない（後述の解放条件を参照）
@@ -727,7 +727,7 @@ usernameInput.addEventListener('input', async (e) => {
 【ステージ仕様】
 ・迷路: 28×28、3フロア
 ・鬼: 5体（×1.6速度）
-・制限時間: 120秒（Stage 5より短い）
+・制限時間: 240秒（Stage 5より短い）
 ・出口: 20秒ごとにワープ（Stage 5は30秒）
 ・フェイク出口: 本物の出口に加えて偽の出口が2つ配置される
   - 見た目は本物と同じ緑の光柱
@@ -908,7 +908,9 @@ function createExitMarker(x, z) {
 ・初期迷路: 12×12 / 1F
 ・60秒ごとに迷路拡張（+4×4ずつ拡大、最大28×28）
 ・120秒経過で2F解放、240秒経過で3F解放
-・壁: Stage 1ベースのサイバーパネル（0x0a1a0e）
+・壁: シアン色電子回路発光テクスチャ（0x081418ベース + #00ffff回路光）
+      時間経過で回路配線の密度が増加（初期は疎、240秒後は画面いっぱいの回路に）
+      ※他ステージの緑/青/黄/紫/赤と重複しないシアン色を使用
 ・床: グリッドライン付き（0x050a06）
 ・装飾: 全ステージの装飾がランダムで混在（研究所の端末、工場の歯車、オフィスのデスク等）
 ・時間経過による環境変化:
@@ -924,15 +926,19 @@ function createExitMarker(x, z) {
 ```javascript
 STAGE_THEMES.scoreAttack = {
     name: '無限回廊',
-    wallColor: 0x0a1a0e,
+    wallColor: 0x081418,
+    circuitColor: '#00ffff',  // シアン（他ステージと重複なし）
+    circuitEmissive: 0x00ffff,
+    circuitEmissiveIntensity: 0.45,
     floorColor: 0x050a06,
     fogColor: 0x000a05,
     fogDensity: 0.010,  // 時間経過で増加
-    pointLightColors: [0x00ff41, 0x00aaff],  // 時間経過で変化
+    pointLightColors: [0x00ffff, 0x0088ff],  // 時間経過で変化
     pointLightCount: 50,  // 時間経過で減少
+    gridColor: 0x00ffff,
     gridOpacity: 0.06,
-    neonStripeFrequency: 0.25,
     dynamic: true,  // 時間経過で環境が変化するフラグ
+    circuitDensityGrowth: true,  // 時間経過で回路密度が増加
 };
 ```
 
@@ -1052,11 +1058,11 @@ WINNER: P1 (ユーザーネーム) — 38pt
 
 | Stage | 迷路サイズ | フロア | 制限時間 | 鬼速度倍率 |
 |-------|-----------|-------|---------|-----------|
-| 1 | 12×12 | 1F | 60秒 | ×1.0 |
-| 2 | 14×14 | 1F | 75秒 | ×1.0 |
-| 3 | 16×16 | 2F | 75秒 | ×1.2 |
-| 4 | 20×20 | 2F | 90秒 | ×1.3 |
-| 5 | 24×24 | 3F | 90秒 | ×1.5 |
+| 1 | 12×12 | 1F | 75秒 | ×1.0 |
+| 2 | 14×14 | 1F | 90秒 | ×1.0 |
+| 3 | 16×16 | 2F | 105秒 | ×1.2 |
+| 4 | 20×20 | 2F | 120秒 | ×1.3 |
+| 5 | 24×24 | 3F | 135秒 | ×1.5 |
 
 ※各ステージで攻守交替するため、1ステージにつき2ラウンド実施
 ※迷路サイズをソロより小さめにし、鬼が追いつきやすくする
@@ -1118,11 +1124,11 @@ WINNER: P1 (ユーザーネーム) — 38pt
 
 | Stage | 迷路サイズ | フロア | 鬼の数 | 制限時間 | 鬼速度倍率 | ソロ相当 |
 |-------|-----------|-------|--------|---------|-----------|---------|
-| 1 | 16×16 | 2F | 2 | 100秒 | ×1.2 | ソロStage 3相当 |
-| 2 | 20×20 | 2F | 3 | 120秒 | ×1.3 | ソロStage 4相当 |
-| 3 | 24×24 | 3F | 4 | 130秒 | ×1.5 | ソロStage 5相当 |
-| 4 | 24×24 | 3F | 5 | 120秒 | ×1.6 | ソロ隠しステージ相当 |
-| 5 | 28×28 | 3F | 6 | 150秒 | ×1.8 | 協力専用（最高難度） |
+| 1 | 16×16 | 2F | 2 | 150秒 | ×1.2 | ソロStage 3相当 |
+| 2 | 20×20 | 2F | 3 | 180秒 | ×1.3 | ソロStage 4相当 |
+| 3 | 24×24 | 3F | 4 | 210秒 | ×1.5 | ソロStage 5相当 |
+| 4 | 24×24 | 3F | 5 | 210秒 | ×1.6 | ソロ隠しステージ相当 |
+| 5 | 28×28 | 3F | 6 | 270秒 | ×1.8 | 協力専用（最高難度） |
 
 ※ Stage 5は協力モード専用の最高難度（ソロには存在しない6体の鬼）
 ※ 出口はStage 3以降ワープあり（ソロStage 5と同仕様）
@@ -1427,15 +1433,245 @@ function createExitZone(cellX, cellZ) {
 }
 ```
 
-■ 壁マテリアル
+■ 壁マテリアル — 電子回路発光壁テクスチャシステム
+
+全ステージの壁面に、プロシージャル生成した電子回路パターンテクスチャを適用する。
+壁面が回路基板のように発光し、ステージごとに固有の色で光る。
+色は全7ステージ＋モードで完全に重複なし。
+
+【ステージ別 壁回路カラー一覧】
+| ステージ | 回路発光色 | Hex (発光) | Hex (ベース壁色) | テーマ印象 |
+|---------|-----------|-----------|----------------|-----------|
+| Stage 1 | 緑 (Green) | #00ff41 | 0x0a1a0e | クリーンなサイバーラボ |
+| Stage 2 | 青 (Blue) | #0088ff | 0x081018 | 冷たい廃工場 |
+| Stage 3 | 黄色 (Yellow) | #ffcc00 | 0x181408 | 警告灯のオフィス |
+| Stage 4 | 紫 (Purple) | #aa44ff | 0x0e0818 | 不気味な地下水路 |
+| Stage 5 | 赤 (Red) | #ff2020 | 0x180808 | 崩壊・危険・最終警告 |
+| スコアアタック | シアン (Cyan) | #00ffff | 0x081418 | 無機質な無限空間 |
+| 隠しステージ ??? | オレンジ (Orange) | #ff6600 | 0x181008 | 異常警告・未知の異空間 |
+
+※ 7色すべて重複なし。どのステージに入っても壁の色だけでどこにいるか判別可能。
+
+【回路テクスチャ生成仕様（Canvas プロシージャル）】
+壁1枚ごとに Canvas 2D で電子回路パターンを描画し、
+CanvasTexture として MeshStandardMaterial の map / emissiveMap に適用する。
+テクスチャはシード違いで 6〜8 バリエーションを事前生成し、壁ごとにランダム割り当て。
+
+描画要素（全ステージ共通構造、色のみステージごとに変更）:
+1. ベースグリッド — 16px 間隔の薄い格子線（opacity 0.04）
+2. 主回路トレース — 直角折れ線（12〜20本、太さ 1.0〜2.5px）
+   水平・垂直のみで斜め線なし。回路基板の配線を模倣
+3. 副回路トレース — 細い補助配線（20本、太さ 0.5px、低opacity）
+4. ICチップ矩形 — 小さな矩形（4〜8個）+ 上下にピン線
+5. はんだ点（ノード） — 放射状グラデーションの光点（15〜30個）
+   中心が明るく周囲にぼんやり広がる
+6. ビアホール — 小さな円（8〜16個）、ストロークのみ
+
 ```javascript
-const wallMaterial = new THREE.MeshStandardMaterial({
-    color: 0x0a1a0e,
-    roughness: 0.7,
-    metalness: 0.4,
-    emissive: 0x001a08,
-    emissiveIntensity: 0.05
+// ===== 回路テクスチャ生成関数 =====
+function generateCircuitTexture(width, height, seed, color) {
+    // color: { trace: '#0088ff', node: '#00ccff', chip: '#004488', grid: '#003366' }
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    // 1. 暗いベース
+    ctx.fillStyle = '#020408';
+    ctx.fillRect(0, 0, width, height);
+
+    // 2. グリッド
+    ctx.strokeStyle = color.grid + '0a'; // 極薄
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x < width; x += 16) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+    }
+    for (let y = 0; y < height; y += 16) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+    }
+
+    // 3. 主回路トレース（直角折れ線）
+    const rng = seededRNG(seed);
+    const traceCount = 12 + (rng() * 8 | 0);
+    for (let i = 0; i < traceCount; i++) {
+        const opacity = 0.15 + rng() * 0.35;
+        ctx.strokeStyle = hexToRGBA(color.trace, opacity);
+        ctx.lineWidth = 1.0 + rng() * 1.5;
+        let cx = rng() * width, cy = rng() * height;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        const segs = 4 + (rng() * 8 | 0);
+        for (let s = 0; s < segs; s++) {
+            const dir = rng() * 4 | 0;
+            const len = 15 + rng() * 60;
+            if (dir === 0) cx += len;
+            else if (dir === 1) cx -= len;
+            else if (dir === 2) cy += len;
+            else cy -= len;
+            cx = clamp(cx, 0, width);
+            cy = clamp(cy, 0, height);
+            ctx.lineTo(cx, cy);
+        }
+        ctx.stroke();
+
+        // 端点ノード
+        ctx.fillStyle = hexToRGBA(color.node, opacity + 0.15);
+        ctx.beginPath(); ctx.arc(cx, cy, 2 + rng() * 2, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 4. ICチップ矩形
+    const chipCount = 4 + (rng() * 4 | 0);
+    for (let i = 0; i < chipCount; i++) {
+        const rx = rng() * (width - 30), ry = rng() * (height - 20);
+        const rw = 12 + rng() * 20, rh = 8 + rng() * 14;
+        ctx.fillStyle = hexToRGBA(color.chip, 0.12);
+        ctx.fillRect(rx, ry, rw, rh);
+        ctx.strokeStyle = hexToRGBA(color.trace, 0.2);
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(rx, ry, rw, rh);
+        // ピン
+        const pins = 3 + (rng() * 4 | 0);
+        ctx.strokeStyle = hexToRGBA(color.trace, 0.15);
+        ctx.lineWidth = 0.6;
+        for (let p = 0; p < pins; p++) {
+            const px = rx + (rw / (pins + 1)) * (p + 1);
+            ctx.beginPath(); ctx.moveTo(px, ry); ctx.lineTo(px, ry - 5 - rng()*8); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(px, ry+rh); ctx.lineTo(px, ry+rh+5+rng()*8); ctx.stroke();
+        }
+    }
+
+    // 5. はんだ点（発光ノード）
+    const nodeCount = 15 + (rng() * 15 | 0);
+    for (let i = 0; i < nodeCount; i++) {
+        const nx = rng() * width, ny = rng() * height, nr = 1 + rng() * 2.5;
+        const glow = ctx.createRadialGradient(nx, ny, 0, nx, ny, nr * 3);
+        glow.addColorStop(0, hexToRGBA(color.node, 0.5));
+        glow.addColorStop(0.5, hexToRGBA(color.trace, 0.15));
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(nx, ny, nr * 3, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 6. ビアホール
+    const viaCount = 8 + (rng() * 8 | 0);
+    for (let i = 0; i < viaCount; i++) {
+        const vx = rng() * width, vy = rng() * height;
+        ctx.strokeStyle = hexToRGBA(color.trace, 0.15);
+        ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.arc(vx, vy, 3 + rng()*3, 0, Math.PI*2); ctx.stroke();
+    }
+
+    return canvas;
+}
+
+// emissiveMap 用（発光部分のみ明るく描画）
+function generateCircuitEmissiveMap(width, height, seed, color) {
+    // 主回路トレース + はんだ点のみ、高opacity で描画
+    // 構造は generateCircuitTexture と同一だが、opacity を 0.3〜0.8 に引き上げ
+    // ICチップ・ビアホールは省略（発光させない）
+    // ... 同様の実装 ...
+}
+```
+
+【壁マテリアル（ステージごとに生成）】
+```javascript
+// ステージ別の回路カラー定数
+const CIRCUIT_COLORS = {
+    1: { // Stage 1: 緑
+        trace: '#00ff41', node: '#44ffaa', chip: '#004418',
+        grid: '#003310', emissive: 0x00ff41, emissiveIntensity: 0.5,
+        baseColor: 0x0a1a0e
+    },
+    2: { // Stage 2: 青
+        trace: '#0088ff', node: '#00ccff', chip: '#002244',
+        grid: '#001a33', emissive: 0x0066ff, emissiveIntensity: 0.5,
+        baseColor: 0x081018
+    },
+    3: { // Stage 3: 黄色
+        trace: '#ffcc00', node: '#ffee44', chip: '#443300',
+        grid: '#332200', emissive: 0xffcc00, emissiveIntensity: 0.45,
+        baseColor: 0x181408
+    },
+    4: { // Stage 4: 紫
+        trace: '#aa44ff', node: '#cc88ff', chip: '#220044',
+        grid: '#1a0033', emissive: 0xaa44ff, emissiveIntensity: 0.5,
+        baseColor: 0x0e0818
+    },
+    5: { // Stage 5: 赤（不気味・断線風）
+        trace: '#ff2020', node: '#ff6644', chip: '#440808',
+        grid: '#330505', emissive: 0xff2020, emissiveIntensity: 0.6,
+        baseColor: 0x180808
+    },
+    scoreAttack: { // スコアアタック: シアン
+        trace: '#00ffff', node: '#88ffff', chip: '#004444',
+        grid: '#003333', emissive: 0x00ffff, emissiveIntensity: 0.45,
+        baseColor: 0x081418
+    },
+    hidden: { // 隠しステージ: オレンジ
+        trace: '#ff6600', node: '#ffaa44', chip: '#442200',
+        grid: '#331800', emissive: 0xff6600, emissiveIntensity: 0.55,
+        baseColor: 0x181008
+    },
+};
+
+function createCircuitWallMaterial(stageId) {
+    const cfg = CIRCUIT_COLORS[stageId];
+    const seed = Math.random() * 100000 | 0;
+    const diffCanvas = generateCircuitTexture(512, 256, seed, cfg);
+    const emCanvas = generateCircuitEmissiveMap(512, 256, seed, cfg);
+
+    const diffTex = new THREE.CanvasTexture(diffCanvas);
+    diffTex.wrapS = THREE.RepeatWrapping;
+    diffTex.wrapT = THREE.RepeatWrapping;
+
+    const emTex = new THREE.CanvasTexture(emCanvas);
+    emTex.wrapS = THREE.RepeatWrapping;
+    emTex.wrapT = THREE.RepeatWrapping;
+
+    return new THREE.MeshStandardMaterial({
+        map: diffTex,
+        emissiveMap: emTex,
+        emissive: cfg.emissive,
+        emissiveIntensity: cfg.emissiveIntensity,
+        color: cfg.baseColor,
+        roughness: 0.6,
+        metalness: 0.5,
+    });
+}
+```
+
+【ステージ別の回路演出バリエーション】
+回路パターンの描画密度・スタイルもステージごとに変化させる:
+
+| ステージ | 回路スタイル | 補足演出 |
+|---------|------------|---------|
+| Stage 1 (緑) | 整然とした配線、ノード多め | 清潔なラボ。回路が均一に光る |
+| Stage 2 (青) | 配線が太め、チップ矩形多め | 工場機械の制御基板風 |
+| Stage 3 (黄色) | 配線がやや乱れ、一部断線表現 | 廃墟のオフィス機器。ちらつき多め |
+| Stage 4 (紫) | 配線が不規則、ノードが脈動 | emissiveIntensity を sine 変動（0.3〜0.6） |
+| Stage 5 (赤) | 配線が断線だらけ、スパーク点滅 | 不気味に明滅。一部ノードが消失→再点灯 |
+| スコアアタック (シアン) | 時間経過で配線密度が増加 | 初期は疎、240秒後は画面いっぱいの回路に |
+| 隠しステージ (オレンジ) | 配線が有機的に脈動・蠕動 | emissiveIntensity が不規則に揺らぎ、壁が「生きている」印象 |
+
+【Stage 5 赤回路の特殊演出】
+Stage 5の壁は「不気味な赤い電子回路」として特別な演出を追加する:
+・回路トレースの30%がランダムに消灯→再点灯を繰り返す（断線ショート演出）
+・一部ノードが赤→暗赤→赤と不規則に脈動（心臓の鼓動リズム）
+・壁の emissiveIntensity 全体が 0.3〜0.7 でゆっくり明滅（周期 2〜4秒）
+・スパーク演出と連動: スパーク発生時に最寄りの壁が一瞬明るく光る
+
+【隠しステージ オレンジ回路の特殊演出】
+・回路パターン自体が 0.5〜1.0 の周期で蠕動（UV座標を微量シフト）
+・壁の scale.x を 1.0〜1.02 で sine 変動（既存仕様の膨張収縮と連動）
+・一部の壁が一瞬消えて回路だけが浮かぶ（wallMaterial.opacity を 0→1 に 0.5秒で戻す）
+
+【壁ワイヤーフレームエッジ】
+全ステージ共通で壁のEdgesGeometryにLineSegmentsを追加。色はステージの回路色と同じ。
+```javascript
+const edgeMat = new THREE.LineBasicMaterial({
+    color: CIRCUIT_COLORS[stageId].emissive,
+    transparent: true,
+    opacity: 0.2
 });
+const edges = new THREE.LineSegments(new THREE.EdgesGeometry(wallGeo), edgeMat);
 ```
 
 ■ 床マテリアル
@@ -1445,12 +1681,14 @@ const floorMaterial = new THREE.MeshStandardMaterial({
     roughness: 0.9,
     metalness: 0.1
 });
-// 緑グリッドライン: LineBasicMaterial({ color: 0x00ff41, opacity: 0.04, transparent: true })
+// グリッドライン色もステージの回路色に合わせる（opacity 0.04〜0.06）
+// Stage 1: 緑グリッド、Stage 2: 青グリッド ... 等
+const gridLineMat = new THREE.LineBasicMaterial({
+    color: CIRCUIT_COLORS[stageId].emissive,
+    opacity: 0.04,
+    transparent: true
+});
 ```
-
-■ 壁装飾
-・ワイヤーフレームエッジ（LineBasicMaterial, 緑, opacity 0.2）
-・ランダムネオンストライプ（壁面にMeshBasicMaterialで薄緑の帯）
 
 ■ 迷路生成コード
 ```javascript
@@ -1486,8 +1724,12 @@ function generateMaze(cols, rows) {
 12. ビジュアルスタイル（世界観統一）
 ================================
 ■ 色彩設計思想（3Dゲーム画面内）
-3Dゲーム画面はFALL DODGE / LINKED BLOCKS_ と同様に緑基調の暗いサイバー空間。
-赤色は鬼キャラクターの自己発光と、HUD上の警告表示にのみ使用する。
+3Dゲーム画面の壁面には電子回路パターンの発光テクスチャを適用する。
+回路の発光色はステージごとに異なり、全7種で完全重複なし:
+  Stage1:緑 → Stage2:青 → Stage3:黄 → Stage4:紫 → Stage5:赤 → SA:シアン → ???:オレンジ
+壁の色だけでプレイヤーが現在のステージを直感的に判別できる。
+赤色回路は最終ステージ（Stage 5）専用で、不気味さ・危険を演出する。
+鬼キャラクターの自己発光はステージの壁色とは独立して赤系統を維持する。
 ※タイトル画面のマトリックス背景は全面赤色のホラー仕様。セクション5参照。
 
 ■ カラーパレット
@@ -1495,11 +1737,12 @@ function generateMaze(cols, rows) {
 | 要素 | 色 |
 |------|-----|
 | 背景/クリア色 | 0x000805 |
-| フォグ | 0x000a05 |
-| 壁 | 0x0a1a0e |
+| フォグ | 0x000a05（ステージにより変化） |
+| 壁ベース | ステージごとに異なる（CIRCUIT_COLORS参照） |
+| 壁回路発光 | Stage1:緑 / Stage2:青 / Stage3:黄 / Stage4:紫 / Stage5:赤 / SA:シアン / ???:オレンジ |
 | 床 | 0x050a06 |
-| ネオンアクセント | #00ff41 (緑) |
-| 鬼（唯一の赤） | #cc1818 / #ff0040 |
+| 床グリッド | 壁回路色と同系色（opacity 0.04〜0.06） |
+| 鬼（唯一の赤系キャラ） | #cc1818 / #ff0040 |
 | UI文字 | #00ff41 |
 | フラッシュライト | #00ff88 (サイバー緑) |
 
@@ -1551,12 +1794,14 @@ for (let i = 0; i < 35; i++) {
 | ???   | 0.025    | 8           | 最暗。紫フォグ |
 
 ■ ステージ別ビジュアルテーマ
-全ステージ共通: 緑サイバー基調（ネオンストライプ、グリッドライン、CRTオーバーレイ）を維持。
-壁・床のカラー、装飾オブジェクト、環境音、PointLightの色傾向がステージごとに変わる。
+全ステージ共通: 電子回路発光壁テクスチャ + ワイヤーフレームエッジ + CRTオーバーレイを維持。
+壁の回路発光色・床グリッド色・装飾オブジェクト・環境音・PointLightの色傾向がステージごとに変わる。
+壁回路色は全ステージ/モードで完全重複なし（緑→青→黄→紫→赤→シアン→オレンジ）。
 
-【Stage 1: 地下研究所（サイバーラボ）】
-・壁: 清潔感のあるサイバーパネル風（0x0a1a0e）、ネオン緑ストライプ多め
-・床: 暗緑タイル（グリッドライン明るめ、opacity 0.06）
+【Stage 1: 地下研究所（サイバーラボ）】★回路色: 緑 (#00ff41)
+・壁: 清潔感のあるサイバーパネル風（0x0a1a0e）+ 緑色電子回路発光テクスチャ
+      整然とした配線パターン、ノード（はんだ点）多め。回路が均一に光る。
+・床: 暗緑タイル（グリッドライン緑 #00ff41、opacity 0.06）
 ・装飾: 壁面に点滅するモニターパネル（MeshBasicMaterial、緑文字スクロール演出）【当たり判定なし: 壁面固定】
         通路の天井に蛍光灯風ライン（細長いPlane、#00ff41、opacity 0.15）【当たり判定なし】
         コーナーにサーバー端末風ボックス【当たり判定あり: 通路コーナーの障害物】
@@ -1565,64 +1810,78 @@ for (let i = 0; i < 35; i++) {
 ・フォグ色: 0x000a05（標準緑）
 ※チュートリアルステージのため装飾は控えめ。障害物も少なく逃げ道を確保。
 
-【Stage 2: 廃工場（錆びた機械・ギア）】
-・壁: 錆びた金属風（0x1a150a）、ネオンストライプを減らしてオレンジ錆テクスチャ感
-・床: 汚れたコンクリート風（0x0a0806）、グリッドラインを薄く（opacity 0.03）
+【Stage 2: 廃工場（錆びた機械・ギア）】★回路色: 青 (#0088ff)
+・壁: 錆びた金属風（0x081018）+ 青色電子回路発光テクスチャ
+      配線が太め、ICチップ矩形多め。工場の制御基板を模した回路パターン。
+・床: 汚れたコンクリート風（0x0a0806）、グリッドライン青 #0088ff（opacity 0.03）
         油染みの表現（床にランダムな暗色Plane、0x0a0600、opacity 0.3）
 ・装飾: 壊れた産業機械（BoxGeometry + CylinderGeometry群）【当たり判定あり: 通路脇の大型障害物】
         錆びた歯車オブジェクト（TorusGeometry、壁面固定、一部ゆっくり回転）【当たり判定なし: 壁面装飾】
         天井から垂れ下がるチェーン（Line、薄い金属色、微揺れ）【当たり判定なし】
         壊れたコンベアベルト（細長いBox、通路脇に配置）【当たり判定あり】
         蒸気噴出口（壁面の小さなBox、ランダムに白煙パーティクル噴出）【当たり判定なし】
-・PointLight色: 緑(40%) / オレンジ(40%) / 赤(20%)
+・PointLight色: 青(50%) / シアン(30%) / 緑(20%)
 ・環境音: 金属の軋み音、蒸気の噴出音（ランダム間隔）、歯車の回転音（低い唸り）
-・フォグ色: 0x0a0804（やや茶色がかった暗色）
+・フォグ色: 0x040610（青みがかった暗色）
 
-【Stage 3: 廃ビルオフィス（デスク・モニター）】
-・壁: オフィス壁風（0x0e1a12）、壁紙が剥がれた表現（テクスチャ or パッチ色変え）
-・床: カーペット風（0x060a08）、グリッドラインなし → 代わりにタイル模様
+【Stage 3: 廃ビルオフィス（デスク・モニター）】★回路色: 黄色 (#ffcc00)
+・壁: オフィス壁風（0x181408）+ 黄色電子回路発光テクスチャ
+      配線がやや乱れ、一部断線表現あり。廃墟の警告灯のような黄色い光。ちらつき多め。
+・床: カーペット風（0x060a08）、グリッドラインなし → 代わりにタイル模様（黄色 #ffcc00 微光）
 ・装飾: 通路脇にデスク（BoxGeometry、天板 + 脚）【当たり判定あり】
         デスク上にモニター（薄型Box、画面面にMeshBasicMaterial 緑発光 or ノイズ）【当たり判定なし】
         倒れた椅子【当たり判定あり: 通路を部分的に狭める】
         散乱した紙（薄いPlane、床にランダム配置）【当たり判定なし】
-・PointLight色: 緑(50%) / 白(30%) / シアン(20%)
+・PointLight色: 黄(50%) / 白(30%) / オレンジ(20%)
 ・環境音: 蛍光灯のちらつき音、ガラスが割れる遠い音（ランダム）、風の音
-・フォグ色: 0x060a08（オフィスの暗さ）
+・フォグ色: 0x080a04（黄色がかった暗色）
 
-【Stage 4: 地下下水道（水滴り・湿気・パイプ）】
-・壁: 湿ったコンクリート風（0x0a0e10）、下部が変色（グラデーション: 壁下1/3が暗い青緑）
+【Stage 4: 地下下水道（水滴り・湿気・パイプ）】★回路色: 紫 (#aa44ff)
+・壁: 湿ったコンクリート風（0x0e0818）+ 紫色電子回路発光テクスチャ
+      配線が不規則、ノードが脈動（emissiveIntensity を sine変動 0.3〜0.6）。不気味な紫光。
+      下部が変色（グラデーション: 壁下1/3が暗い紫）
 ・床: 水たまり表現（反射するPlane、envMap or 半透明レイヤー、0x030608）
+      グリッドライン紫 #aa44ff（opacity 0.04、水面下に沈む演出）
 ・装飾: 天井・壁面に大型パイプ（CylinderGeometry、錆色 + 緑光ジョイント）【当たり判定なし: 壁面/天井固定】
         壁面から水滴パーティクル（BufferGeometry + Points、シアン微粒子、上から下へ流れる）
         通路に水たまりの反射光ゆらぎ（床PointLightのintensityをsine変動）
         地面に壊れたバルブ・配管部品【当たり判定あり: 小さな障害物】
-・PointLight色: シアン(50%) / 緑(30%) / 青(20%)
+・PointLight色: 紫(50%) / シアン(30%) / マゼンタ(20%)
 ・環境音: 水滴のポタポタ音（3Dポジショナル、ランダム位置）、水流音（遠い）、金属反響
-・フォグ色: 0x040808（湿った青緑）
+・フォグ色: 0x060410（紫がかった暗色）
 
-【Stage 5 FINAL: 崩壊データセンター（サーバーラック崩壊）】
-・壁: 破損した金属壁（0x0e0a10）、ネオンストライプが断線風（途切れ途切れに点滅）
-・床: 破損タイル（0x080608）、ケーブル模様のライン（赤と緑が混在、opacity 0.05）
+【Stage 5 FINAL: 崩壊データセンター（サーバーラック崩壊）】★回路色: 赤 (#ff2020) ※不気味な赤回路
+・壁: 破損した金属壁（0x180808）+ 赤色電子回路発光テクスチャ（不気味・断線演出付き）
+      回路トレースの30%がランダムに消灯→再点灯を繰り返す（断線ショート演出）
+      一部ノードが赤→暗赤→赤と不規則に脈動（心臓の鼓動リズム）
+      壁全体の emissiveIntensity が 0.3〜0.7 でゆっくり明滅（周期 2〜4秒）
+      スパーク発生時に最寄りの壁が一瞬明るく光る（intensity → 1.0 → 0.6 を 0.3秒で）
+・床: 破損タイル（0x080608）、ケーブル模様のライン（赤と暗赤が混在、opacity 0.05）
+      グリッドライン赤 #ff2020（opacity 0.04、途切れ途切れに描画）
 ・装飾: 倒れたサーバーラック（大型BoxGeometry）【当たり判定あり: 通路を部分的に狭める】
         天井から垂れ下がるケーブル束（Line、ランダムに揺れる）【当たり判定なし】
         スパーク演出（ランダム位置で火花パーティクル、オレンジ+白、短時間発生）
         壊れたモニター群（画面がノイズ or 赤警告テキスト）【当たり判定なし: 壁面固定】
         床に散乱したケーブル束【当たり判定あり: 通過時に速度低下（×0.7）】
-・PointLight色: 赤(40%) / 緑(30%) / オレンジ(30%) — 警告色多め
+・PointLight色: 赤(50%) / 暗赤(30%) / オレンジ(20%) — 不気味な赤系統で統一
 ・環境音: 電気のスパーク音、サーバーの冷却ファン異常音、崩落の遠い振動音
 ・フォグ色: 0x080408（暗い赤紫がかった色）
 
-【隠しステージ ???: 異空間ラボ（紫エフェクト・歪んだ空間）】
-・壁: 半透明パネル風（0x100818）、壁面が微妙に脈動（emissiveIntensityをsine変動）
-・床: 暗い紫（0x060410）、グリッドラインが紫（#b450ff, opacity 0.06）
+【隠しステージ ???: 異空間ラボ（紫エフェクト・歪んだ空間）】★回路色: オレンジ (#ff6600) ※蠕動・脈動演出
+・壁: 半透明パネル風（0x181008）+ オレンジ色電子回路発光テクスチャ（蠕動演出付き）
+      回路パターンの UV座標が 0.5〜1.0秒 周期で微量シフト（配線が蠕動しているように見える）
+      壁面が微妙に脈動（emissiveIntensityを不規則にsine変動 0.3〜0.7）
+      一部の壁が一瞬消えて回路だけが浮かぶ（wallMaterial.opacity を 0→1 に 0.5秒で戻す）
+      scale.x を 1.0〜1.02 で sine変動（既存の膨張収縮仕様と連動）
+・床: 暗いオレンジがかった暗色（0x100a04）、グリッドラインがオレンジ（#ff6600, opacity 0.06）
 ・装飾: 壁が呼吸するように膨張収縮（scale.x を 1.0〜1.02 でsine変動）
         空間の歪みエフェクト（ポストプロセスでバレルディストーション、微弱）
         浮遊する紫オーブ（SphereGeometry、半透明、ゆっくり回転しながら浮遊）【当たり判定なし】
         ランダムに壁が一瞬消える（0.5秒だけ透明化、幻覚演出）
         壊れた実験装置（BoxGeometry + CylinderGeometry）【当たり判定あり】
-・PointLight色: 紫(60%) / マゼンタ(20%) / シアン(20%)
+・PointLight色: オレンジ(50%) / マゼンタ(25%) / 暗赤(25%)
 ・環境音: 低周波の不協和音ドローン、逆再生風の環境音、心臓の鼓動音（常時微かに）
-・フォグ色: 0x080410（紫フォグ）
+・フォグ色: 0x100804（オレンジがかった暗色フォグ）
 ・特殊: scene.fog を FogExp2 ではなく Fog にし、near/far をランダムに揺らす（視界が不安定）
 
 ■ 装飾オブジェクト配置・当たり判定ルール
@@ -1669,86 +1928,114 @@ function placeDecorations(maze, stageTheme, collisionMap) {
 ```
 
 ```javascript
-// ステージテーマ設定
+// ステージテーマ設定（電子回路発光壁カラー対応）
 const STAGE_THEMES = {
     1: {
         name: '地下研究所',
-        wallColor: 0x0a1a0e,
+        wallColor: 0x0a1a0e,           // ベース壁色
+        circuitColor: '#00ff41',        // ★回路発光: 緑
+        circuitEmissive: 0x00ff41,
+        circuitEmissiveIntensity: 0.5,
         floorColor: 0x050a06,
         fogColor: 0x000a05,
         fogDensity: 0.010,
         pointLightColors: [0x00ff41, 0x00ff41, 0x00ff41, 0x00aaff, 0x00aaff],
         pointLightCount: 50,
+        gridColor: 0x00ff41,
         gridOpacity: 0.06,
-        neonStripeFrequency: 0.3,  // 壁の30%にストライプ
+        circuitStyle: 'clean',          // 整然とした配線
     },
     2: {
         name: '廃工場',
-        wallColor: 0x1a150a,
+        wallColor: 0x081018,            // ベース壁色（暗い青系）
+        circuitColor: '#0088ff',        // ★回路発光: 青
+        circuitEmissive: 0x0066ff,
+        circuitEmissiveIntensity: 0.5,
         floorColor: 0x0a0806,
-        fogColor: 0x0a0804,
+        fogColor: 0x040610,
         fogDensity: 0.012,
-        pointLightColors: [0x00ff41, 0x00ff41, 0xff8800, 0xff8800, 0xff0040],
+        pointLightColors: [0x0066ff, 0x0066ff, 0x0088ff, 0x00aaff, 0x0044cc],
         pointLightCount: 40,
+        gridColor: 0x0088ff,
         gridOpacity: 0.03,
-        neonStripeFrequency: 0.15,
+        circuitStyle: 'industrial',     // 太い配線、チップ多め
     },
     3: {
         name: '廃ビルオフィス',
-        wallColor: 0x0e1a12,
+        wallColor: 0x181408,            // ベース壁色（暗い黄系）
+        circuitColor: '#ffcc00',        // ★回路発光: 黄色
+        circuitEmissive: 0xffcc00,
+        circuitEmissiveIntensity: 0.45,
         floorColor: 0x060a08,
-        fogColor: 0x060a08,
+        fogColor: 0x080a04,
         fogDensity: 0.014,
-        pointLightColors: [0x00ff41, 0x00ff41, 0xffffff, 0x00aaff],
+        pointLightColors: [0xffcc00, 0xffcc00, 0xffffff, 0xff8800],
         pointLightCount: 30,
-        gridOpacity: 0,  // グリッドなし（タイル模様）
-        neonStripeFrequency: 0.1,
+        gridColor: 0xffcc00,
+        gridOpacity: 0,                 // グリッドなし（タイル模様）
+        circuitStyle: 'damaged',        // 一部断線、ちらつき多め
     },
     4: {
         name: '地下下水道',
-        wallColor: 0x0a0e10,
+        wallColor: 0x0e0818,            // ベース壁色（暗い紫系）
+        circuitColor: '#aa44ff',        // ★回路発光: 紫
+        circuitEmissive: 0xaa44ff,
+        circuitEmissiveIntensity: 0.5,
         floorColor: 0x030608,
-        fogColor: 0x040808,
+        fogColor: 0x060410,
         fogDensity: 0.018,
-        pointLightColors: [0x00aaff, 0x00aaff, 0x00ff41, 0x0044ff],
+        pointLightColors: [0xaa44ff, 0xaa44ff, 0x00aaff, 0xff00ff],
         pointLightCount: 20,
-        gridOpacity: 0.03,
-        neonStripeFrequency: 0.08,
+        gridColor: 0xaa44ff,
+        gridOpacity: 0.04,
+        circuitStyle: 'pulsing',        // ノード脈動
     },
     5: {
         name: '崩壊データセンター',
-        wallColor: 0x0e0a10,
+        wallColor: 0x180808,            // ベース壁色（暗い赤系）
+        circuitColor: '#ff2020',        // ★回路発光: 赤（不気味）
+        circuitEmissive: 0xff2020,
+        circuitEmissiveIntensity: 0.6,
         floorColor: 0x080608,
         fogColor: 0x080408,
         fogDensity: 0.022,
-        pointLightColors: [0xff0040, 0xff0040, 0x00ff41, 0xff8800, 0xff8800],
+        pointLightColors: [0xff2020, 0xff2020, 0xcc0000, 0xff4400, 0xff4400],
         pointLightCount: 10,
-        gridOpacity: 0.05,
-        neonStripeFrequency: 0.12,  // 断線風に途切れる
+        gridColor: 0xff2020,
+        gridOpacity: 0.04,
+        circuitStyle: 'broken',         // 断線だらけ、スパーク連動
     },
     hidden: {
         name: '異空間ラボ',
-        wallColor: 0x100818,
-        floorColor: 0x060410,
-        fogColor: 0x080410,
+        wallColor: 0x181008,            // ベース壁色（暗いオレンジ系）
+        circuitColor: '#ff6600',        // ★回路発光: オレンジ
+        circuitEmissive: 0xff6600,
+        circuitEmissiveIntensity: 0.55,
+        floorColor: 0x100a04,
+        fogColor: 0x100804,
         fogDensity: 0.025,
-        pointLightColors: [0xb450ff, 0xb450ff, 0xb450ff, 0xff00ff, 0x00aaff],
+        pointLightColors: [0xff6600, 0xff6600, 0xff6600, 0xff0066, 0x881100],
         pointLightCount: 8,
+        gridColor: 0xff6600,
         gridOpacity: 0.06,
-        gridColor: 0xb450ff,  // 紫グリッド（緑ではない）
-        neonStripeFrequency: 0.2,
-        neonStripeColor: 0xb450ff,  // 紫ストライプ
+        circuitStyle: 'organic',        // 蠕動・脈動、UV座標シフト
     },
     scoreAttack: {
         name: '無限回廊',
-        wallColor: 0x0a1a0e,
+        wallColor: 0x081418,            // ベース壁色（暗いシアン系）
+        circuitColor: '#00ffff',        // ★回路発光: シアン
+        circuitEmissive: 0x00ffff,
+        circuitEmissiveIntensity: 0.45,
         floorColor: 0x050a06,
         fogColor: 0x000a05,
         fogDensity: 0.010,
-        pointLightColors: [0x00ff41, 0x00aaff],
+        pointLightColors: [0x00ffff, 0x0088ff],
         pointLightCount: 50,
+        gridColor: 0x00ffff,
         gridOpacity: 0.06,
-        neonStripeFrequency: 0.25,
+        circuitStyle: 'growing',        // 時間経過で配線密度増加
+        dynamic: true,
+        circuitDensityGrowth: true,
         dynamic: true,  // 時間経過で環境変化
     }
 };
