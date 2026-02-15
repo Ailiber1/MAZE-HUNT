@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-analytics-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <style>
@@ -1952,13 +1953,14 @@ body {
    Firebase Initialization (Placeholder Config)
    ============================================ */
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-    projectId: "YOUR_PROJECT",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+    apiKey: "AIzaSyCgECS6TK2x1Kl8-pfdg6amy6HRUQrAgVQ",
+    authDomain: "maze-hunt-21e11.firebaseapp.com",
+    databaseURL: "https://maze-hunt-21e11-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "maze-hunt-21e11",
+    storageBucket: "maze-hunt-21e11.firebasestorage.app",
+    messagingSenderId: "235556875201",
+    appId: "1:235556875201:web:e572b5e4e70bd464b45d40",
+    measurementId: "G-4X54P4FW44"
 };
 
 let database = null;
@@ -1968,6 +1970,7 @@ function initFirebase() {
     try {
         if (typeof firebase !== 'undefined' && firebaseConfig.apiKey !== 'YOUR_API_KEY') {
             firebase.initializeApp(firebaseConfig);
+            firebase.analytics();
             database = firebase.database();
             firebaseReady = true;
             console.log('Firebase initialized');
