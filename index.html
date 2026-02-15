@@ -4519,7 +4519,11 @@ function initButtons() {
         if (GameState.bgmEnabled) {
             btn.className = 'bgm-btn bgm-on';
             btn.innerHTML = '&#128266; BGM';
-            if (GameState.gameActive) SoundManager.playBGM(GameState.currentStage);
+            if (GameState.gameActive) {
+                SoundManager.playBGM(GameState.currentStage);
+            } else {
+                SoundManager.playBGM('op');
+            }
         } else {
             btn.className = 'bgm-btn bgm-off';
             btn.innerHTML = '&#128263; BGM';
@@ -7249,10 +7253,20 @@ const SoundManager = {
         if (!this.bgmEnabled) return;
 
         const file = this.getBGMFile(stageId);
-        const audio = new Audio(file);
+        const audio = new Audio();
         audio.loop = true;
         audio.volume = 0.3;
-        audio.play().catch(function() {});
+        audio.preload = 'auto';
+        audio.addEventListener('canplaythrough', function handler() {
+            audio.removeEventListener('canplaythrough', handler);
+            audio.play().catch(function(e) {
+                console.warn('BGM play failed:', e.message);
+            });
+        });
+        audio.addEventListener('error', function() {
+            console.warn('BGM load error:', file, audio.error);
+        });
+        audio.src = file;
         this.bgm = audio;
     },
 
@@ -7260,6 +7274,7 @@ const SoundManager = {
         if (this.bgm) {
             this.bgm.pause();
             this.bgm.currentTime = 0;
+            this.bgm.src = '';
             this.bgm = null;
         }
     },
@@ -8942,7 +8957,11 @@ function cleanupGame() {
     OniFootstepManager.stop();
     HeartbeatManager.stop();
     AmbientSoundManager.stop();
-    SoundManager.stopBGM();
+    if (SoundManager.bgmEnabled) {
+        SoundManager.playBGM('op');
+    } else {
+        SoundManager.stopBGM();
+    }
     stopDangerDrone();
     Navigator.reset();
     removeDustParticles();
