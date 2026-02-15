@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>MAZE HUNT</title>
 <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 <style>
 /* ============================================
    CSS Variables - Neon Theme
@@ -563,6 +565,253 @@ body {
 }
 
 /* ============================================
+   Story Mode - Stage Select
+   ============================================ */
+#story-screen {
+    justify-content: flex-start;
+    padding-top: 40px;
+}
+.stage-select-title {
+    font-size: 20px;
+    letter-spacing: 4px;
+    color: var(--neon-green);
+    text-shadow: 0 0 10px var(--neon-green-glow);
+    margin-bottom: 20px;
+    text-transform: uppercase;
+}
+.stage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    max-width: 380px;
+}
+.stage-btn {
+    width: 100%;
+    padding: 14px 16px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--neon-green);
+    border: 1px solid var(--neon-green-dim);
+    text-align: left;
+    transition: all 0.2s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.stage-btn:hover:not(:disabled) {
+    border-color: var(--neon-green);
+    box-shadow: 0 0 12px var(--neon-green-glow);
+    transform: translateY(-2px);
+}
+.stage-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+.stage-btn .stage-name {
+    font-size: 14px;
+    letter-spacing: 2px;
+}
+.stage-btn .stage-info {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.stage-btn.stage-locked::after {
+    content: '🔒';
+    font-size: 14px;
+}
+.stage-btn.stage-cleared::before {
+    content: '✓ ';
+    color: var(--neon-green);
+}
+.stage-btn-final {
+    border-color: var(--matrix-red);
+    color: var(--matrix-red);
+}
+.stage-btn-final:hover:not(:disabled) {
+    box-shadow: 0 0 12px var(--matrix-red-glow);
+}
+.stage-btn-hidden {
+    border-color: var(--neon-purple);
+    color: var(--neon-purple);
+    text-shadow: 0 0 8px rgba(180, 80, 255, 0.4);
+}
+.stage-btn-hidden:hover:not(:disabled) {
+    box-shadow: 0 0 12px rgba(180, 80, 255, 0.5);
+}
+.back-btn {
+    margin-top: 16px;
+    width: 100%;
+    max-width: 380px;
+    padding: 10px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid rgba(0, 170, 42, 0.3);
+    text-align: center;
+    transition: all 0.2s;
+}
+.back-btn:hover {
+    color: var(--neon-green);
+    border-color: var(--neon-green-dim);
+}
+
+/* ============================================
+   Lobby Modal
+   ============================================ */
+.lobby-mode-select {
+    display: flex;
+    gap: 6px;
+    margin: 12px 0;
+}
+.lobby-mode-btn {
+    flex: 1;
+    padding: 8px 4px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid rgba(0, 170, 42, 0.3);
+    text-align: center;
+    transition: all 0.2s;
+}
+.lobby-mode-btn.active {
+    color: var(--neon-green);
+    border-color: var(--neon-green);
+    box-shadow: 0 0 6px var(--neon-green-glow);
+}
+.lobby-mode-btn:hover {
+    color: var(--neon-green);
+}
+
+/* ============================================
+   Lobby Waiting Screen
+   ============================================ */
+#lobby-screen {
+    justify-content: flex-start;
+    padding-top: 40px;
+}
+.lobby-header {
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--neon-green-dim);
+    margin-bottom: 6px;
+}
+.lobby-room-id {
+    font-size: 22px;
+    letter-spacing: 4px;
+    color: var(--neon-green);
+    text-shadow: 0 0 10px var(--neon-green-glow);
+    margin-bottom: 4px;
+}
+.lobby-link-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.lobby-link {
+    font-size: 11px;
+    color: var(--text-dim);
+    word-break: break-all;
+}
+.copy-btn {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--neon-green);
+    border: 1px solid var(--neon-green-dim);
+    transition: all 0.2s;
+}
+.copy-btn:hover {
+    box-shadow: 0 0 6px var(--neon-green-glow);
+}
+.lobby-mode-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+}
+.player-slot {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    border: 1px solid rgba(0, 170, 42, 0.2);
+    font-size: 13px;
+    gap: 10px;
+}
+.player-slot .player-badge {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.player-slot .player-name {
+    flex: 1;
+}
+.player-slot.slot-empty {
+    opacity: 0.3;
+    border-style: dashed;
+}
+.player-slot.slot-p1 { border-color: #ff3296; }
+.player-slot.slot-p2 { border-color: #00dcff; }
+.player-slot.slot-p3 { border-color: #ffdc00; }
+.player-slot.slot-p4 { border-color: #b450ff; }
+
+/* ============================================
+   Notification Toast
+   ============================================ */
+#notification {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-80px);
+    z-index: 300;
+    background: var(--bg-panel);
+    border: 1px solid var(--neon-green);
+    box-shadow: 0 0 16px var(--neon-green-glow);
+    padding: 12px 24px;
+    font-size: 14px;
+    letter-spacing: 2px;
+    color: var(--neon-green);
+    text-shadow: 0 0 8px var(--neon-green-glow);
+    pointer-events: none;
+    transition: transform 0.4s ease;
+}
+#notification.show {
+    transform: translateX(-50%) translateY(0);
+}
+#notification.error {
+    border-color: var(--matrix-red);
+    color: var(--matrix-red);
+    text-shadow: 0 0 8px var(--matrix-red-glow);
+    box-shadow: 0 0 16px var(--matrix-red-glow);
+}
+
+/* ============================================
+   Hidden Stage Unlock Flash
+   ============================================ */
+#unlock-flash {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(224, 32, 32, 0.6);
+    z-index: 250;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+/* ============================================
    Error Animation
    ============================================ */
 @keyframes errorShake {
@@ -694,12 +943,41 @@ body {
         </div>
     </div>
 
+    <!-- ========== Story Mode - Stage Select ========== -->
+    <div id="story-screen" class="screen">
+        <div class="stage-select-title">STORY MODE</div>
+        <div class="stage-list" id="stage-list"></div>
+        <button class="back-btn" id="btn-back-title" data-i18n="backToTitle">タイトルに戻る</button>
+    </div>
+
+    <!-- ========== Lobby Waiting Screen ========== -->
+    <div id="lobby-screen" class="screen">
+        <div class="lobby-header">ONLINE ROOM</div>
+        <div class="lobby-room-id" id="lobby-room-display">------</div>
+        <div class="lobby-link-row">
+            <span class="lobby-link" id="lobby-link-url"></span>
+            <button class="copy-btn" id="btn-copy-link" data-i18n="copy">コピー</button>
+        </div>
+        <div class="lobby-mode-label" id="lobby-mode-display"></div>
+        <div id="lobby-player-list"></div>
+        <div class="btn-group" style="max-width:380px;margin-top:16px;">
+            <button id="btn-start-game" class="btn btn-neon" disabled data-i18n="startGame">ゲーム開始</button>
+            <button id="btn-leave-lobby" class="btn btn-thin" data-i18n="leaveLobby">退出する</button>
+        </div>
+    </div>
+
     <!-- ========== Game Screen (placeholder) ========== -->
     <div id="game-screen" class="screen">
         <div id="game-canvas-container"></div>
     </div>
 
 </div>
+
+<!-- Notification Toast -->
+<div id="notification"></div>
+
+<!-- Hidden Stage Unlock Flash -->
+<div id="unlock-flash"></div>
 
 <!-- ============================================
      Layer 100: CRT Overlay
@@ -756,10 +1034,81 @@ body {
     </div>
 </div>
 
+<!-- Lobby Modal -->
+<div id="lobby-modal" class="modal-overlay">
+    <div class="modal-box">
+        <button class="modal-close" onclick="hideModal('lobby-modal')">&times;</button>
+        <div class="modal-title">MULTIPLAYER</div>
+        <div class="modal-body">
+            <div class="input-label">ROOM ID</div>
+            <input type="text" id="room-id-input" class="neon-input" placeholder="ルームIDを入力..." maxlength="6" autocomplete="off" style="text-transform:uppercase;">
+            <div style="font-size:11px;color:var(--text-dim);margin-top:6px;line-height:1.6;" data-i18n-html="lobbyHint">
+                同じルームIDを入力したプレイヤー<br>同士がマッチングします
+            </div>
+            <div class="input-label" style="margin-top:14px;" data-i18n="battleMode">対戦モード</div>
+            <div class="lobby-mode-select">
+                <button class="lobby-mode-btn active" data-mode="freeForAll" data-i18n="ffa">個人戦</button>
+                <button class="lobby-mode-btn" data-mode="teamBattle" data-i18n="team">チーム戦</button>
+                <button class="lobby-mode-btn" data-mode="coop" data-i18n="coop">協力</button>
+            </div>
+            <div class="btn-group" style="margin-top:14px;">
+                <button id="btn-join-room" class="btn btn-neon" data-i18n="joinRoom">ルームに参加</button>
+                <button class="btn btn-thin" onclick="hideModal('lobby-modal')" data-i18n="cancel">キャンセル</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ============================================
      JavaScript
      ============================================ -->
 <script>
+/* ============================================
+   Firebase Initialization (Placeholder Config)
+   ============================================ */
+const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+    projectId: "YOUR_PROJECT",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+};
+
+let database = null;
+let firebaseReady = false;
+
+function initFirebase() {
+    try {
+        if (typeof firebase !== 'undefined' && firebaseConfig.apiKey !== 'YOUR_API_KEY') {
+            firebase.initializeApp(firebaseConfig);
+            database = firebase.database();
+            firebaseReady = true;
+            console.log('Firebase initialized');
+        } else {
+            console.log('Firebase: running in offline mode (placeholder config)');
+        }
+    } catch (e) {
+        console.warn('Firebase init error:', e);
+    }
+}
+
+/* ============================================
+   Stage Definitions
+   ============================================ */
+const STAGES = [
+    { id: 1, name: 'STAGE 1', theme: '地下研究所', themeEn: 'Cyber Lab', size: '10x10', floors: 1, oni: 1, time: 90 },
+    { id: 2, name: 'STAGE 2', theme: '廃工場', themeEn: 'Abandoned Factory', size: '12x12', floors: 1, oni: 1, time: 120 },
+    { id: 3, name: 'STAGE 3', theme: '夜の西洋街路', themeEn: 'Night Streets', size: '16x16', floors: 2, oni: 2, time: 180 },
+    { id: 4, name: 'STAGE 4', theme: '江戸の夜村', themeEn: 'Edo Night Village', size: '20x20', floors: 2, oni: 3, time: 210 },
+    { id: 5, name: 'FINAL STAGE', theme: '崩壊データセンター', themeEn: 'Collapsed Data Center', size: '24x24', floors: 3, oni: 4, time: 270 },
+];
+
+const HIDDEN_STAGE = { id: 'hidden', name: '???', theme: '廃寺・鳥居', themeEn: 'Cursed Temple', size: '28x28', floors: 3, oni: 5, time: 240 };
+
+const STAGE_DISPLAY_NAMES = { 1: 'STAGE 1', 2: 'STAGE 2', 3: 'STAGE 3', 4: 'STAGE 4', 5: 'FINAL STAGE', hidden: '???' };
+
 /* ============================================
    GameState
    ============================================ */
@@ -771,9 +1120,46 @@ const GameState = {
     bgmEnabled: false,
     username: '',
     isGuest: false,
+    deviceId: null,
     hiddenStageUnlocked: false,
     storyClearedStage5: false,
+    currentStage: 1,
+    clearedStages: [],
+
+    // Multiplayer
+    roomId: null,
+    multiMode: 'freeForAll',
+    playerIndex: null,
+    isHost: false,
+    players: {},
+    maxPlayers: 4,
 };
+
+/* ============================================
+   Device ID
+   ============================================ */
+function getDeviceId() {
+    let id = localStorage.getItem('maze_hunt_device_id');
+    if (!id) {
+        id = 'dev_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('maze_hunt_device_id', id);
+    }
+    return id;
+}
+
+/* ============================================
+   Notification
+   ============================================ */
+let notifTimer = null;
+function showNotification(msg, isError) {
+    const el = document.getElementById('notification');
+    el.textContent = msg;
+    el.className = isError ? 'error' : '';
+    void el.offsetWidth;
+    el.classList.add('show');
+    clearTimeout(notifTimer);
+    notifTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
 
 /* ============================================
    Screen Management
@@ -975,14 +1361,420 @@ function initCatchcopy() {
 }
 
 /* ============================================
+   User Registration / Guest
+   ============================================ */
+async function registerUser() {
+    const input = document.getElementById('username-input');
+    const errorEl = document.getElementById('username-error');
+    const name = input.value.trim();
+
+    if (!name) {
+        errorEl.textContent = GameState.language === 'ja' ? 'ユーザーネームを入力してください' : 'Please enter a username';
+        input.classList.add('error-shake');
+        setTimeout(() => input.classList.remove('error-shake'), 400);
+        return false;
+    }
+
+    if (name.length < 2 || name.length > 16) {
+        errorEl.textContent = GameState.language === 'ja' ? '2〜16文字で入力してください' : 'Must be 2-16 characters';
+        input.classList.add('error-shake');
+        setTimeout(() => input.classList.remove('error-shake'), 400);
+        return false;
+    }
+
+    // Firebase duplicate check
+    if (firebaseReady) {
+        try {
+            const snap = await database.ref('users/' + name).once('value');
+            if (snap.exists()) {
+                const data = snap.val();
+                if (data.deviceId !== GameState.deviceId) {
+                    errorEl.textContent = GameState.language === 'ja' ? 'このネームは他のユーザーが使用中です' : 'This name is already taken';
+                    input.classList.add('error-shake');
+                    setTimeout(() => input.classList.remove('error-shake'), 400);
+                    return false;
+                }
+                // Same device = re-login
+                GameState.storyClearedStage5 = data.stats?.storyClearedStage5 || false;
+                GameState.hiddenStageUnlocked = data.stats?.hiddenStageUnlocked || false;
+                GameState.clearedStages = data.stats?.clearedStages || [];
+            } else {
+                // New user registration
+                await database.ref('users/' + name).set({
+                    deviceId: GameState.deviceId,
+                    createdAt: firebase.database.ServerValue.TIMESTAMP,
+                    stats: {
+                        plays: 0,
+                        storyCleared: false,
+                        storyClearedStage5: false,
+                        hiddenStageUnlocked: false,
+                        bestScoreAttack: 0,
+                        bestStage: 0,
+                        clearedStages: []
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn('Firebase user check failed:', e);
+        }
+    }
+
+    errorEl.textContent = '';
+    GameState.username = name;
+    GameState.isGuest = false;
+    localStorage.setItem('maze_hunt_username', name);
+    return true;
+}
+
+function guestLogin() {
+    GameState.username = 'PLAYER 1';
+    GameState.isGuest = true;
+}
+
+/* ============================================
+   Hidden Stage Unlock (AWDS)
+   ============================================ */
+function checkHiddenUnlock(value) {
+    if (value.toUpperCase() !== 'AWDS') return;
+
+    if (firebaseReady && GameState.storyClearedStage5) {
+        // Verify with Firebase
+        database.ref('users/' + GameState.username).once('value').then(snap => {
+            const data = snap.val();
+            if (data && data.stats && data.stats.storyClearedStage5 === true) {
+                unlockHiddenStage();
+            }
+        });
+    } else if (!firebaseReady && GameState.storyClearedStage5) {
+        // Offline mode: trust local flag
+        unlockHiddenStage();
+    }
+    // If stage 5 not cleared, silently ignore
+    document.getElementById('username-input').value = '';
+}
+
+function unlockHiddenStage() {
+    GameState.hiddenStageUnlocked = true;
+    if (firebaseReady && GameState.username) {
+        database.ref('users/' + GameState.username + '/stats/hiddenStageUnlocked').set(true);
+    }
+
+    // Red flash effect
+    const flash = document.getElementById('unlock-flash');
+    flash.style.opacity = '1';
+    setTimeout(() => { flash.style.opacity = '0'; }, 150);
+    showNotification('??? UNLOCKED');
+}
+
+/* ============================================
+   Stage Select
+   ============================================ */
+function buildStageList() {
+    const list = document.getElementById('stage-list');
+    list.innerHTML = '';
+    const lang = GameState.language;
+
+    STAGES.forEach((stage, i) => {
+        const btn = document.createElement('button');
+        const isCleared = GameState.clearedStages.includes(stage.id);
+        const isUnlocked = i === 0 || GameState.clearedStages.includes(STAGES[i - 1].id);
+
+        btn.className = 'stage-btn';
+        if (stage.id === 5) btn.classList.add('stage-btn-final');
+        if (isCleared) btn.classList.add('stage-cleared');
+        if (!isUnlocked) { btn.classList.add('stage-locked'); btn.disabled = true; }
+
+        const theme = lang === 'ja' ? stage.theme : stage.themeEn;
+        btn.innerHTML = `<span class="stage-name">${stage.name}</span><span class="stage-info">${theme} | ${stage.size} | ${stage.floors}F | ${stage.time}s</span>`;
+
+        btn.addEventListener('click', () => {
+            if (!isUnlocked) return;
+            GameState.currentStage = stage.id;
+            GameState.gameMode = 'story';
+            showNotification(stage.name);
+            // Game start will happen in Phase 3+
+        });
+        list.appendChild(btn);
+    });
+
+    // Hidden stage
+    if (GameState.hiddenStageUnlocked) {
+        const btn = document.createElement('button');
+        btn.className = 'stage-btn stage-btn-hidden';
+        const theme = lang === 'ja' ? HIDDEN_STAGE.theme : HIDDEN_STAGE.themeEn;
+        btn.innerHTML = `<span class="stage-name">${HIDDEN_STAGE.name}</span><span class="stage-info">${theme} | ${HIDDEN_STAGE.size} | ${HIDDEN_STAGE.floors}F | ${HIDDEN_STAGE.time}s</span>`;
+        btn.addEventListener('click', () => {
+            GameState.currentStage = 'hidden';
+            GameState.gameMode = 'story';
+            showNotification('??? STAGE');
+        });
+        list.appendChild(btn);
+    }
+}
+
+/* ============================================
+   Ranking (Firebase)
+   ============================================ */
+function loadRankings(gameMode) {
+    const listEl = document.getElementById('ranking-list');
+    const lang = GameState.language === 'ja';
+    const noData = lang ? 'データなし' : 'No data';
+
+    if (!firebaseReady) {
+        listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
+        return;
+    }
+
+    listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:20px 0;">Loading...</div>`;
+
+    database.ref('rankings')
+        .orderByChild('score')
+        .limitToLast(50)
+        .once('value')
+        .then(snap => {
+            const entries = [];
+            snap.forEach(child => {
+                const d = child.val();
+                if (d.gameMode === gameMode) entries.push(d);
+            });
+            entries.sort((a, b) => b.score - a.score);
+
+            if (entries.length === 0) {
+                listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
+                return;
+            }
+
+            listEl.innerHTML = entries.map((e, i) =>
+                `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${e.score}</span></div>`
+            ).join('');
+        })
+        .catch(() => {
+            listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
+        });
+}
+
+/* ============================================
+   Lobby (Multiplayer)
+   ============================================ */
+function generateRoomId() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let id = '';
+    for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+    return id;
+}
+
+function joinRoom() {
+    const input = document.getElementById('room-id-input');
+    let roomId = input.value.trim().toUpperCase();
+    if (!roomId) roomId = generateRoomId();
+    if (roomId.length !== 6) {
+        showNotification(GameState.language === 'ja' ? 'ルームIDは6文字です' : 'Room ID must be 6 characters', true);
+        return;
+    }
+
+    GameState.roomId = roomId;
+    hideModal('lobby-modal');
+    showScreen('lobby-screen');
+    updateLobbyDisplay();
+
+    if (firebaseReady) {
+        const roomRef = database.ref('rooms/' + roomId);
+        roomRef.once('value').then(snap => {
+            if (!snap.exists()) {
+                // Create room
+                GameState.isHost = true;
+                GameState.playerIndex = 0;
+                roomRef.set({
+                    status: 'waiting',
+                    gameMode: GameState.multiMode,
+                    currentStage: 1,
+                    maxStages: 5,
+                    host: GameState.deviceId,
+                    players: {
+                        0: {
+                            username: GameState.username || 'PLAYER 1',
+                            deviceId: GameState.deviceId,
+                            alive: true
+                        }
+                    }
+                });
+            } else {
+                // Join existing room
+                const data = snap.val();
+                const playerCount = Object.keys(data.players || {}).length;
+                if (playerCount >= 4) {
+                    showNotification(GameState.language === 'ja' ? 'ルームが満員です' : 'Room is full', true);
+                    showScreen('title-screen');
+                    return;
+                }
+                GameState.isHost = false;
+                GameState.playerIndex = playerCount;
+                GameState.multiMode = data.gameMode;
+                roomRef.child('players/' + playerCount).set({
+                    username: GameState.username || ('PLAYER ' + (playerCount + 1)),
+                    deviceId: GameState.deviceId,
+                    alive: true
+                });
+            }
+            updateLobbyDisplay();
+
+            // Listen for player changes
+            roomRef.child('players').on('value', snap => {
+                GameState.players = snap.val() || {};
+                updateLobbyPlayerList();
+            });
+        });
+    } else {
+        // Offline mock
+        GameState.isHost = true;
+        GameState.playerIndex = 0;
+        GameState.players = { 0: { username: GameState.username || 'PLAYER 1' } };
+        updateLobbyPlayerList();
+    }
+}
+
+function updateLobbyDisplay() {
+    document.getElementById('lobby-room-display').textContent = GameState.roomId || '------';
+    const baseUrl = window.location.origin + window.location.pathname;
+    document.getElementById('lobby-link-url').textContent = baseUrl + '?room=' + (GameState.roomId || '');
+
+    const modeNames = {
+        ja: { freeForAll: '個人戦', teamBattle: 'チーム戦', coop: '協力' },
+        en: { freeForAll: 'Free For All', teamBattle: 'Team Battle', coop: 'Co-op' }
+    };
+    document.getElementById('lobby-mode-display').textContent =
+        (GameState.language === 'ja' ? 'モード: ' : 'Mode: ') +
+        modeNames[GameState.language][GameState.multiMode];
+
+    // Host-only start button
+    const startBtn = document.getElementById('btn-start-game');
+    if (!GameState.isHost) {
+        startBtn.textContent = GameState.language === 'ja' ? 'ホストの開始を待っています...' : 'Waiting for host...';
+        startBtn.disabled = true;
+    }
+}
+
+function updateLobbyPlayerList() {
+    const container = document.getElementById('lobby-player-list');
+    const colors = ['#ff3296', '#00dcff', '#ffdc00', '#b450ff'];
+    const labels = ['P1', 'P2', 'P3', 'P4'];
+    container.innerHTML = '';
+
+    for (let i = 0; i < 4; i++) {
+        const p = GameState.players[i];
+        const slot = document.createElement('div');
+        slot.className = 'player-slot slot-p' + (i + 1);
+        if (!p) slot.classList.add('slot-empty');
+
+        const badge = document.createElement('div');
+        badge.className = 'player-badge';
+        badge.style.background = colors[i];
+        if (!p) badge.style.opacity = '0.3';
+
+        const name = document.createElement('span');
+        name.className = 'player-name';
+        if (p) {
+            name.textContent = labels[i] + ': ' + p.username;
+            if (i === GameState.playerIndex) name.textContent += ' ← YOU';
+        } else {
+            name.textContent = labels[i] + ': ' + (GameState.language === 'ja' ? '待機中...' : 'Waiting...');
+        }
+        name.style.color = p ? colors[i] : 'var(--text-dim)';
+
+        slot.appendChild(badge);
+        slot.appendChild(name);
+        container.appendChild(slot);
+    }
+
+    // Enable start if host and 2+ players
+    const playerCount = Object.keys(GameState.players).length;
+    const startBtn = document.getElementById('btn-start-game');
+    if (GameState.isHost && playerCount >= 2) {
+        startBtn.disabled = false;
+        startBtn.textContent = GameState.language === 'ja' ? 'ゲーム開始' : 'Start Game';
+    }
+}
+
+function leaveLobby() {
+    if (firebaseReady && GameState.roomId) {
+        const roomRef = database.ref('rooms/' + GameState.roomId);
+        roomRef.child('players').off();
+        if (GameState.playerIndex !== null) {
+            roomRef.child('players/' + GameState.playerIndex).remove();
+        }
+        // If host, delete room
+        if (GameState.isHost) {
+            roomRef.remove();
+        }
+    }
+    GameState.roomId = null;
+    GameState.playerIndex = null;
+    GameState.isHost = false;
+    GameState.players = {};
+    showScreen('title-screen');
+}
+
+/* ============================================
+   URL Auto-Join
+   ============================================ */
+function checkRoomURL() {
+    const params = new URLSearchParams(window.location.search);
+    const roomId = params.get('room');
+    if (roomId && roomId.length === 6) {
+        document.getElementById('room-id-input').value = roomId.toUpperCase();
+        GameState.multiMode = 'freeForAll';
+        joinRoom();
+    }
+}
+
+/* ============================================
    Button Event Handlers
    ============================================ */
 function initButtons() {
+    // Register button
+    document.getElementById('btn-register').addEventListener('click', async () => {
+        const ok = await registerUser();
+        if (ok) {
+            showScreen('story-screen');
+            buildStageList();
+        }
+    });
+
+    // Guest button
+    document.getElementById('btn-guest').addEventListener('click', () => {
+        guestLogin();
+        showScreen('story-screen');
+        buildStageList();
+    });
+
+    // Score Attack
+    document.getElementById('btn-score').addEventListener('click', async () => {
+        const name = document.getElementById('username-input').value.trim();
+        if (name) {
+            const ok = await registerUser();
+            if (!ok) return;
+        } else {
+            guestLogin();
+        }
+        GameState.gameMode = 'scoreAttack';
+        showNotification(GameState.language === 'ja' ? 'スコアアタック準備中...' : 'Score Attack loading...');
+        // Game start will happen in Phase 3+
+    });
+
+    // Multiplayer
+    document.getElementById('btn-multi').addEventListener('click', () => {
+        showModal('lobby-modal');
+    });
+
+    // Rules
     document.getElementById('btn-rules').addEventListener('click', () => {
         showModal('rule-modal');
     });
+
+    // Ranking
     document.getElementById('btn-ranking').addEventListener('click', () => {
         showModal('ranking-modal');
+        loadRankings('story');
     });
 
     // Ranking tabs
@@ -990,6 +1782,9 @@ function initButtons() {
         tab.addEventListener('click', () => {
             document.querySelectorAll('.ranking-tab').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
+            const mode = tab.dataset.tab;
+            const modeMap = { story: 'story', score: 'scoreAttack', multi: 'freeForAll', coop: 'coop' };
+            loadRankings(modeMap[mode] || mode);
         });
     });
 
@@ -1028,6 +1823,65 @@ function initButtons() {
             }
         });
     });
+
+    // Back to title from stage select
+    document.getElementById('btn-back-title').addEventListener('click', () => {
+        showScreen('title-screen');
+    });
+
+    // Lobby modal - mode select
+    document.querySelectorAll('.lobby-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.lobby-mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            GameState.multiMode = btn.dataset.mode;
+        });
+    });
+
+    // Join room
+    document.getElementById('btn-join-room').addEventListener('click', () => {
+        const name = document.getElementById('username-input').value.trim();
+        if (name) {
+            registerUser().then(ok => { if (ok) joinRoom(); });
+        } else {
+            guestLogin();
+            joinRoom();
+        }
+    });
+
+    // Copy link
+    document.getElementById('btn-copy-link').addEventListener('click', () => {
+        const url = document.getElementById('lobby-link-url').textContent;
+        navigator.clipboard.writeText(url).then(() => {
+            showNotification(GameState.language === 'ja' ? 'コピーしました' : 'Copied!');
+        }).catch(() => {
+            showNotification(GameState.language === 'ja' ? 'コピーに失敗しました' : 'Copy failed', true);
+        });
+    });
+
+    // Leave lobby
+    document.getElementById('btn-leave-lobby').addEventListener('click', leaveLobby);
+
+    // Start game (host)
+    document.getElementById('btn-start-game').addEventListener('click', () => {
+        if (!GameState.isHost) return;
+        showNotification(GameState.language === 'ja' ? 'ゲーム開始準備中...' : 'Starting game...');
+        // Game start will happen in Phase 3+
+    });
+
+    // Hidden stage check on username input
+    document.getElementById('username-input').addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        if (val.length === 4) checkHiddenUnlock(val);
+        // Clear error on input
+        document.getElementById('username-error').textContent = '';
+    });
+
+    // Load saved username
+    const savedName = localStorage.getItem('maze_hunt_username');
+    if (savedName) {
+        document.getElementById('username-input').value = savedName;
+    }
 }
 
 /* ============================================
@@ -1050,6 +1904,21 @@ const i18n = {
         tabMulti: 'マルチ個人戦',
         tabCoop: '協力',
         noData: 'データなし',
+        backToTitle: 'タイトルに戻る',
+        storyMode: 'STORY MODE',
+        startGame: 'ゲーム開始',
+        leaveLobby: '退出する',
+        copy: 'コピー',
+        multiplayer: 'MULTIPLAYER',
+        roomIdPlaceholder: 'ルームIDを入力...',
+        lobbyHint: '同じルームIDを入力したプレイヤー<br>同士がマッチングします',
+        battleMode: '対戦モード',
+        ffa: '個人戦',
+        team: 'チーム戦',
+        coopMode: '協力',
+        joinRoom: 'ルームに参加',
+        cancel: 'キャンセル',
+        waiting: '待機中...',
     },
     en: {
         register: 'Register & Start Game',
@@ -1067,11 +1936,28 @@ const i18n = {
         tabMulti: 'FFA',
         tabCoop: 'Co-op',
         noData: 'No data',
+        backToTitle: 'Back to Title',
+        storyMode: 'STORY MODE',
+        startGame: 'Start Game',
+        leaveLobby: 'Leave Room',
+        copy: 'Copy',
+        multiplayer: 'MULTIPLAYER',
+        roomIdPlaceholder: 'Enter Room ID...',
+        lobbyHint: 'Players with the same Room ID<br>will be matched together',
+        battleMode: 'Battle Mode',
+        ffa: 'FFA',
+        team: 'Team',
+        coopMode: 'Co-op',
+        joinRoom: 'Join Room',
+        cancel: 'Cancel',
+        waiting: 'Waiting...',
     }
 };
 
 function updateLanguage() {
     const lang = i18n[GameState.language];
+
+    // Title screen buttons
     document.getElementById('btn-register').textContent = lang.register;
     document.getElementById('btn-guest').innerHTML = lang.guest;
     document.getElementById('btn-multi').textContent = lang.multi;
@@ -1083,6 +1969,7 @@ function updateLanguage() {
     // Modal titles
     document.querySelector('#rule-modal .modal-title').textContent = lang.ruleTitle;
     document.querySelector('#ranking-modal .modal-title').textContent = lang.rankingTitle;
+    document.querySelector('#lobby-modal .modal-title').textContent = lang.multiplayer;
 
     // Ranking tabs
     const tabs = document.querySelectorAll('.ranking-tab');
@@ -1090,6 +1977,35 @@ function updateLanguage() {
     if (tabs[1]) tabs[1].textContent = lang.tabScore;
     if (tabs[2]) tabs[2].textContent = lang.tabMulti;
     if (tabs[3]) tabs[3].textContent = lang.tabCoop;
+
+    // Stage select
+    const storyTitle = document.querySelector('.stage-select-title');
+    if (storyTitle) storyTitle.textContent = lang.storyMode;
+    document.getElementById('btn-back-title').textContent = lang.backToTitle;
+
+    // Lobby modal
+    document.getElementById('room-id-input').placeholder = lang.roomIdPlaceholder;
+    const lobbyHint = document.querySelector('[data-i18n-html="lobbyHint"]');
+    if (lobbyHint) lobbyHint.innerHTML = lang.lobbyHint;
+    const battleLabel = document.querySelector('[data-i18n="battleMode"]');
+    if (battleLabel) battleLabel.textContent = lang.battleMode;
+
+    // Lobby mode buttons
+    const modebtns = document.querySelectorAll('.lobby-mode-btn');
+    if (modebtns[0]) modebtns[0].textContent = lang.ffa;
+    if (modebtns[1]) modebtns[1].textContent = lang.team;
+    if (modebtns[2]) modebtns[2].textContent = lang.coopMode;
+
+    document.getElementById('btn-join-room').textContent = lang.joinRoom;
+
+    // Lobby screen
+    document.getElementById('btn-leave-lobby').textContent = lang.leaveLobby;
+    document.getElementById('btn-copy-link').textContent = lang.copy;
+
+    // Rebuild stage list if on that screen
+    if (GameState.currentScreen === 'story') buildStageList();
+    // Update lobby display if on lobby screen
+    if (GameState.currentScreen === 'lobby') { updateLobbyDisplay(); updateLobbyPlayerList(); }
 }
 
 /* ============================================
@@ -1107,9 +2023,12 @@ window.addEventListener('resize', () => {
    Initialize
    ============================================ */
 window.addEventListener('DOMContentLoaded', () => {
+    GameState.deviceId = getDeviceId();
+    initFirebase();
     createMatrixBg();
     initCatchcopy();
     initButtons();
+    checkRoomURL();
 });
 </script>
 </body>
