@@ -1259,6 +1259,10 @@ const GameState = {
     animationId: null,
     timeRemaining: 0,
     timerInterval: null,
+
+    // Phase 4: Enemies
+    onis: [],
+    oniSpeedMultiplier: 1.0,
 };
 
 /* ============================================
@@ -2165,6 +2169,22 @@ const STAGE_THEMES = {
     hidden: { fogColor: 0x0c0804, fogDensity: 0.05, pointLightColors: [0xff6600, 0xff4400], pointLightCount: 10, outdoor: true, skyColor: 0x0e0804 },
 };
 
+/* --- ONI Configuration --- */
+const ONI_CONFIG = {
+    baseSpeed: 3.2,
+    stairSpeedMul: 0.7,
+    pathRecalcInterval: 0.5,
+    catchDistance: 1.2,
+    eyeLightColor: 0xff0000,
+    eyeLightIntensity: 2.0,
+    eyeLightDistance: 8,
+    bodyLightColor: 0xff1010,
+    bodyLightIntensity: 0.8,
+    bodyLightDistance: 6,
+    emissiveColor: 0x220000,
+    emissiveIntensity: 0.1,
+};
+
 /* --- Three.js Globals --- */
 let renderer, scene, camera, flashlight, clock;
 let wallMeshes = [];
@@ -2440,6 +2460,541 @@ function updatePlayerY() {
     } else {
         camera.position.y = currentFloor * FLOOR_H + PLAYER_HEIGHT;
         GameState.onStairs = false;
+    }
+}
+
+/* ============================================
+   Phase 4: ONI (Enemy) System
+   ============================================ */
+
+/* --- C1: Create ONI Model --- */
+function createOniModel() {
+    const human = new THREE.Group();
+    const SEG = 16;
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0xcc1818, roughness: 0.38, metalness: 0.05,
+        emissive: 0x330000, emissiveIntensity: 0.15
+    });
+
+    // === HEAD ===
+    const headG = new THREE.Group();
+    headG.position.y = 1.63;
+
+    const cranium = new THREE.Mesh(new THREE.SphereGeometry(0.2, SEG * 2, SEG), mat);
+    cranium.scale.set(0.92, 1.08, 0.96);
+    headG.add(cranium);
+
+    const faceFront = new THREE.Mesh(new THREE.SphereGeometry(0.17, SEG, SEG), mat);
+    faceFront.position.set(0, -0.03, 0.06);
+    faceFront.scale.set(0.88, 0.95, 0.45);
+    headG.add(faceFront);
+
+    const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.13, SEG, 10), mat);
+    jaw.position.set(0, -0.12, 0.04);
+    jaw.scale.set(0.85, 0.65, 0.75);
+    headG.add(jaw);
+
+    const chin = new THREE.Mesh(new THREE.SphereGeometry(0.05, SEG, 8), mat);
+    chin.position.set(0, -0.18, 0.08);
+    chin.scale.set(0.85, 0.6, 0.7);
+    headG.add(chin);
+
+    const browRidge = new THREE.Mesh(new THREE.SphereGeometry(0.1, SEG, 8), mat);
+    browRidge.position.set(0, 0.06, 0.14);
+    browRidge.scale.set(1.6, 0.35, 0.5);
+    headG.add(browRidge);
+
+    const noseBridge = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.07, 8), mat);
+    noseBridge.position.set(0, 0, 0.2);
+    noseBridge.rotation.x = -0.2;
+    headG.add(noseBridge);
+
+    const noseTip = new THREE.Mesh(new THREE.SphereGeometry(0.028, 10, 8), mat);
+    noseTip.position.set(0, -0.04, 0.22);
+    noseTip.scale.set(1, 0.7, 0.8);
+    headG.add(noseTip);
+
+    for (const sx of [-1, 1]) {
+        const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat);
+        cheek.position.set(sx * 0.12, -0.04, 0.1);
+        cheek.scale.set(0.8, 0.7, 0.6);
+        headG.add(cheek);
+
+        const ear = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 8), mat);
+        ear.position.set(sx * 0.2, 0, 0);
+        ear.scale.set(0.35, 1.1, 0.7);
+        headG.add(ear);
+    }
+
+    const lipBump = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), mat);
+    lipBump.position.set(0, -0.1, 0.18);
+    lipBump.scale.set(1.4, 0.5, 0.5);
+    headG.add(lipBump);
+
+    human.add(headG);
+
+    // === NECK ===
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.075, 0.12, SEG), mat);
+    neck.position.y = 1.46;
+    human.add(neck);
+
+    // === TORSO ===
+    const upperChest = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.21, 0.2, SEG), mat);
+    upperChest.position.y = 1.32;
+    human.add(upperChest);
+
+    const chestFront = new THREE.Mesh(new THREE.SphereGeometry(0.19, SEG, SEG), mat);
+    chestFront.position.set(0, 1.28, 0.04);
+    chestFront.scale.set(1.15, 0.55, 0.6);
+    human.add(chestFront);
+
+    for (const sx of [-1, 1]) {
+        const pec = new THREE.Mesh(new THREE.SphereGeometry(0.1, SEG, 10), mat);
+        pec.position.set(sx * 0.08, 1.28, 0.08);
+        pec.scale.set(1, 0.65, 0.6);
+        human.add(pec);
+    }
+
+    const midTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.18, 0.18, SEG), mat);
+    midTorso.position.y = 1.14;
+    human.add(midTorso);
+
+    const back = new THREE.Mesh(new THREE.SphereGeometry(0.18, SEG, 10), mat);
+    back.position.set(0, 1.22, -0.05);
+    back.scale.set(1.1, 0.8, 0.5);
+    human.add(back);
+
+    const absTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.16, 0.15, SEG), mat);
+    absTorso.position.y = 1.0;
+    human.add(absTorso);
+
+    const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.1, SEG), mat);
+    waist.position.y = 0.9;
+    human.add(waist);
+
+    const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.18, SEG, 12), mat);
+    pelvis.position.y = 0.84;
+    pelvis.scale.set(1.05, 0.5, 0.7);
+    human.add(pelvis);
+
+    for (const sx of [-1, 1]) {
+        const glute = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 10), mat);
+        glute.position.set(sx * 0.06, 0.8, -0.06);
+        glute.scale.set(1, 0.8, 0.9);
+        human.add(glute);
+
+        const delt = new THREE.Mesh(new THREE.SphereGeometry(0.085, SEG, 10), mat);
+        delt.position.set(sx * 0.24, 1.36, 0);
+        delt.scale.set(0.9, 0.85, 0.8);
+        human.add(delt);
+
+        const trap = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.07, 0.15, 8), mat);
+        trap.position.set(sx * 0.12, 1.42, -0.02);
+        trap.rotation.z = sx * 0.7;
+        human.add(trap);
+    }
+
+    // === ARMS ===
+    function buildArm(sign) {
+        const upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, 0.28, SEG), mat);
+        upperArm.position.set(sign * 0.27, 1.2, 0);
+        human.add(upperArm);
+
+        const bicep = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), mat);
+        bicep.position.set(sign * 0.27, 1.22, 0.02);
+        bicep.scale.set(0.85, 1.2, 0.85);
+        human.add(bicep);
+
+        const tricep = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), mat);
+        tricep.position.set(sign * 0.27, 1.18, -0.025);
+        tricep.scale.set(0.8, 1.1, 0.75);
+        human.add(tricep);
+
+        const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.045, SEG, 10), mat);
+        elbow.position.set(sign * 0.27, 1.04, 0);
+        human.add(elbow);
+
+        const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.048, 0.27, SEG), mat);
+        forearm.position.set(sign * 0.27, 0.88, 0);
+        human.add(forearm);
+
+        const forearmMuscle = new THREE.Mesh(new THREE.SphereGeometry(0.042, 8, 8), mat);
+        forearmMuscle.position.set(sign * 0.27, 0.93, 0.01);
+        forearmMuscle.scale.set(0.85, 1.4, 0.8);
+        human.add(forearmMuscle);
+
+        const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.033, 0.04, 10), mat);
+        wrist.position.set(sign * 0.27, 0.73, 0);
+        human.add(wrist);
+
+        const palm = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.085, 0.028), mat);
+        palm.position.set(sign * 0.27, 0.665, 0);
+        human.add(palm);
+
+        const palmFlesh = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), mat);
+        palmFlesh.position.set(sign * 0.27, 0.665, 0.005);
+        palmFlesh.scale.set(0.9, 1.2, 0.5);
+        human.add(palmFlesh);
+
+        // Fingers
+        for (let f = 0; f < 4; f++) {
+            const fX = sign * 0.27 + (f - 1.5) * 0.013 * sign;
+            const finger = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.009, 0.065, 6), mat);
+            finger.position.set(fX, 0.61, 0);
+            human.add(finger);
+            const tip = new THREE.Mesh(new THREE.SphereGeometry(0.009, 6, 6), mat);
+            tip.position.set(fX, 0.575, 0);
+            human.add(tip);
+        }
+
+        // Thumb
+        const thumb = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.011, 0.05, 6), mat);
+        thumb.position.set(sign * 0.27 + sign * 0.03, 0.65, 0.015);
+        thumb.rotation.z = -sign * 0.5;
+        human.add(thumb);
+        const thumbTip = new THREE.Mesh(new THREE.SphereGeometry(0.011, 6, 6), mat);
+        thumbTip.position.set(sign * 0.27 + sign * 0.04, 0.635, 0.015);
+        human.add(thumbTip);
+    }
+    buildArm(-1);
+    buildArm(1);
+
+    // === LEGS ===
+    function buildLeg(sign) {
+        const hip = new THREE.Mesh(new THREE.SphereGeometry(0.065, SEG, 10), mat);
+        hip.position.set(sign * 0.09, 0.78, 0);
+        human.add(hip);
+
+        const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.35, SEG), mat);
+        thigh.position.set(sign * 0.1, 0.58, 0);
+        human.add(thigh);
+
+        const quad = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), mat);
+        quad.position.set(sign * 0.1, 0.62, 0.03);
+        quad.scale.set(0.9, 1.5, 0.75);
+        human.add(quad);
+
+        const hamstring = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), mat);
+        hamstring.position.set(sign * 0.1, 0.6, -0.03);
+        hamstring.scale.set(0.85, 1.3, 0.7);
+        human.add(hamstring);
+
+        const inner = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), mat);
+        inner.position.set(sign * 0.07, 0.65, 0);
+        inner.scale.set(0.6, 1.3, 0.8);
+        human.add(inner);
+
+        const knee = new THREE.Mesh(new THREE.SphereGeometry(0.048, SEG, 10), mat);
+        knee.position.set(sign * 0.1, 0.39, 0);
+        human.add(knee);
+
+        const kneecap = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), mat);
+        kneecap.position.set(sign * 0.1, 0.39, 0.04);
+        kneecap.scale.set(0.9, 0.8, 0.5);
+        human.add(kneecap);
+
+        const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.035, 0.34, SEG), mat);
+        shin.position.set(sign * 0.1, 0.2, 0);
+        human.add(shin);
+
+        const calf = new THREE.Mesh(new THREE.SphereGeometry(0.048, 10, 8), mat);
+        calf.position.set(sign * 0.1, 0.28, -0.025);
+        calf.scale.set(0.8, 1.5, 0.8);
+        human.add(calf);
+
+        const shinFront = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), mat);
+        shinFront.position.set(sign * 0.1, 0.24, 0.02);
+        shinFront.scale.set(0.7, 1.8, 0.5);
+        human.add(shinFront);
+
+        const ankle = new THREE.Mesh(new THREE.SphereGeometry(0.032, 10, 8), mat);
+        ankle.position.set(sign * 0.1, 0.03, 0);
+        human.add(ankle);
+
+        const achilles = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.028, 0.08, 8), mat);
+        achilles.position.set(sign * 0.1, 0.06, -0.02);
+        human.add(achilles);
+
+        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.045, 0.18), mat);
+        foot.position.set(sign * 0.1, 0.0, 0.03);
+        human.add(foot);
+
+        const footTop = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), mat);
+        footTop.position.set(sign * 0.1, 0.025, 0.04);
+        footTop.scale.set(0.9, 0.45, 1.5);
+        human.add(footTop);
+
+        const toeArea = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), mat);
+        toeArea.position.set(sign * 0.1, 0.01, 0.11);
+        toeArea.scale.set(1, 0.45, 0.6);
+        human.add(toeArea);
+
+        const heel = new THREE.Mesh(new THREE.SphereGeometry(0.032, 8, 6), mat);
+        heel.position.set(sign * 0.1, 0.015, -0.05);
+        heel.scale.set(0.85, 0.5, 0.7);
+        human.add(heel);
+    }
+    buildLeg(-1);
+    buildLeg(1);
+
+    // === Internal Lights ===
+    const innerLight = new THREE.PointLight(0xff2020, 1.5, 4);
+    innerLight.position.set(0, 1.1, 0);
+    human.add(innerLight);
+
+    const headLight = new THREE.PointLight(0xff2020, 3, 18);
+    headLight.position.set(0, 2.5, 0);
+    human.add(headLight);
+
+    const bodyLight = new THREE.PointLight(0xff1010, 2, 12);
+    bodyLight.position.set(0, 1.2, 0.3);
+    human.add(bodyLight);
+
+    const faceLight = new THREE.PointLight(0xff2020, 1.5, 8);
+    faceLight.position.set(0, 1.63, 0.3);
+    human.add(faceLight);
+
+    // === userData refs ===
+    human.userData.headGroup = headG;
+    human.userData.chestMesh = upperChest;
+
+    return human;
+}
+
+/* --- C2: Add ONI Lights --- */
+function addOniLights(oniGroup, stageId) {
+    const eyeR = new THREE.PointLight(0xff0000, 2.0, 8);
+    eyeR.position.set(0.12, 1.65, 0.15);
+    oniGroup.add(eyeR);
+    const eyeL = new THREE.PointLight(0xff0000, 2.0, 8);
+    eyeL.position.set(-0.12, 1.65, 0.15);
+    oniGroup.add(eyeL);
+    const bodyColor = (stageId === 5) ? 0xff4400 : 0xff1010;
+    const bodyLight = new THREE.PointLight(bodyColor, 0.8, 6);
+    bodyLight.position.set(0, 1.1, 0);
+    oniGroup.add(bodyLight);
+}
+
+/* --- C3: BFS Pathfinding --- */
+function key3D(node) { return `${node.floor}-${node.x}-${node.z}`; }
+
+function getPassableNeighbors(grid, current) {
+    const neighbors = [];
+    const cell = grid[current.z][current.x];
+    const cols = grid[0].length;
+    const rows = grid.length;
+    if (!cell.top && current.z > 0) neighbors.push({ x: current.x, z: current.z - 1 });
+    if (!cell.bottom && current.z < rows - 1) neighbors.push({ x: current.x, z: current.z + 1 });
+    if (!cell.left && current.x > 0) neighbors.push({ x: current.x - 1, z: current.z });
+    if (!cell.right && current.x < cols - 1) neighbors.push({ x: current.x + 1, z: current.z });
+    return neighbors;
+}
+
+function reconstructPath3D(parent, start, goal) {
+    const path = [];
+    let current = goal;
+    const startKey = key3D(start);
+    while (key3D(current) !== startKey) {
+        path.unshift(current);
+        current = parent[key3D(current)];
+        if (!current) return [];
+    }
+    return path;
+}
+
+function bfsPathfind3D(floors, start, goal) {
+    const queue = [start];
+    const visited = new Set();
+    const parent = {};
+    visited.add(key3D(start));
+
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (current.x === goal.x && current.z === goal.z && current.floor === goal.floor) {
+            return reconstructPath3D(parent, start, goal);
+        }
+        // Same-floor neighbors
+        for (const neighbor of getPassableNeighbors(floors[current.floor], current)) {
+            const node = { x: neighbor.x, z: neighbor.z, floor: current.floor };
+            const k = key3D(node);
+            if (!visited.has(k)) {
+                visited.add(k);
+                parent[k] = current;
+                queue.push(node);
+            }
+        }
+        // Stair connections
+        const cell = floors[current.floor][current.z][current.x];
+        if (cell && cell.isStairs && cell.connectsTo) {
+            const conn = cell.connectsTo;
+            const stairNode = { x: conn.x, z: conn.z, floor: conn.floor };
+            const k = key3D(stairNode);
+            if (!visited.has(k)) {
+                visited.add(k);
+                parent[k] = current;
+                queue.push(stairNode);
+            }
+        }
+    }
+    return []; // no path found
+}
+
+/* --- C4: Spawn ONIs --- */
+function spawnOnis(stageId) {
+    GameState.onis = [];
+
+    // Determine oni count and speed multiplier
+    let oniCount = 1, speedMul = 1.0;
+    if (stageId === 'scoreAttack') { oniCount = 1; speedMul = 1.0; }
+    else if (stageId === 'hidden') { oniCount = 5; speedMul = 1.6; }
+    else {
+        const stageDef = STAGES.find(s => s.id === stageId);
+        if (stageDef) {
+            oniCount = stageDef.oni;
+            const muls = { 1: 1.0, 2: 1.0, 3: 1.2, 4: 1.3, 5: 1.5 };
+            speedMul = muls[stageId] || 1.0;
+        }
+    }
+    GameState.oniSpeedMultiplier = speedMul;
+
+    const cols = GameState.mazeCols;
+    const rows = GameState.mazeRows;
+    const numFloors = GameState.mazeFloors.length;
+
+    for (let i = 0; i < oniCount; i++) {
+        const model = createOniModel();
+        addOniLights(model, stageId);
+
+        // Distribute across floors (highest floors first for horror effect)
+        const floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor((numFloors - 1) * (i / Math.max(1, oniCount - 1)) + 0.5)) : 0;
+        // Alternate corner positions for variety
+        let spawnX, spawnZ;
+        if (oniCount === 1) {
+            spawnX = cols - 2; spawnZ = rows - 2;
+        } else {
+            spawnX = cols - 2 - (i % 3);
+            spawnZ = rows - 2 - Math.floor(i / 3);
+        }
+        spawnX = Math.max(1, Math.min(cols - 2, spawnX));
+        spawnZ = Math.max(1, Math.min(rows - 2, spawnZ));
+
+        const worldX = spawnX * CL + CL / 2;
+        const worldZ = spawnZ * CL + CL / 2;
+        const worldY = floor * FLOOR_H;
+
+        model.position.set(worldX, worldY, worldZ);
+        scene.add(model);
+
+        GameState.onis.push({
+            group: model,
+            position: { x: worldX, y: worldY, z: worldZ },
+            currentFloor: floor,
+            cellX: spawnX,
+            cellZ: spawnZ,
+            path: [],
+            pathTimer: 0,
+            speed: ONI_CONFIG.baseSpeed * speedMul,
+            onStairs: false,
+        });
+    }
+}
+
+/* --- C5: Update ONI AI --- */
+function updateOniAI(delta) {
+    if (!GameState.alive || GameState.onis.length === 0) return;
+    const floors = GameState.mazeFloors;
+    if (!floors || floors.length === 0) return;
+
+    const playerCellX = Math.floor(camera.position.x / CL);
+    const playerCellZ = Math.floor(camera.position.z / CL);
+    const playerFloor = GameState.playerCurrentFloor;
+
+    GameState.onis.forEach(oni => {
+        // Path recalculation timer
+        oni.pathTimer -= delta;
+        if (oni.pathTimer <= 0) {
+            oni.pathTimer = ONI_CONFIG.pathRecalcInterval;
+            const start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
+            const goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
+            oni.path = bfsPathfind3D(floors, start, goal);
+        }
+
+        // Follow path
+        if (oni.path.length > 0) {
+            const target = oni.path[0];
+            const targetX = target.x * CL + CL / 2;
+            const targetZ = target.z * CL + CL / 2;
+
+            const dx = targetX - oni.position.x;
+            const dz = targetZ - oni.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+
+            let speed = oni.speed;
+            if (oni.onStairs) speed *= ONI_CONFIG.stairSpeedMul;
+
+            if (dist < 0.3) {
+                // Reached cell, move to next
+                oni.cellX = target.x;
+                oni.cellZ = target.z;
+                if (target.floor !== oni.currentFloor) {
+                    oni.currentFloor = target.floor;
+                }
+                oni.path.shift();
+            } else {
+                const moveX = (dx / dist) * speed * delta;
+                const moveZ = (dz / dist) * speed * delta;
+                oni.position.x += moveX;
+                oni.position.z += moveZ;
+            }
+        }
+
+        // Update cell from position
+        oni.cellX = Math.max(0, Math.min(GameState.mazeCols - 1, Math.floor(oni.position.x / CL)));
+        oni.cellZ = Math.max(0, Math.min(GameState.mazeRows - 1, Math.floor(oni.position.z / CL)));
+
+        // Update Y (stairs)
+        updateOniY(oni);
+
+        // Update group position
+        oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
+
+        // Face toward player
+        oni.group.rotation.y = Math.atan2(
+            camera.position.x - oni.position.x,
+            camera.position.z - oni.position.z
+        );
+
+        // Breathing animation
+        if (oni.group.userData.chestMesh) {
+            oni.group.userData.chestMesh.scale.y = 1.0 + Math.sin(clock.elapsedTime * 1.5) * 0.015;
+        }
+    });
+}
+
+/* --- C6: Update ONI Y Position --- */
+function updateOniY(oni) {
+    const floors = GameState.mazeFloors;
+    if (!floors || !floors[oni.currentFloor]) return;
+
+    const cellX = oni.cellX;
+    const cellZ = oni.cellZ;
+    if (cellX < 0 || cellX >= GameState.mazeCols || cellZ < 0 || cellZ >= GameState.mazeRows) return;
+
+    const cell = floors[oni.currentFloor][cellZ][cellX];
+
+    if (cell && cell.isStairs && cell.connectsTo) {
+        const progress = getStairProgress(oni.position, cell.stairDirection);
+        const fromY = oni.currentFloor * FLOOR_H;
+        const toY = cell.connectsTo.floor * FLOOR_H;
+        oni.position.y = fromY + (toY - fromY) * Math.min(progress, 1.0);
+        oni.onStairs = true;
+
+        if (progress >= 1.0) {
+            oni.currentFloor = cell.connectsTo.floor;
+        }
+    } else {
+        oni.position.y = oni.currentFloor * FLOOR_H;
+        oni.onStairs = false;
     }
 }
 
@@ -3008,6 +3563,7 @@ function gameLoop() {
     updatePlayerMovement(delta);
     updateHeadBob(delta);
     updateLightFlicker(delta);
+    updateOniAI(delta);
     renderer.render(scene, camera);
     GameState.animationId = requestAnimationFrame(gameLoop);
 }
@@ -3101,6 +3657,9 @@ function startGame(stageId) {
     // Setup lighting
     setupLighting(stageId);
 
+    // Spawn ONI enemies
+    spawnOnis(stageId);
+
     // Set player start position
     camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
     GameState.playerRotationY = 0;
@@ -3181,6 +3740,19 @@ function cleanupGame() {
     GameState.stairsData = [];
     GameState.playerCurrentFloor = 0;
     GameState.onStairs = false;
+
+    // Clean up onis
+    GameState.onis.forEach(oni => {
+        oni.group.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                else if (child.material.dispose) child.material.dispose();
+            }
+        });
+        if (oni.group.parent) oni.group.parent.remove(oni.group);
+    });
+    GameState.onis = [];
 
     if (renderer) {
         renderer.dispose();
