@@ -184,15 +184,15 @@ body {
    ============================================ */
 #title-screen {
     justify-content: flex-start;
-    padding-top: 40px;
+    padding-top: 20px;
     gap: 10px;
 }
 #title-logo h1 {
     font-family: 'Creepster', cursive;
     font-weight: 400;
-    font-size: 82px;
-    line-height: 0.95;
-    letter-spacing: 18px;
+    font-size: clamp(36px, 10vw, 72px);
+    line-height: 1;
+    letter-spacing: 4px;
     color: var(--matrix-red);
     text-shadow:
         0 0 10px var(--matrix-red),
@@ -211,7 +211,7 @@ body {
    Chase Animation
    ============================================ */
 #chase-container {
-    width: 380px;
+    width: 440px;
     height: 64px;
     position: relative;
     overflow: hidden;
@@ -241,9 +241,9 @@ body {
     background: var(--bg-panel);
     border: 1px solid var(--neon-green-dim);
     box-shadow: var(--border-glow);
-    padding: 28px 24px;
-    width: 100%;
-    max-width: 380px;
+    padding: 20px;
+    width: 90%;
+    max-width: 460px;
     position: relative;
 }
 /* Corner brackets */
@@ -321,9 +321,9 @@ body {
    ============================================ */
 .btn {
     width: 100%;
-    padding: 12px 16px;
+    padding: 13px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 14px;
+    font-size: 15px;
     letter-spacing: 1px;
     cursor: pointer;
     background: transparent;
@@ -1250,24 +1250,17 @@ body {
 /* ============================================
    Responsive
    ============================================ */
-@media (max-width: 480px) {
-    #title-logo h1 {
-        font-size: 52px;
-        letter-spacing: 10px;
-    }
-    #title-screen {
-        padding-top: 24px;
-    }
+@media (max-width: 600px) {
     .ui-panel {
-        padding: 20px 16px;
-        max-width: 340px;
-    }
-    #chase-container {
-        width: 300px;
+        padding: 15px;
+        width: 95%;
     }
     .btn {
+        padding: 10px;
         font-size: 13px;
-        padding: 10px 12px;
+    }
+    #chase-container {
+        width: 90%;
     }
     #catchcopy-text {
         font-size: 18px;
@@ -1286,18 +1279,7 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
 }
-@media (max-width: 360px) {
-    #title-logo h1 {
-        font-size: 42px;
-        letter-spacing: 6px;
-    }
-    .ui-panel {
-        max-width: 300px;
-        padding: 16px 12px;
-    }
-    #chase-container {
-        width: 260px;
-    }
+@media (max-width: 380px) {
     #solo-char-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 6px;
@@ -1453,8 +1435,6 @@ body {
    Phase 8: Responsive Media Queries
    ============================================ */
 @media (max-width: 768px) {
-    #title-logo h1 { font-size: 48px; letter-spacing: 8px; }
-    .ui-panel { max-width: 95%; padding: 16px; }
     #hud-timer { font-size: 18px; top: 44px; right: 12px; }
     #hud-stage-label { font-size: 12px; top: 12px; left: 12px; }
     #hud-floor-label { font-size: 14px; top: 28px; left: 12px; }
@@ -1478,16 +1458,11 @@ body {
     .stage-btn { padding: 10px 12px; font-size: 12px; }
 }
 @media (max-width: 480px) {
-    #title-logo h1 { font-size: 38px; letter-spacing: 6px; }
-    #chase-container { width: 90%; }
-    .ui-panel { max-width: 100%; padding: 12px; }
-    .btn { font-size: 12px; padding: 10px; }
     #sprint-btn { width: 60px; height: 60px; right: 12px; bottom: 20px; font-size: 9px; }
     .mobile-action-btn { width: 40px; height: 40px; font-size: 8px; }
     #minimap-container { width: 80px; height: 80px; bottom: 130px; }
 }
 @media (max-width: 360px) {
-    #title-logo h1 { font-size: 32px; letter-spacing: 4px; }
     #hud-timer { font-size: 16px; }
 }
 /* ============================================
@@ -1495,7 +1470,7 @@ body {
    ============================================ */
 #char-select-section {
     width: 100%;
-    max-width: 380px;
+    max-width: 460px;
     margin-top: 16px;
 }
 .char-select-label {
