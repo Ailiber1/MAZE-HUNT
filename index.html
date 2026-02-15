@@ -183,15 +183,12 @@ body {
    Title Screen
    ============================================ */
 #title-screen {
-    justify-content: flex-start;
-    gap: 6px;
+    height: 100%;
+    min-height: 0;
+    justify-content: center;
+    gap: 8px;
     overflow-y: auto;
-}
-#title-screen #title-logo {
-    margin-top: auto;
-}
-#title-screen .ui-panel {
-    margin-bottom: auto;
+    padding: 16px 20px;
 }
 #title-logo h1 {
     font-family: 'Creepster', cursive;
@@ -247,7 +244,7 @@ body {
     background: var(--bg-panel);
     border: 1px solid var(--neon-green-dim);
     box-shadow: var(--border-glow);
-    padding: 16px;
+    padding: 18px;
     width: 90%;
     max-width: 460px;
     position: relative;
@@ -327,7 +324,7 @@ body {
    ============================================ */
 .btn {
     width: 100%;
-    padding: 10px;
+    padding: 12px;
     font-family: 'Share Tech Mono', monospace;
     font-size: 15px;
     letter-spacing: 1px;
@@ -393,8 +390,13 @@ body {
     margin-top: 8px;
 }
 .btn-group-secondary {
+    flex-direction: row;
     margin-top: 6px;
     gap: 6px;
+}
+.btn-group-secondary .btn {
+    flex: 1;
+    min-width: 0;
 }
 
 /* ============================================
@@ -1259,11 +1261,14 @@ body {
 @media (max-width: 600px) {
     #title-screen {
         padding: 10px;
-        gap: 2px;
+        gap: 4px;
+    }
+    #title-logo h1 {
+        font-size: clamp(40px, 14vw, 96px);
     }
     #chase-container {
-        width: 80%;
-        height: 26px;
+        width: 70%;
+        height: 24px;
         margin: 2px auto;
     }
     .chase-char {
@@ -1271,16 +1276,16 @@ body {
         bottom: auto;
     }
     .chase-char svg {
-        width: 12px;
-        height: 20px;
+        width: 10px;
+        height: 18px;
     }
     .chase-oni {
         top: 0;
         bottom: auto;
     }
     .chase-oni svg {
-        width: 16px;
-        height: 24px;
+        width: 14px;
+        height: 22px;
     }
     .ui-panel {
         padding: 12px;
@@ -1299,12 +1304,12 @@ body {
         font-size: 12px;
     }
     .btn-group {
-        gap: 5px;
-        margin-top: 6px;
+        gap: 4px;
+        margin-top: 5px;
     }
     .btn-group-secondary {
-        margin-top: 5px;
-        gap: 5px;
+        margin-top: 4px;
+        gap: 4px;
     }
     .panel-footer {
         margin-top: 8px;
