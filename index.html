@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Creepster&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
 /* ============================================
    CSS Variables - Neon Theme
@@ -553,15 +554,99 @@ body {
 .ranking-row .score { width: 70px; text-align: right; color: var(--text-primary); }
 
 /* ============================================
-   Game Screen (placeholder)
+   Game Screen
    ============================================ */
 #game-screen {
     padding: 0;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 20;
+    overflow: hidden;
 }
 #game-canvas-container {
     width: 100%;
     height: 100%;
     position: relative;
+}
+#game-canvas-container canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+#game-hud {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 25;
+}
+#hud-stamina {
+    position: absolute;
+    bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    width: 200px; height: 6px;
+    background: rgba(0,0,0,0.6);
+    border: 1px solid rgba(0,255,65,0.3);
+}
+#hud-stamina-bar {
+    width: 100%; height: 100%;
+    background: var(--neon-green);
+    transition: width 0.1s;
+}
+#hud-timer {
+    position: absolute;
+    top: 16px; right: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 24px;
+    color: var(--neon-green);
+    text-shadow: 0 0 10px var(--neon-green-glow);
+}
+#hud-stage-label {
+    position: absolute;
+    top: 16px; left: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    color: var(--neon-green);
+    text-shadow: 0 0 8px var(--neon-green-glow);
+    letter-spacing: 2px;
+}
+#crosshair {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 20px; height: 20px;
+    pointer-events: none;
+}
+#crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(0,255,65,0.5);
+}
+#crosshair::before {
+    width: 2px; height: 20px;
+    left: 9px; top: 0;
+}
+#crosshair::after {
+    width: 20px; height: 2px;
+    top: 9px; left: 0;
+}
+#pointer-lock-hint {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 16px;
+    color: var(--neon-green);
+    text-shadow: 0 0 10px var(--neon-green-glow);
+    letter-spacing: 2px;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+#pointer-lock-hint.visible {
+    opacity: 1;
 }
 
 /* ============================================
@@ -966,9 +1051,16 @@ body {
         </div>
     </div>
 
-    <!-- ========== Game Screen (placeholder) ========== -->
+    <!-- ========== Game Screen ========== -->
     <div id="game-screen" class="screen">
         <div id="game-canvas-container"></div>
+        <div id="game-hud">
+            <div id="hud-stage-label"></div>
+            <div id="hud-timer">00:00</div>
+            <div id="crosshair"></div>
+            <div id="hud-stamina"><div id="hud-stamina-bar"></div></div>
+            <div id="pointer-lock-hint">CLICK TO PLAY</div>
+        </div>
     </div>
 
 </div>
@@ -1133,6 +1225,26 @@ const GameState = {
     isHost: false,
     players: {},
     maxPlayers: 4,
+
+    // Phase 3: 3D / Movement
+    moveForward: false,
+    moveBackward: false,
+    turnLeft: false,
+    turnRight: false,
+    sprint: false,
+    stamina: 100,
+    moveSpeed: 4.5,
+    sprintSpeed: 8.0,
+    playerRotationY: 0,
+    playerPosition: { x: 0, y: 1.7, z: 0 },
+    playerCurrentFloor: 0,
+    alive: true,
+    mazeGrid: null,
+    mazeCols: 0,
+    mazeRows: 0,
+    animationId: null,
+    timeRemaining: 0,
+    timerInterval: null,
 };
 
 /* ============================================
@@ -1491,8 +1603,7 @@ function buildStageList() {
             if (!isUnlocked) return;
             GameState.currentStage = stage.id;
             GameState.gameMode = 'story';
-            showNotification(stage.name);
-            // Game start will happen in Phase 3+
+            startGame(stage.id);
         });
         list.appendChild(btn);
     });
@@ -1506,7 +1617,7 @@ function buildStageList() {
         btn.addEventListener('click', () => {
             GameState.currentStage = 'hidden';
             GameState.gameMode = 'story';
-            showNotification('??? STAGE');
+            startGame('hidden');
         });
         list.appendChild(btn);
     }
@@ -1757,8 +1868,7 @@ function initButtons() {
             guestLogin();
         }
         GameState.gameMode = 'scoreAttack';
-        showNotification(GameState.language === 'ja' ? 'スコアアタック準備中...' : 'Score Attack loading...');
-        // Game start will happen in Phase 3+
+        startGame('scoreAttack');
     });
 
     // Multiplayer
@@ -1865,8 +1975,7 @@ function initButtons() {
     // Start game (host)
     document.getElementById('btn-start-game').addEventListener('click', () => {
         if (!GameState.isHost) return;
-        showNotification(GameState.language === 'ja' ? 'ゲーム開始準備中...' : 'Starting game...');
-        // Game start will happen in Phase 3+
+        startGame(1);
     });
 
     // Hidden stage check on username input
@@ -2006,6 +2115,750 @@ function updateLanguage() {
     if (GameState.currentScreen === 'story') buildStageList();
     // Update lobby display if on lobby screen
     if (GameState.currentScreen === 'lobby') { updateLobbyDisplay(); updateLobbyPlayerList(); }
+}
+
+/* ============================================
+   Phase 3: 3D Foundation
+   ============================================ */
+
+/* --- Constants --- */
+const CL = 4;
+const WH = 3.5;
+const FLOOR_H = 4;
+const WALL_THICK = 0.15;
+const PLAYER_HEIGHT = 1.7;
+const PLAYER_RADIUS = 0.3;
+
+/* --- Circuit Colors (per stage) --- */
+const CIRCUIT_COLORS = {
+    1: { emissive: 0x00ff41, baseColor: 0x0a1a0e, emissiveIntensity: 0.5 },
+    2: { emissive: 0x0066ff, baseColor: 0x081018, emissiveIntensity: 0.5 },
+    3: { emissive: 0xffcc00, baseColor: 0x181408, emissiveIntensity: 0.45 },
+    4: { emissive: 0xaa44ff, baseColor: 0x0e0818, emissiveIntensity: 0.5 },
+    5: { emissive: 0xff2020, baseColor: 0x180808, emissiveIntensity: 0.6 },
+    scoreAttack: { emissive: 0x00ffff, baseColor: 0x081418, emissiveIntensity: 0.45 },
+    hidden: { emissive: 0xff6600, baseColor: 0x181008, emissiveIntensity: 0.55 },
+};
+
+/* --- Stage Themes --- */
+const STAGE_THEMES = {
+    1: { fogColor: 0x000805, fogDensity: 0.06, pointLightColors: [0x00ff41, 0x00cc33], pointLightCount: 6, outdoor: false, skyColor: null },
+    2: { fogColor: 0x050810, fogDensity: 0.055, pointLightColors: [0x0066ff, 0x0044cc], pointLightCount: 8, outdoor: false, skyColor: null },
+    3: { fogColor: 0x0a0814, fogDensity: 0.04, pointLightColors: [0xffcc00, 0xffaa00], pointLightCount: 10, outdoor: true, skyColor: 0x0a0818 },
+    4: { fogColor: 0x080604, fogDensity: 0.045, pointLightColors: [0xaa44ff, 0xff6600], pointLightCount: 10, outdoor: true, skyColor: 0x0c0608 },
+    5: { fogColor: 0x100404, fogDensity: 0.05, pointLightColors: [0xff2020, 0xff4444], pointLightCount: 12, outdoor: false, skyColor: null },
+    scoreAttack: { fogColor: 0x040a0a, fogDensity: 0.05, pointLightColors: [0x00ffff, 0x00cccc], pointLightCount: 8, outdoor: false, skyColor: null },
+    hidden: { fogColor: 0x0c0804, fogDensity: 0.05, pointLightColors: [0xff6600, 0xff4400], pointLightCount: 10, outdoor: true, skyColor: 0x0e0804 },
+};
+
+/* --- Three.js Globals --- */
+let renderer, scene, camera, flashlight, clock;
+let wallMeshes = [];
+let pointLights = [];
+let headBobTimer = 0;
+let isPointerLocked = false;
+
+/* --- Maze Generation (Recursive Backtracker) --- */
+function generateMaze(cols, rows) {
+    const grid = [];
+    for (let y = 0; y < rows; y++) {
+        grid[y] = [];
+        for (let x = 0; x < cols; x++) {
+            grid[y][x] = { top: true, right: true, bottom: true, left: true, visited: false };
+        }
+    }
+
+    const stack = [];
+    let cx = 0, cy = 0;
+    grid[cy][cx].visited = true;
+    stack.push({ x: cx, y: cy });
+
+    while (stack.length > 0) {
+        const current = stack[stack.length - 1];
+        const { x, y } = current;
+        const neighbors = [];
+
+        if (y > 0 && !grid[y - 1][x].visited) neighbors.push({ x, y: y - 1, dir: 'top' });
+        if (x < cols - 1 && !grid[y][x + 1].visited) neighbors.push({ x: x + 1, y, dir: 'right' });
+        if (y < rows - 1 && !grid[y + 1][x].visited) neighbors.push({ x, y: y + 1, dir: 'bottom' });
+        if (x > 0 && !grid[y][x - 1].visited) neighbors.push({ x: x - 1, y, dir: 'left' });
+
+        if (neighbors.length > 0) {
+            const next = neighbors[Math.floor(Math.random() * neighbors.length)];
+            // Remove wall between current and next
+            if (next.dir === 'top') { grid[y][x].top = false; grid[next.y][next.x].bottom = false; }
+            if (next.dir === 'right') { grid[y][x].right = false; grid[next.y][next.x].left = false; }
+            if (next.dir === 'bottom') { grid[y][x].bottom = false; grid[next.y][next.x].top = false; }
+            if (next.dir === 'left') { grid[y][x].left = false; grid[next.y][next.x].right = false; }
+
+            grid[next.y][next.x].visited = true;
+            stack.push({ x: next.x, y: next.y });
+        } else {
+            stack.pop();
+        }
+    }
+
+    // Remove 15% of walls randomly to create loops
+    const totalWalls = cols * rows * 2;
+    const wallsToRemove = Math.floor(totalWalls * 0.15);
+    let removed = 0;
+    let attempts = 0;
+    while (removed < wallsToRemove && attempts < wallsToRemove * 10) {
+        attempts++;
+        const rx = Math.floor(Math.random() * cols);
+        const ry = Math.floor(Math.random() * rows);
+        const dirs = ['top', 'right', 'bottom', 'left'];
+        const dir = dirs[Math.floor(Math.random() * dirs.length)];
+
+        if (!grid[ry][rx][dir]) continue; // already open
+
+        // Check bounds
+        if (dir === 'top' && ry === 0) continue;
+        if (dir === 'bottom' && ry === rows - 1) continue;
+        if (dir === 'left' && rx === 0) continue;
+        if (dir === 'right' && rx === cols - 1) continue;
+
+        // Don't remove boundary walls
+        grid[ry][rx][dir] = false;
+        if (dir === 'top') grid[ry - 1][rx].bottom = false;
+        if (dir === 'bottom') grid[ry + 1][rx].top = false;
+        if (dir === 'left') grid[ry][rx - 1].right = false;
+        if (dir === 'right') grid[ry][rx + 1].left = false;
+        removed++;
+    }
+
+    return grid;
+}
+
+/* --- 3D Mesh Construction --- */
+function buildMaze3D(grid, cols, rows, stageId) {
+    const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
+    const theme = STAGE_THEMES[stageId] || STAGE_THEMES[1];
+
+    // Clear previous meshes
+    wallMeshes.forEach(m => {
+        scene.remove(m);
+        if (m.geometry) m.geometry.dispose();
+        if (m.material) {
+            if (Array.isArray(m.material)) m.material.forEach(mat => mat.dispose());
+            else m.material.dispose();
+        }
+    });
+    wallMeshes = [];
+
+    // Wall material
+    const wallMat = new THREE.MeshStandardMaterial({
+        color: colors.baseColor,
+        emissive: colors.emissive,
+        emissiveIntensity: colors.emissiveIntensity * 0.3,
+        roughness: 0.8,
+        metalness: 0.2,
+    });
+
+    // Wire material for edge glow
+    const wireMat = new THREE.LineBasicMaterial({
+        color: colors.emissive,
+        transparent: true,
+        opacity: 0.25,
+    });
+
+    // Floor
+    const floorGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
+    const floorMat = new THREE.MeshStandardMaterial({
+        color: 0x050a06,
+        emissive: colors.emissive,
+        emissiveIntensity: 0.02,
+        roughness: 0.95,
+        metalness: 0.1,
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(cols * CL / 2, 0, rows * CL / 2);
+    floor.receiveShadow = true;
+    scene.add(floor);
+    wallMeshes.push(floor);
+
+    // Floor grid lines
+    const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.08 });
+    for (let i = 0; i <= cols; i++) {
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(i * CL, 0.01, 0),
+            new THREE.Vector3(i * CL, 0.01, rows * CL)
+        ]);
+        const line = new THREE.Line(lineGeo, gridLineMat);
+        scene.add(line);
+        wallMeshes.push(line);
+    }
+    for (let j = 0; j <= rows; j++) {
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0.01, j * CL),
+            new THREE.Vector3(cols * CL, 0.01, j * CL)
+        ]);
+        const line = new THREE.Line(lineGeo, gridLineMat);
+        scene.add(line);
+        wallMeshes.push(line);
+    }
+
+    // Ceiling (indoor stages only)
+    if (!theme.outdoor) {
+        const ceilGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
+        const ceilMat = new THREE.MeshStandardMaterial({
+            color: 0x030503,
+            emissive: colors.emissive,
+            emissiveIntensity: 0.01,
+            roughness: 0.95,
+            metalness: 0.1,
+            side: THREE.BackSide,
+        });
+        const ceil = new THREE.Mesh(ceilGeo, ceilMat);
+        ceil.rotation.x = -Math.PI / 2;
+        ceil.position.set(cols * CL / 2, WH, rows * CL / 2);
+        scene.add(ceil);
+        wallMeshes.push(ceil);
+    }
+
+    // Helper to create a wall segment
+    function addWall(x, z, w, h, d) {
+        const geo = new THREE.BoxGeometry(w, h, d);
+        const mesh = new THREE.Mesh(geo, wallMat.clone());
+        mesh.position.set(x, h / 2, z);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        wallMeshes.push(mesh);
+
+        // Edge wireframe
+        const edges = new THREE.EdgesGeometry(geo);
+        const wireframe = new THREE.LineSegments(edges, wireMat);
+        wireframe.position.copy(mesh.position);
+        scene.add(wireframe);
+        wallMeshes.push(wireframe);
+    }
+
+    // Build walls from grid
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const cell = grid[y][x];
+            const cx = x * CL;
+            const cz = y * CL;
+
+            // Top wall (north)
+            if (cell.top) {
+                addWall(cx + CL / 2, cz, CL + WALL_THICK, WH, WALL_THICK);
+            }
+            // Left wall (west)
+            if (cell.left) {
+                addWall(cx, cz + CL / 2, WALL_THICK, WH, CL + WALL_THICK);
+            }
+        }
+    }
+    // Right boundary walls
+    for (let y = 0; y < rows; y++) {
+        if (grid[y][cols - 1].right) {
+            addWall(cols * CL, y * CL + CL / 2, WALL_THICK, WH, CL + WALL_THICK);
+        }
+    }
+    // Bottom boundary walls
+    for (let x = 0; x < cols; x++) {
+        if (grid[rows - 1][x].bottom) {
+            addWall(x * CL + CL / 2, rows * CL, CL + WALL_THICK, WH, WALL_THICK);
+        }
+    }
+}
+
+/* --- Three.js Initialization --- */
+function initThreeJS() {
+    const container = document.getElementById('game-canvas-container');
+    const w = container.clientWidth || window.innerWidth;
+    const h = container.clientHeight || window.innerHeight;
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.5;
+    container.innerHTML = '';
+    container.appendChild(renderer.domElement);
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000805);
+
+    camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 100);
+    camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
+    scene.add(camera);
+
+    // Flashlight
+    flashlight = new THREE.SpotLight(0x00ff88, 3, 30, 0.6, 0.3, 2);
+    flashlight.castShadow = true;
+    flashlight.shadow.mapSize.width = 512;
+    flashlight.shadow.mapSize.height = 512;
+    camera.add(flashlight);
+    camera.add(flashlight.target);
+    flashlight.target.position.set(0, 0, -1);
+
+    clock = new THREE.Clock();
+
+    // Handle resize
+    window.addEventListener('resize', onGameResize);
+}
+
+function onGameResize() {
+    if (!renderer || !camera) return;
+    const container = document.getElementById('game-canvas-container');
+    const w = container.clientWidth || window.innerWidth;
+    const h = container.clientHeight || window.innerHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+}
+
+/* --- Lighting Setup --- */
+function setupLighting(stageId) {
+    const theme = STAGE_THEMES[stageId] || STAGE_THEMES[1];
+    const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
+
+    // Clear old point lights
+    pointLights.forEach(pl => {
+        scene.remove(pl.light);
+    });
+    pointLights = [];
+
+    // Ambient light
+    const ambient = new THREE.AmbientLight(colors.emissive, 0.08);
+    scene.add(ambient);
+    wallMeshes.push(ambient);
+
+    // Hemisphere light
+    const hemi = new THREE.HemisphereLight(
+        theme.outdoor ? 0x111122 : 0x060810,
+        0x020204,
+        0.15
+    );
+    scene.add(hemi);
+    wallMeshes.push(hemi);
+
+    // Fog
+    scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity);
+
+    // Point lights scattered in passages
+    const grid = GameState.mazeGrid;
+    const cols = GameState.mazeCols;
+    const rows = GameState.mazeRows;
+    if (!grid) return;
+
+    const openCells = [];
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            openCells.push({ x, y });
+        }
+    }
+
+    // Shuffle and pick pointLightCount cells
+    for (let i = openCells.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [openCells[i], openCells[j]] = [openCells[j], openCells[i]];
+    }
+
+    const count = Math.min(theme.pointLightCount, openCells.length);
+    for (let i = 0; i < count; i++) {
+        const cell = openCells[i];
+        const color = theme.pointLightColors[i % theme.pointLightColors.length];
+        const pl = new THREE.PointLight(color, 0.8, 12, 2);
+        pl.position.set(cell.x * CL + CL / 2, WH * 0.8, cell.y * CL + CL / 2);
+        scene.add(pl);
+        pointLights.push({
+            light: pl,
+            baseIntensity: 0.6 + Math.random() * 0.4,
+            flickerSpeed: 1.5 + Math.random() * 2,
+            flickerPhase: Math.random() * Math.PI * 2,
+        });
+    }
+}
+
+/* --- Pointer Lock + Camera Controls --- */
+function initPointerLock() {
+    const container = document.getElementById('game-canvas-container');
+    const hint = document.getElementById('pointer-lock-hint');
+
+    container.addEventListener('click', () => {
+        if (!GameState.gameActive) return;
+        container.requestPointerLock();
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+        isPointerLocked = document.pointerLockElement === container;
+        if (hint) {
+            hint.classList.toggle('visible', !isPointerLocked && GameState.gameActive);
+        }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isPointerLocked || !GameState.gameActive) return;
+        const sensitivity = 0.002;
+        GameState.playerRotationY -= e.movementX * sensitivity;
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = GameState.playerRotationY;
+
+        // Vertical look
+        camera.rotation.x -= e.movementY * sensitivity;
+        camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+    });
+}
+
+/* --- Key Input --- */
+function initKeyInput() {
+    document.addEventListener('keydown', (e) => {
+        if (!GameState.gameActive) return;
+        switch (e.code) {
+            case 'KeyW': case 'ArrowUp': GameState.moveForward = true; break;
+            case 'KeyS': case 'ArrowDown': GameState.moveBackward = true; break;
+            case 'KeyA': case 'ArrowLeft': GameState.turnLeft = true; break;
+            case 'KeyD': case 'ArrowRight': GameState.turnRight = true; break;
+            case 'ShiftLeft': case 'ShiftRight': GameState.sprint = true; break;
+        }
+    });
+
+    document.addEventListener('keyup', (e) => {
+        switch (e.code) {
+            case 'KeyW': case 'ArrowUp': GameState.moveForward = false; break;
+            case 'KeyS': case 'ArrowDown': GameState.moveBackward = false; break;
+            case 'KeyA': case 'ArrowLeft': GameState.turnLeft = false; break;
+            case 'KeyD': case 'ArrowRight': GameState.turnRight = false; break;
+            case 'ShiftLeft': case 'ShiftRight': GameState.sprint = false; break;
+        }
+    });
+}
+
+/* --- Wall Collision --- */
+function checkWallCollision(newX, newZ, grid) {
+    const cols = GameState.mazeCols;
+    const rows = GameState.mazeRows;
+    const r = PLAYER_RADIUS;
+
+    // Clamp to maze bounds
+    newX = Math.max(r, Math.min(cols * CL - r, newX));
+    newZ = Math.max(r, Math.min(rows * CL - r, newZ));
+
+    // Check which cell(s) the player overlaps
+    const minCX = Math.max(0, Math.floor((newX - r) / CL));
+    const maxCX = Math.min(cols - 1, Math.floor((newX + r) / CL));
+    const minCY = Math.max(0, Math.floor((newZ - r) / CL));
+    const maxCY = Math.min(rows - 1, Math.floor((newZ + r) / CL));
+
+    for (let cy = minCY; cy <= maxCY; cy++) {
+        for (let cx = minCX; cx <= maxCX; cx++) {
+            const cell = grid[cy][cx];
+            const wallX = cx * CL;
+            const wallZ = cy * CL;
+
+            // Top wall
+            if (cell.top) {
+                if (newZ - r < wallZ + WALL_THICK / 2 && newZ + r > wallZ - WALL_THICK / 2) {
+                    if (newX + r > wallX && newX - r < wallX + CL) {
+                        newZ = wallZ + WALL_THICK / 2 + r;
+                    }
+                }
+            }
+            // Bottom wall
+            if (cell.bottom) {
+                const bz = wallZ + CL;
+                if (newZ + r > bz - WALL_THICK / 2 && newZ - r < bz + WALL_THICK / 2) {
+                    if (newX + r > wallX && newX - r < wallX + CL) {
+                        newZ = bz - WALL_THICK / 2 - r;
+                    }
+                }
+            }
+            // Left wall
+            if (cell.left) {
+                if (newX - r < wallX + WALL_THICK / 2 && newX + r > wallX - WALL_THICK / 2) {
+                    if (newZ + r > wallZ && newZ - r < wallZ + CL) {
+                        newX = wallX + WALL_THICK / 2 + r;
+                    }
+                }
+            }
+            // Right wall
+            if (cell.right) {
+                const rx = wallX + CL;
+                if (newX + r > rx - WALL_THICK / 2 && newX - r < rx + WALL_THICK / 2) {
+                    if (newZ + r > wallZ && newZ - r < wallZ + CL) {
+                        newX = rx - WALL_THICK / 2 - r;
+                    }
+                }
+            }
+        }
+    }
+
+    return { x: newX, z: newZ };
+}
+
+/* --- Player Movement --- */
+function updatePlayerMovement(delta) {
+    if (!GameState.alive) return;
+    const grid = GameState.mazeGrid;
+    if (!grid) return;
+
+    const turnSpeed = 2.0;
+
+    // Turn
+    if (GameState.turnLeft) {
+        GameState.playerRotationY += turnSpeed * delta;
+    }
+    if (GameState.turnRight) {
+        GameState.playerRotationY -= turnSpeed * delta;
+    }
+
+    // Sprint / stamina
+    let speed = GameState.moveSpeed;
+    if (GameState.sprint && GameState.stamina > 0 && (GameState.moveForward || GameState.moveBackward)) {
+        speed = GameState.sprintSpeed;
+        GameState.stamina = Math.max(0, GameState.stamina - 25 * delta);
+    } else {
+        GameState.stamina = Math.min(100, GameState.stamina + 12 * delta);
+    }
+
+    // Direction
+    const dir = new THREE.Vector3();
+    if (GameState.moveForward) dir.z -= 1;
+    if (GameState.moveBackward) dir.z += 1;
+
+    if (dir.lengthSq() > 0) {
+        dir.normalize();
+        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), GameState.playerRotationY);
+        const newX = camera.position.x + dir.x * speed * delta;
+        const newZ = camera.position.z + dir.z * speed * delta;
+        const result = checkWallCollision(newX, newZ, grid);
+        camera.position.x = result.x;
+        camera.position.z = result.z;
+    }
+
+    // Sync camera rotation
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = GameState.playerRotationY;
+
+    // Update position
+    GameState.playerPosition.x = camera.position.x;
+    GameState.playerPosition.z = camera.position.z;
+
+    // Update stamina HUD
+    const bar = document.getElementById('hud-stamina-bar');
+    if (bar) bar.style.width = GameState.stamina + '%';
+}
+
+/* --- Head Bob --- */
+function updateHeadBob(delta) {
+    const isMoving = GameState.moveForward || GameState.moveBackward;
+    if (isMoving && GameState.alive) {
+        const bobSpeed = GameState.sprint && GameState.stamina > 0 ? 14 : 10;
+        const bobAmount = 0.06;
+        headBobTimer += delta * bobSpeed;
+        camera.position.y = PLAYER_HEIGHT + Math.sin(headBobTimer) * bobAmount;
+
+        // Sprint FOV effect
+        if (GameState.sprint && GameState.stamina > 0) {
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 70, delta * 4);
+        } else {
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 60, delta * 4);
+        }
+        camera.updateProjectionMatrix();
+    } else {
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, PLAYER_HEIGHT, delta * 5);
+        camera.fov = THREE.MathUtils.lerp(camera.fov, 60, delta * 4);
+        camera.updateProjectionMatrix();
+        headBobTimer = 0;
+    }
+}
+
+/* --- Light Flicker --- */
+function updateLightFlicker(delta) {
+    const t = clock.elapsedTime;
+    pointLights.forEach(pl => {
+        const flicker = Math.sin(t * pl.flickerSpeed + pl.flickerPhase) * 0.3 +
+                        Math.sin(t * pl.flickerSpeed * 2.3 + pl.flickerPhase) * 0.15;
+        pl.light.intensity = pl.baseIntensity + flicker;
+    });
+}
+
+/* --- Timer --- */
+function startTimer(seconds) {
+    GameState.timeRemaining = seconds;
+    updateTimerDisplay();
+    if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+    GameState.timerInterval = setInterval(() => {
+        if (!GameState.gameActive) {
+            clearInterval(GameState.timerInterval);
+            return;
+        }
+        GameState.timeRemaining--;
+        updateTimerDisplay();
+        if (GameState.timeRemaining <= 0) {
+            clearInterval(GameState.timerInterval);
+            // Time up - will be handled in later phases
+        }
+    }, 1000);
+}
+
+function updateTimerDisplay() {
+    const el = document.getElementById('hud-timer');
+    if (!el) return;
+    const m = Math.floor(Math.max(0, GameState.timeRemaining) / 60);
+    const s = Math.max(0, GameState.timeRemaining) % 60;
+    el.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    if (GameState.timeRemaining <= 30) {
+        el.style.color = 'var(--matrix-red)';
+        el.style.textShadow = '0 0 10px var(--matrix-red-glow)';
+    } else {
+        el.style.color = 'var(--neon-green)';
+        el.style.textShadow = '0 0 10px var(--neon-green-glow)';
+    }
+}
+
+/* --- Game Loop --- */
+function gameLoop() {
+    if (!GameState.gameActive) return;
+    const delta = Math.min(clock.getDelta(), 0.1);
+    updatePlayerMovement(delta);
+    updateHeadBob(delta);
+    updateLightFlicker(delta);
+    renderer.render(scene, camera);
+    GameState.animationId = requestAnimationFrame(gameLoop);
+}
+
+/* --- Start Game --- */
+function startGame(stageId) {
+    // Determine maze size
+    let cols, rows, timeLimit;
+    if (stageId === 'scoreAttack') {
+        cols = 14; rows = 14; timeLimit = 0; // No limit for score attack
+    } else if (stageId === 'hidden') {
+        cols = 28; rows = 28; timeLimit = HIDDEN_STAGE.time;
+    } else {
+        const stageDef = STAGES.find(s => s.id === stageId);
+        if (stageDef) {
+            const parts = stageDef.size.split('x');
+            cols = parseInt(parts[0]);
+            rows = parseInt(parts[1]);
+            timeLimit = stageDef.time;
+        } else {
+            cols = 10; rows = 10; timeLimit = 90;
+        }
+    }
+
+    GameState.mazeCols = cols;
+    GameState.mazeRows = rows;
+
+    // Hide title screen overlays
+    document.getElementById('matrix-bg').style.display = 'none';
+    document.getElementById('red-glow').style.display = 'none';
+    document.getElementById('fog-overlay').style.display = 'none';
+    document.getElementById('crt-overlay').style.display = 'none';
+
+    // Show game screen
+    showScreen('game-screen');
+
+    // Set HUD label
+    const label = document.getElementById('hud-stage-label');
+    if (label) {
+        if (stageId === 'scoreAttack') {
+            label.textContent = 'SCORE ATTACK';
+        } else if (stageId === 'hidden') {
+            label.textContent = '??? STAGE';
+        } else {
+            label.textContent = STAGE_DISPLAY_NAMES[stageId] || ('STAGE ' + stageId);
+        }
+    }
+
+    // Initialize 3D
+    initThreeJS();
+
+    // Generate maze
+    GameState.mazeGrid = generateMaze(cols, rows);
+
+    // Build 3D maze
+    buildMaze3D(GameState.mazeGrid, cols, rows, stageId);
+
+    // Setup lighting
+    setupLighting(stageId);
+
+    // Set player start position
+    camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
+    GameState.playerRotationY = 0;
+    GameState.playerPosition = { x: CL * 1.5, y: PLAYER_HEIGHT, z: CL * 1.5 };
+    GameState.stamina = 100;
+    GameState.alive = true;
+    GameState.moveForward = false;
+    GameState.moveBackward = false;
+    GameState.turnLeft = false;
+    GameState.turnRight = false;
+    GameState.sprint = false;
+    headBobTimer = 0;
+
+    // Setup controls
+    initPointerLock();
+    initKeyInput();
+
+    // Start timer
+    if (timeLimit > 0) {
+        startTimer(timeLimit);
+    } else {
+        document.getElementById('hud-timer').textContent = '--:--';
+    }
+
+    // Show pointer lock hint
+    const hint = document.getElementById('pointer-lock-hint');
+    if (hint) hint.classList.add('visible');
+
+    // Activate game
+    GameState.gameActive = true;
+    clock.start();
+    gameLoop();
+}
+
+/* --- Cleanup Game (for returning to title) --- */
+function cleanupGame() {
+    GameState.gameActive = false;
+    if (GameState.animationId) {
+        cancelAnimationFrame(GameState.animationId);
+        GameState.animationId = null;
+    }
+    if (GameState.timerInterval) {
+        clearInterval(GameState.timerInterval);
+        GameState.timerInterval = null;
+    }
+    if (document.pointerLockElement) {
+        document.exitPointerLock();
+    }
+
+    // Dispose Three.js
+    wallMeshes.forEach(m => {
+        if (m.parent) m.parent.remove(m);
+        if (m.geometry) m.geometry.dispose();
+        if (m.material) {
+            if (Array.isArray(m.material)) m.material.forEach(mat => mat.dispose());
+            else if (m.material.dispose) m.material.dispose();
+        }
+    });
+    wallMeshes = [];
+    pointLights.forEach(pl => {
+        if (pl.light.parent) pl.light.parent.remove(pl.light);
+    });
+    pointLights = [];
+
+    if (renderer) {
+        renderer.dispose();
+        const container = document.getElementById('game-canvas-container');
+        if (container) container.innerHTML = '';
+    }
+    renderer = null; scene = null; camera = null; flashlight = null;
+
+    // Restore overlays
+    document.getElementById('matrix-bg').style.display = '';
+    document.getElementById('red-glow').style.display = '';
+    document.getElementById('fog-overlay').style.display = '';
+    document.getElementById('crt-overlay').style.display = '';
+
+    window.removeEventListener('resize', onGameResize);
 }
 
 /* ============================================
