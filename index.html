@@ -596,7 +596,7 @@ body {
 }
 #hud-timer {
     position: absolute;
-    top: 16px; right: 20px;
+    top: 56px; right: 20px;
     font-family: 'Share Tech Mono', monospace;
     font-size: 24px;
     color: var(--neon-green);
@@ -932,6 +932,162 @@ body {
 }
 
 /* ============================================
+   Danger Frame
+   ============================================ */
+#danger-frame {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 22;
+    display: none;
+}
+@keyframes danger-pulse {
+    0%   { opacity: 0.6; }
+    100% { opacity: 1.0; }
+}
+
+/* ============================================
+   Capture Vignette
+   ============================================ */
+#capture-vignette {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: radial-gradient(ellipse at 50% 50%, transparent 20%, rgba(0,0,0,0.95) 80%);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 60;
+    transition: opacity 0.1s;
+}
+
+/* ============================================
+   Caught Text
+   ============================================ */
+#caught-text {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Creepster', cursive;
+    font-size: 72px;
+    color: #ff2020;
+    text-shadow: 0 0 20px #ff0000, 0 0 60px rgba(255,0,0,0.5);
+    opacity: 0;
+    z-index: 70;
+    pointer-events: none;
+}
+#caught-text.visible {
+    opacity: 1;
+    animation: caughtPulse 0.5s ease-in-out infinite alternate;
+}
+@keyframes caughtPulse {
+    0%   { opacity: 0.8; text-shadow: 0 0 20px #ff0000, 0 0 60px rgba(255,0,0,0.5); }
+    100% { opacity: 1.0; text-shadow: 0 0 30px #ff0000, 0 0 80px rgba(255,0,0,0.7); }
+}
+
+/* ============================================
+   HUD Extended
+   ============================================ */
+#hud-status {
+    position: absolute;
+    top: 58px; left: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    color: var(--neon-green);
+    text-shadow: 0 0 6px var(--neon-green-glow);
+    letter-spacing: 1px;
+}
+#hud-objective {
+    position: absolute;
+    top: 76px; left: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--neon-green);
+    text-shadow: 0 0 6px var(--neon-green-glow);
+    letter-spacing: 1px;
+}
+#hud-enemy-dist {
+    position: absolute;
+    top: 16px; right: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    text-shadow: 0 0 8px;
+    letter-spacing: 1px;
+    text-align: right;
+}
+#hud-bpm {
+    position: absolute;
+    top: 38px; right: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    color: var(--matrix-red);
+    text-shadow: 0 0 6px var(--matrix-red-glow);
+    letter-spacing: 1px;
+}
+#minimap-container {
+    position: absolute;
+    bottom: 20px; left: 20px;
+    width: 150px; height: 150px;
+    border: 1px solid rgba(0,255,65,0.3);
+    background: rgba(0,0,0,0.6);
+}
+#minimap-canvas {
+    width: 100%; height: 100%;
+}
+
+/* ============================================
+   Result Screen
+   ============================================ */
+#result-screen {
+    padding: 0;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 80;
+    background: rgba(0,0,0,0.95);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+}
+#result-screen.active {
+    display: flex;
+}
+#result-title {
+    font-family: 'Creepster', cursive;
+    font-size: 56px;
+    letter-spacing: 8px;
+    text-align: center;
+}
+#result-title.escaped {
+    color: var(--neon-green);
+    text-shadow: 0 0 20px var(--neon-green-glow), 0 0 60px rgba(0,255,65,0.4);
+}
+#result-title.gameover {
+    color: #ff2020;
+    text-shadow: 0 0 20px #ff0000, 0 0 60px rgba(255,0,0,0.4);
+}
+#result-title.allclear {
+    color: var(--neon-gold);
+    text-shadow: 0 0 20px rgba(255,204,0,0.6), 0 0 60px rgba(255,204,0,0.3);
+}
+#result-info {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 16px;
+    color: var(--text-primary);
+    text-align: center;
+    line-height: 2;
+    letter-spacing: 2px;
+}
+#result-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    max-width: 300px;
+    margin-top: 20px;
+}
+
+/* ============================================
    Responsive
    ============================================ */
 @media (max-width: 480px) {
@@ -1070,7 +1226,19 @@ body {
             <div id="crosshair"></div>
             <div id="hud-stamina"><div id="hud-stamina-bar"></div></div>
             <div id="pointer-lock-hint">CLICK TO PLAY</div>
+            <div id="hud-status"></div>
+            <div id="hud-objective"></div>
+            <div id="hud-enemy-dist"></div>
+            <div id="hud-bpm"></div>
+            <div id="minimap-container"><canvas id="minimap-canvas" width="150" height="150"></canvas></div>
         </div>
+    </div>
+
+    <!-- Result Screen -->
+    <div id="result-screen" class="screen">
+        <div id="result-title"></div>
+        <div id="result-info"></div>
+        <div id="result-buttons"></div>
     </div>
 
 </div>
@@ -1080,6 +1248,15 @@ body {
 
 <!-- Hidden Stage Unlock Flash -->
 <div id="unlock-flash"></div>
+
+<!-- Danger Frame -->
+<div id="danger-frame"></div>
+
+<!-- Capture Vignette -->
+<div id="capture-vignette"></div>
+
+<!-- Caught Text -->
+<div id="caught-text"></div>
 
 <!-- ============================================
      Layer 100: CRT Overlay
@@ -1263,6 +1440,19 @@ const GameState = {
     // Phase 4: Enemies
     onis: [],
     oniSpeedMultiplier: 1.0,
+
+    // Phase 5: Gameplay
+    exitPosition: null,
+    exitFloor: 0,
+    exitReached: false,
+    exitGroup: null,
+    exitWarpTimer: 0,
+    nearestOniDistance: Infinity,
+    nearestOniDirection: '',
+    currentBPM: 72,
+    score: 0,
+    totalTime: 0,
+    captureInProgress: false,
 };
 
 /* ============================================
@@ -2078,6 +2268,49 @@ const i18n = {
         joinRoom: 'Join Room',
         cancel: 'Cancel',
         waiting: 'Waiting...',
+    }
+};
+
+const HUD_TEXT = {
+    ja: {
+        status_runner: '状態: 逃走中',
+        status_caught: '状態: 逃走失敗',
+        floor: 'フロア',
+        time: '残り',
+        obj_exit: '目標: 出口を探せ',
+        enemy: '敵',
+        dir_ahead: '前方', dir_left: '左', dir_right: '右', dir_behind: '後方',
+        bpm: '\u2665 心拍',
+        escape: '脱出せよ',
+        caught_big: '逃走失敗',
+        escaped: '脱出成功！',
+        timeup: 'TIME UP',
+        allclear: 'ALL STAGES CLEARED!',
+        retry: 'リトライ',
+        backTitle: 'タイトルに戻る',
+        nextStage: '次のステージへ',
+        score: 'スコア',
+        survivalTime: '生存時間',
+    },
+    en: {
+        status_runner: 'STATUS: RUNNER',
+        status_caught: 'STATUS: GAME OVER',
+        floor: 'FLOOR',
+        time: 'TIME',
+        obj_exit: 'OBJ: FIND EXIT',
+        enemy: 'ENEMY',
+        dir_ahead: 'AHEAD', dir_left: 'LEFT', dir_right: 'RIGHT', dir_behind: 'BEHIND',
+        bpm: '\u2665 BPM',
+        escape: 'ESCAPE',
+        caught_big: 'GAME OVER',
+        escaped: 'ESCAPED!',
+        timeup: 'TIME UP',
+        allclear: 'ALL STAGES CLEARED!',
+        retry: 'Retry',
+        backTitle: 'Back to Title',
+        nextStage: 'Next Stage',
+        score: 'SCORE',
+        survivalTime: 'SURVIVAL TIME',
     }
 };
 
@@ -2998,6 +3231,502 @@ function updateOniY(oni) {
     }
 }
 
+/* ============================================
+   Phase 5: EXIT System
+   ============================================ */
+function placeExit(cols, rows, stageId, numFloors) {
+    let exitFloor = 0;
+    if (stageId === 4) exitFloor = 1;
+    else if (stageId === 5) exitFloor = numFloors - 1;
+    else if (stageId === 'hidden') exitFloor = numFloors - 1;
+    else exitFloor = 0;
+
+    let exitX, exitZ;
+    if (stageId <= 2) {
+        exitX = cols - 2; exitZ = rows - 2;
+    } else {
+        do {
+            exitX = Math.floor(Math.random() * (cols - 2)) + 1;
+            exitZ = Math.floor(Math.random() * (rows - 2)) + 1;
+        } while (Math.abs(exitX) + Math.abs(exitZ) < cols * 0.5);
+    }
+    return { x: exitX, z: exitZ, floor: exitFloor };
+}
+
+function createExitZone(cellX, cellZ, floor) {
+    const group = new THREE.Group();
+    const x = cellX * CL + CL / 2;
+    const z = cellZ * CL + CL / 2;
+    const y = floor * FLOOR_H;
+
+    // Green light pillar
+    const exitLight = new THREE.PointLight(0x00ff41, 5, 15);
+    exitLight.position.set(0, 2.0, 0);
+    group.add(exitLight);
+
+    // Ground ring marker
+    const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.8, 1.2, 32),
+        new THREE.MeshBasicMaterial({ color: 0x00ff41, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(0, 0.02, 0);
+    group.add(ring);
+
+    // EXIT text sprite
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#00ff41';
+    ctx.font = 'bold 36px Share Tech Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('EXIT', 64, 42);
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.8 });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.position.set(0, 3.0, 0);
+    sprite.scale.set(2, 1, 1);
+    group.add(sprite);
+
+    // Second ring (pulsing)
+    const ring2 = new THREE.Mesh(
+        new THREE.RingGeometry(1.4, 1.6, 32),
+        new THREE.MeshBasicMaterial({ color: 0x00ff41, side: THREE.DoubleSide, transparent: true, opacity: 0.3 })
+    );
+    ring2.rotation.x = -Math.PI / 2;
+    ring2.position.set(0, 0.01, 0);
+    group.add(ring2);
+    group.userData.pulseRing = ring2;
+    group.userData.exitLight = exitLight;
+
+    group.position.set(x, y, z);
+    return group;
+}
+
+function checkExitReached() {
+    if (!GameState.exitPosition || GameState.exitReached) return;
+    if (GameState.playerCurrentFloor !== GameState.exitFloor) return;
+
+    const dx = camera.position.x - (GameState.exitPosition.x * CL + CL / 2);
+    const dz = camera.position.z - (GameState.exitPosition.z * CL + CL / 2);
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    GameState.exitDistance = dist;
+
+    if (dist < 2.0) {
+        GameState.exitReached = true;
+        onStageCleared();
+    }
+}
+
+function updateExitPulse() {
+    if (!GameState.exitGroup) return;
+    const ring2 = GameState.exitGroup.userData.pulseRing;
+    if (ring2) {
+        ring2.material.opacity = 0.15 + Math.sin(clock.elapsedTime * 3) * 0.15;
+    }
+    const light = GameState.exitGroup.userData.exitLight;
+    if (light) {
+        light.intensity = 4 + Math.sin(clock.elapsedTime * 2) * 1;
+    }
+}
+
+/* ============================================
+   Phase 5: Capture System
+   ============================================ */
+function checkCatch() {
+    if (!GameState.alive || GameState.captureInProgress) return;
+    const playerFloor = GameState.playerCurrentFloor;
+
+    for (const oni of GameState.onis) {
+        if (oni.currentFloor !== playerFloor) continue;
+        const dx = camera.position.x - oni.position.x;
+        const dz = camera.position.z - oni.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < ONI_CONFIG.catchDistance) {
+            onPlayerCaught(oni);
+            return;
+        }
+    }
+}
+
+function onPlayerCaught(oni) {
+    GameState.alive = false;
+    GameState.captureInProgress = true;
+
+    // Phase 1: Red flash + camera shake
+    const frame = document.getElementById('danger-frame');
+    frame.style.boxShadow = 'inset 0 0 100px rgba(255, 0, 0, 0.8)';
+    frame.style.display = 'block';
+
+    // Lock input
+    GameState.moveForward = false;
+    GameState.moveBackward = false;
+    GameState.sprint = false;
+
+    // Phase 2: Camera forced look at oni (after 0.5s)
+    setTimeout(() => {
+        const captureAnim = { startTime: performance.now(), oni: oni };
+        function animateCapture() {
+            const elapsed = (performance.now() - captureAnim.startTime) / 1000;
+            const t = Math.min(elapsed / 1.5, 1);
+            const eased = 1 - Math.pow(1 - t, 3);
+
+            // Look at oni
+            const lookTarget = new THREE.Vector3(oni.position.x, camera.position.y, oni.position.z);
+            camera.lookAt(lookTarget);
+
+            // Narrow FOV
+            camera.fov = THREE.MathUtils.lerp(60, 40, eased);
+            camera.updateProjectionMatrix();
+
+            // Move oni closer
+            var targetDist = 0.3;
+            var dir = new THREE.Vector3(
+                camera.position.x - oni.position.x,
+                0,
+                camera.position.z - oni.position.z
+            ).normalize();
+            var targetPos = new THREE.Vector3(
+                camera.position.x - dir.x * targetDist,
+                oni.position.y,
+                camera.position.z - dir.z * targetDist
+            );
+            oni.group.position.lerpVectors(oni.group.position.clone(), targetPos, eased * 0.1);
+
+            if (renderer && scene && camera) renderer.render(scene, camera);
+            if (t < 1) requestAnimationFrame(animateCapture);
+        }
+        animateCapture();
+    }, 500);
+
+    // Phase 3: Vignette (after 2s)
+    setTimeout(() => {
+        document.getElementById('capture-vignette').style.opacity = '0.9';
+    }, 2000);
+
+    // Phase 4: Show GAME OVER text (after 3.5s)
+    setTimeout(() => {
+        const lang = HUD_TEXT[GameState.language];
+        var text = document.getElementById('caught-text');
+        text.textContent = lang.caught_big;
+        text.classList.add('visible');
+    }, 3500);
+
+    // Show result screen (after 5s)
+    setTimeout(() => {
+        document.getElementById('caught-text').classList.remove('visible');
+        document.getElementById('capture-vignette').style.opacity = '0';
+        document.getElementById('danger-frame').style.display = 'none';
+
+        if (GameState.gameMode === 'scoreAttack') {
+            showScoreResult();
+        } else {
+            showGameOverResult('caught');
+        }
+    }, 5000);
+}
+
+/* ============================================
+   Phase 5: HUD Update
+   ============================================ */
+function updateGameHUD() {
+    var lang = HUD_TEXT[GameState.language];
+
+    // Status
+    var statusEl = document.getElementById('hud-status');
+    if (statusEl) statusEl.textContent = GameState.alive ? lang.status_runner : lang.status_caught;
+
+    // Nearest oni distance + direction
+    var minDist = Infinity;
+    var minDir = '';
+    for (var oi = 0; oi < GameState.onis.length; oi++) {
+        var oni = GameState.onis[oi];
+        var dx = oni.position.x - camera.position.x;
+        var dz = oni.position.z - camera.position.z;
+        var dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < minDist) {
+            minDist = dist;
+            var angle = Math.atan2(dx, dz) - GameState.playerRotationY;
+            var normAngle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+            if (normAngle < Math.PI * 0.25 || normAngle > Math.PI * 1.75) minDir = lang.dir_ahead;
+            else if (normAngle < Math.PI * 0.75) minDir = lang.dir_right;
+            else if (normAngle < Math.PI * 1.25) minDir = lang.dir_behind;
+            else minDir = lang.dir_left;
+        }
+    }
+    GameState.nearestOniDistance = minDist;
+
+    var enemyEl = document.getElementById('hud-enemy-dist');
+    if (enemyEl) {
+        enemyEl.textContent = lang.enemy + ': ' + (minDist < 100 ? minDist.toFixed(1) : '--') + 'm ' + minDir;
+        if (minDist < 6) { enemyEl.style.color = '#ff0040'; }
+        else if (minDist < 15) { enemyEl.style.color = '#ffaa00'; }
+        else { enemyEl.style.color = '#00ff41'; }
+    }
+
+    // BPM
+    var maxDist = 30, minBPM = 72, maxBPM = 160;
+    var ratio = Math.max(0, 1 - minDist / maxDist);
+    GameState.currentBPM = Math.round(minBPM + (maxBPM - minBPM) * ratio);
+    var bpmEl = document.getElementById('hud-bpm');
+    if (bpmEl) bpmEl.textContent = lang.bpm + ': ' + GameState.currentBPM;
+
+    // Objective (EXIT distance)
+    var objEl = document.getElementById('hud-objective');
+    if (objEl && GameState.exitPosition) {
+        var edx = camera.position.x - (GameState.exitPosition.x * CL + CL / 2);
+        var edz = camera.position.z - (GameState.exitPosition.z * CL + CL / 2);
+        var exitDist = Math.sqrt(edx * edx + edz * edz);
+        var exitFloorLabel = (GameState.exitFloor + 1) + 'F';
+        objEl.textContent = lang.obj_exit + ' ' + exitFloorLabel + ' \u2014 ' + exitDist.toFixed(1) + 'm';
+    } else if (objEl && GameState.gameMode === 'scoreAttack') {
+        objEl.textContent = lang.score + ': ' + Math.floor(GameState.score);
+    }
+
+    // Update danger frame
+    updateDangerFrame(minDist);
+}
+
+function updateDangerFrame(distanceToOni) {
+    var frame = document.getElementById('danger-frame');
+    if (!frame || GameState.captureInProgress) return;
+
+    if (distanceToOni < 6) {
+        var intensity = 1 - (distanceToOni / 6);
+        var alpha = 0.3 + intensity * 0.5;
+        var spread = 40 + intensity * 60;
+        frame.style.boxShadow = 'inset 0 0 ' + spread + 'px rgba(255, 0, 0, ' + alpha + ')';
+        frame.style.display = 'block';
+        frame.style.animation = distanceToOni < 3 ? 'danger-pulse 0.3s infinite alternate' : 'none';
+    } else if (distanceToOni < 12) {
+        var intensity2 = 1 - ((distanceToOni - 6) / 6);
+        var alpha2 = 0.15 + intensity2 * 0.35;
+        var spread2 = 20 + intensity2 * 40;
+        frame.style.boxShadow = 'inset 0 0 ' + spread2 + 'px rgba(255, 200, 0, ' + alpha2 + ')';
+        frame.style.display = 'block';
+        frame.style.animation = 'none';
+    } else {
+        frame.style.display = 'none';
+        frame.style.animation = 'none';
+    }
+}
+
+/* ============================================
+   Phase 5: Minimap
+   ============================================ */
+function drawMinimap() {
+    var canvas = document.getElementById('minimap-canvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var w = 150, h = 150;
+    ctx.clearRect(0, 0, w, h);
+
+    var floors = GameState.mazeFloors;
+    var floor = GameState.playerCurrentFloor;
+    if (!floors || !floors[floor]) return;
+
+    var grid = floors[floor];
+    var cols = GameState.mazeCols;
+    var rows = GameState.mazeRows;
+    var cellW = w / cols;
+    var cellH = h / rows;
+
+    // Draw walls
+    ctx.strokeStyle = 'rgba(0, 255, 65, 0.3)';
+    ctx.lineWidth = 1;
+    for (var y = 0; y < rows; y++) {
+        for (var x = 0; x < cols; x++) {
+            var cell = grid[y][x];
+            var cx = x * cellW;
+            var cy = y * cellH;
+            if (cell.top) { ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + cellW, cy); ctx.stroke(); }
+            if (cell.left) { ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + cellH); ctx.stroke(); }
+            if (x === cols - 1 && cell.right) { ctx.beginPath(); ctx.moveTo(cx + cellW, cy); ctx.lineTo(cx + cellW, cy + cellH); ctx.stroke(); }
+            if (y === rows - 1 && cell.bottom) { ctx.beginPath(); ctx.moveTo(cx, cy + cellH); ctx.lineTo(cx + cellW, cy + cellH); ctx.stroke(); }
+
+            // Stair markers
+            if (cell.isStairs) {
+                ctx.fillStyle = 'rgba(255, 204, 0, 0.7)';
+                ctx.font = Math.max(6, cellW * 0.6) + 'px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('\u25B2', cx + cellW / 2, cy + cellH * 0.8);
+            }
+        }
+    }
+
+    // EXIT marker
+    if (GameState.exitPosition && GameState.exitFloor === floor) {
+        var ex = GameState.exitPosition.x * cellW + cellW / 2;
+        var ey = GameState.exitPosition.z * cellH + cellH / 2;
+        ctx.fillStyle = Math.sin(Date.now() * 0.005) > 0 ? '#00ff41' : '#005518';
+        ctx.beginPath(); ctx.arc(ex, ey, Math.max(3, cellW * 0.4), 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Oni positions (same floor only)
+    GameState.onis.forEach(function(oni) {
+        if (oni.currentFloor !== floor) return;
+        var ox = (oni.position.x / CL) * cellW;
+        var oy = (oni.position.z / CL) * cellH;
+        ctx.fillStyle = '#ff2020';
+        ctx.beginPath(); ctx.arc(ox, oy, Math.max(2, cellW * 0.3), 0, Math.PI * 2); ctx.fill();
+    });
+
+    // Player position
+    var px = (camera.position.x / CL) * cellW;
+    var py = (camera.position.z / CL) * cellH;
+    ctx.fillStyle = '#00ff41';
+    ctx.beginPath(); ctx.arc(px, py, Math.max(2, cellW * 0.35), 0, Math.PI * 2); ctx.fill();
+
+    // Player direction indicator
+    var dirX = px + Math.sin(GameState.playerRotationY) * cellW * 0.6;
+    var dirY = py - Math.cos(GameState.playerRotationY) * cellH * 0.6;
+    ctx.strokeStyle = '#00ff41';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(dirX, dirY); ctx.stroke();
+}
+
+/* ============================================
+   Phase 5: Result Screens
+   ============================================ */
+function showGameOverResult(reason) {
+    cleanupGame();
+    var lang = HUD_TEXT[GameState.language];
+    var titleEl = document.getElementById('result-title');
+    var infoEl = document.getElementById('result-info');
+    var btnsEl = document.getElementById('result-buttons');
+
+    if (reason === 'caught') {
+        titleEl.textContent = lang.caught_big;
+        titleEl.className = 'gameover';
+        infoEl.textContent = 'STAGE: ' + GameState.currentStage;
+    } else if (reason === 'timeup') {
+        titleEl.textContent = lang.timeup;
+        titleEl.className = 'gameover';
+        infoEl.textContent = 'STAGE: ' + GameState.currentStage;
+    }
+
+    btnsEl.innerHTML =
+        '<button class="btn btn-neon" onclick="retryStage()">' + lang.retry + '</button>' +
+        '<button class="btn btn-thin" onclick="backToTitle()">' + lang.backTitle + '</button>';
+
+    showScreen('result-screen');
+}
+
+function onStageCleared() {
+    GameState.gameActive = false;
+    if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+
+    var lang = HUD_TEXT[GameState.language];
+    var stageId = GameState.currentStage;
+
+    // Mark stage as cleared
+    if (!GameState.clearedStages.includes(stageId)) {
+        GameState.clearedStages.push(stageId);
+    }
+    if (stageId === 5) GameState.storyClearedStage5 = true;
+
+    // Save to Firebase
+    if (firebaseReady && GameState.username && !GameState.isGuest) {
+        database.ref('users/' + GameState.username + '/stats').update({
+            clearedStages: GameState.clearedStages,
+            storyClearedStage5: GameState.storyClearedStage5,
+            bestStage: Math.max(stageId, 0),
+        });
+    }
+
+    // Check if all stages cleared
+    var isAllClear = GameState.clearedStages.length >= 5 && GameState.clearedStages.includes(5);
+
+    setTimeout(function() {
+        cleanupGame();
+        var titleEl = document.getElementById('result-title');
+        var infoEl = document.getElementById('result-info');
+        var btnsEl = document.getElementById('result-buttons');
+
+        if (isAllClear && stageId === 5) {
+            titleEl.textContent = lang.allclear;
+            titleEl.className = 'allclear';
+            infoEl.textContent = 'CONGRATULATIONS';
+            btnsEl.innerHTML =
+                '<button class="btn btn-neon" onclick="backToTitle()">' + lang.backTitle + '</button>';
+        } else {
+            titleEl.textContent = lang.escaped;
+            titleEl.className = 'escaped';
+            infoEl.textContent = 'STAGE ' + stageId + ' CLEAR';
+            btnsEl.innerHTML =
+                '<button class="btn btn-neon" onclick="goNextStage()">' + lang.nextStage + '</button>' +
+                '<button class="btn btn-thin" onclick="backToTitle()">' + lang.backTitle + '</button>';
+        }
+
+        showScreen('result-screen');
+    }, 1500);
+}
+
+function showScoreResult() {
+    cleanupGame();
+    var lang = HUD_TEXT[GameState.language];
+    var titleEl = document.getElementById('result-title');
+    var infoEl = document.getElementById('result-info');
+    var btnsEl = document.getElementById('result-buttons');
+
+    titleEl.textContent = lang.caught_big;
+    titleEl.className = 'gameover';
+    infoEl.innerHTML = lang.score + ': ' + Math.floor(GameState.score) + '<br>' + lang.survivalTime + ': ' + formatTime(GameState.totalTime);
+
+    // Save to Firebase
+    if (firebaseReady && GameState.username && !GameState.isGuest) {
+        database.ref('rankings').push({
+            username: GameState.username,
+            score: Math.floor(GameState.score),
+            gameMode: 'scoreAttack',
+            survivalTime: Math.floor(GameState.totalTime),
+            timestamp: firebase.database.ServerValue.TIMESTAMP,
+        });
+    }
+
+    btnsEl.innerHTML =
+        '<button class="btn btn-neon" onclick="retryScoreAttack()">' + lang.retry + '</button>' +
+        '<button class="btn btn-thin" onclick="backToTitle()">' + lang.backTitle + '</button>';
+
+    showScreen('result-screen');
+}
+
+function formatTime(seconds) {
+    var m = Math.floor(seconds / 60);
+    var s = Math.floor(seconds % 60);
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+function retryStage() {
+    showScreen('game-screen');
+    startGame(GameState.currentStage);
+}
+
+function retryScoreAttack() {
+    GameState.gameMode = 'scoreAttack';
+    showScreen('game-screen');
+    startGame('scoreAttack');
+}
+
+function goNextStage() {
+    var nextId = GameState.currentStage + 1;
+    if (nextId <= 5) {
+        GameState.currentStage = nextId;
+        showScreen('game-screen');
+        startGame(nextId);
+    } else {
+        backToTitle();
+    }
+}
+
+function backToTitle() {
+    showScreen('title-screen');
+    document.getElementById('matrix-bg').style.display = '';
+    document.getElementById('red-glow').style.display = '';
+    document.getElementById('fog-overlay').style.display = '';
+    document.getElementById('crt-overlay').style.display = '';
+}
+
 /* --- 3D Mesh Construction (Multi-Floor) --- */
 function buildMaze3D(floors, cols, rows, stageId) {
     const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
@@ -3536,7 +4265,11 @@ function startTimer(seconds) {
         updateTimerDisplay();
         if (GameState.timeRemaining <= 0) {
             clearInterval(GameState.timerInterval);
-            // Time up - will be handled in later phases
+            if (GameState.alive && !GameState.exitReached) {
+                GameState.alive = false;
+                GameState.gameActive = false;
+                showGameOverResult('timeup');
+            }
         }
     }, 1000);
 }
@@ -3564,6 +4297,19 @@ function gameLoop() {
     updateHeadBob(delta);
     updateLightFlicker(delta);
     updateOniAI(delta);
+    checkCatch();
+    checkExitReached();
+    updateExitPulse();
+    updateGameHUD();
+    drawMinimap();
+    // Score attack: accumulate score
+    if (GameState.gameMode === 'scoreAttack' && GameState.alive) {
+        GameState.score += delta;
+        GameState.totalTime += delta;
+    }
+    if (GameState.gameMode !== 'scoreAttack') {
+        GameState.totalTime += delta;
+    }
     renderer.render(scene, camera);
     GameState.animationId = requestAnimationFrame(gameLoop);
 }
@@ -3624,12 +4370,13 @@ function startGame(stageId) {
     // Set HUD label
     const label = document.getElementById('hud-stage-label');
     if (label) {
+        const hudLang = HUD_TEXT[GameState.language];
         if (stageId === 'scoreAttack') {
             label.textContent = 'SCORE ATTACK';
         } else if (stageId === 'hidden') {
-            label.textContent = '??? STAGE';
+            label.textContent = '??? \u2014 ' + hudLang.escape;
         } else {
-            label.textContent = STAGE_DISPLAY_NAMES[stageId] || ('STAGE ' + stageId);
+            label.textContent = 'STAGE ' + stageId + ' \u2014 ' + hudLang.escape;
         }
     }
 
@@ -3659,6 +4406,24 @@ function startGame(stageId) {
 
     // Spawn ONI enemies
     spawnOnis(stageId);
+
+    // Place EXIT (story mode)
+    if (stageId !== 'scoreAttack') {
+        const exitInfo = placeExit(cols, rows, stageId, GameState.mazeFloors.length);
+        GameState.exitPosition = { x: exitInfo.x, z: exitInfo.z };
+        GameState.exitFloor = exitInfo.floor;
+        GameState.exitReached = false;
+        GameState.exitGroup = createExitZone(exitInfo.x, exitInfo.z, exitInfo.floor);
+        scene.add(GameState.exitGroup);
+    } else {
+        GameState.exitPosition = null;
+        GameState.exitGroup = null;
+    }
+    GameState.score = 0;
+    GameState.totalTime = 0;
+    GameState.captureInProgress = false;
+    GameState.nearestOniDistance = Infinity;
+    GameState.currentBPM = 72;
 
     // Set player start position
     camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
@@ -3740,6 +4505,29 @@ function cleanupGame() {
     GameState.stairsData = [];
     GameState.playerCurrentFloor = 0;
     GameState.onStairs = false;
+
+    // Clean up EXIT
+    if (GameState.exitGroup) {
+        GameState.exitGroup.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (child.material.map) child.material.map.dispose();
+                if (child.material.dispose) child.material.dispose();
+            }
+        });
+        if (GameState.exitGroup.parent) GameState.exitGroup.parent.remove(GameState.exitGroup);
+        GameState.exitGroup = null;
+    }
+    GameState.exitPosition = null;
+    GameState.captureInProgress = false;
+
+    // Reset danger frame
+    const dframe = document.getElementById('danger-frame');
+    if (dframe) { dframe.style.display = 'none'; dframe.style.animation = 'none'; }
+    const cvignette = document.getElementById('capture-vignette');
+    if (cvignette) cvignette.style.opacity = '0';
+    const ctext = document.getElementById('caught-text');
+    if (ctext) ctext.classList.remove('visible');
 
     // Clean up onis
     GameState.onis.forEach(oni => {
