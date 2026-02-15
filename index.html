@@ -1285,6 +1285,46 @@ body {
         width: 260px;
     }
 }
+
+/* ============================================
+   Phase 7: Navigator Bar
+   ============================================ */
+#navigator-bar {
+    position: absolute;
+    bottom: 50px; left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    color: var(--neon-green);
+    text-shadow: 0 0 8px var(--neon-green-glow);
+    background: rgba(0,0,0,0.5);
+    padding: 8px 20px;
+    letter-spacing: 2px;
+    text-align: center;
+    transition: opacity 0.5s;
+    pointer-events: none;
+    white-space: nowrap;
+    max-width: 90%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#navigator-bar.warning {
+    color: #ff4444;
+    text-shadow: 0 0 8px rgba(255,68,68,0.6);
+}
+
+/* ============================================
+   Phase 7: Escape Flash Overlay
+   ============================================ */
+#escape-flash {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 255, 65, 0.6);
+    z-index: 55;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
 </style>
 </head>
 <body>
@@ -1402,6 +1442,7 @@ body {
             <div id="quick-chat-hud"></div>
             <div id="quick-chat-keys"></div>
             <div id="spectator-badge"></div>
+            <div id="navigator-bar"></div>
         </div>
     </div>
 
@@ -1419,6 +1460,9 @@ body {
 
 <!-- Hidden Stage Unlock Flash -->
 <div id="unlock-flash"></div>
+
+<!-- Escape Flash (Phase 7) -->
+<div id="escape-flash"></div>
 
 <!-- Danger Frame -->
 <div id="danger-frame"></div>
@@ -3550,13 +3594,16 @@ function initButtons() {
     // BGM toggle
     document.getElementById('bgm-toggle').addEventListener('click', () => {
         GameState.bgmEnabled = !GameState.bgmEnabled;
+        SoundManager.bgmEnabled = GameState.bgmEnabled;
         const btn = document.getElementById('bgm-toggle');
         if (GameState.bgmEnabled) {
             btn.className = 'bgm-btn bgm-on';
             btn.innerHTML = '&#128266; BGM';
+            if (GameState.gameActive) SoundManager.playBGM(GameState.currentStage);
         } else {
             btn.className = 'bgm-btn bgm-off';
             btn.innerHTML = '&#128263; BGM';
+            SoundManager.stopBGM();
         }
     });
 
@@ -4855,6 +4902,10 @@ function onPlayerCaught(oni) {
     GameState.alive = false;
     GameState.captureInProgress = true;
 
+    // Phase 7: Capture impact SE + game over SE
+    SoundManager.playSE('captureImpact');
+    setTimeout(() => SoundManager.playSE('gameOver'), 1500);
+
     // Phase 1: Red flash + camera shake
     const frame = document.getElementById('danger-frame');
     frame.style.boxShadow = 'inset 0 0 100px rgba(255, 0, 0, 0.8)';
@@ -5147,6 +5198,10 @@ function showGameOverResult(reason) {
 function onStageCleared() {
     GameState.gameActive = false;
     if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+
+    // Phase 7: Escape effect
+    playEscapeEffect();
+    SoundManager.playSE('stageClear');
 
     var lang = HUD_TEXT[GameState.language];
     var stageId = GameState.currentStage;
@@ -5809,6 +5864,9 @@ function startTimer(seconds) {
         }
         GameState.timeRemaining--;
         updateTimerDisplay();
+        // Phase 7: Time warnings via Navigator
+        if (GameState.timeRemaining === 30) Navigator.add('time30', true);
+        if (GameState.timeRemaining === 10) Navigator.add('time10', true);
         if (GameState.timeRemaining <= 0) {
             clearInterval(GameState.timerInterval);
             var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
@@ -5854,6 +5912,1250 @@ function updateTimerDisplay() {
     }
 }
 
+/* ============================================
+   Phase 7: Sound & Effects System
+   ============================================ */
+
+/* --- 7.1 SoundManager --- */
+const SoundManager = {
+    bgm: null,
+    bgmGain: null,
+    bgmEnabled: false,
+    seEnabled: true,
+    audioCtx: null,
+
+    getCtx() {
+        if (!this.audioCtx) {
+            try {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.warn('Web Audio API not supported');
+                return null;
+            }
+        }
+        if (this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume();
+        }
+        return this.audioCtx;
+    },
+
+    playBGM(stageId) {
+        this.stopBGM();
+        if (!this.bgmEnabled) return;
+        const ctx = this.getCtx();
+        if (!ctx) return;
+
+        this.bgmGain = ctx.createGain();
+        this.bgmGain.gain.value = 0.08;
+        this.bgmGain.connect(ctx.destination);
+
+        // Generate ambient drone BGM based on stage theme
+        const freqs = {
+            1: [55, 82.5, 110],
+            2: [49, 73.5, 98],
+            3: [62, 93, 124],
+            4: [52, 78, 104],
+            5: [44, 66, 88],
+            scoreAttack: [58, 87, 116],
+            hidden: [46, 69, 92],
+        };
+        const stageFreqs = freqs[stageId] || freqs[1];
+        const oscs = [];
+
+        stageFreqs.forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const oscGain = ctx.createGain();
+            osc.type = i === 0 ? 'sine' : 'triangle';
+            osc.frequency.value = freq;
+            oscGain.gain.value = i === 0 ? 0.06 : 0.03;
+            osc.connect(oscGain);
+            oscGain.connect(this.bgmGain);
+            osc.start();
+            oscs.push(osc);
+        });
+
+        // LFO for subtle volume modulation
+        const lfo = ctx.createOscillator();
+        const lfoGain = ctx.createGain();
+        lfo.type = 'sine';
+        lfo.frequency.value = 0.15;
+        lfoGain.gain.value = 0.02;
+        lfo.connect(lfoGain);
+        lfoGain.connect(this.bgmGain.gain);
+        lfo.start();
+        oscs.push(lfo);
+
+        this.bgm = oscs;
+    },
+
+    stopBGM() {
+        if (this.bgm) {
+            this.bgm.forEach(osc => { try { osc.stop(); } catch (e) {} });
+            this.bgm = null;
+        }
+        if (this.bgmGain) {
+            try { this.bgmGain.disconnect(); } catch (e) {}
+            this.bgmGain = null;
+        }
+    },
+
+    toggleBGM() {
+        this.bgmEnabled = !this.bgmEnabled;
+        GameState.bgmEnabled = this.bgmEnabled;
+        if (this.bgmEnabled && GameState.gameActive) {
+            this.playBGM(GameState.currentStage);
+        } else {
+            this.stopBGM();
+        }
+    },
+
+    playSE(name) {
+        if (!this.seEnabled) return;
+        const ctx = this.getCtx();
+        if (!ctx) return;
+
+        const se = SE_DEFS[name];
+        if (!se) return;
+        se(ctx);
+    }
+};
+
+/* --- SE Definitions --- */
+const SE_DEFS = {
+    hover: function(ctx) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 1200;
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.03);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.03);
+    },
+
+    click: function(ctx) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.value = 800;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.05);
+    },
+
+    error: function(ctx) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.value = 300;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.1);
+    },
+
+    captureImpact: function(ctx) {
+        // Heavy impact: noise + sine 40Hz
+        const bufferSize = ctx.sampleRate * 0.3;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.08));
+        }
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.4, ctx.currentTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        noise.connect(noiseGain);
+        noiseGain.connect(ctx.destination);
+        noise.start(ctx.currentTime);
+
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 40;
+        gain.gain.setValueAtTime(0.6, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.3);
+    },
+
+    flashlightClick: function(ctx) {
+        const bufferSize = ctx.sampleRate * 0.02;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.005));
+        }
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        const gain = ctx.createGain();
+        gain.gain.value = 0.2;
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        src.start(ctx.currentTime);
+    },
+
+    escapeSuccess: function(ctx) {
+        // Ascending tones: C4-E4-G4-C5
+        const notes = [261.63, 329.63, 392.00, 523.25];
+        notes.forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            const t = ctx.currentTime + i * 0.125;
+            gain.gain.setValueAtTime(0.3, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.2);
+        });
+    },
+
+    stageClear: function(ctx) {
+        // Ascending arpeggio
+        const notes = [261.63, 329.63, 392.00, 523.25, 659.25];
+        notes.forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.value = freq;
+            const t = ctx.currentTime + i * 0.1;
+            gain.gain.setValueAtTime(0.25, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.25);
+        });
+    },
+
+    gameOver: function(ctx) {
+        // Descending dark tones
+        const notes = [220, 185, 147, 110, 82.5];
+        notes.forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.value = freq;
+            const t = ctx.currentTime + i * 0.15;
+            gain.gain.setValueAtTime(0.2, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.3);
+        });
+    },
+
+    nearMiss: function(ctx) {
+        // Tension release
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(200, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(80, ctx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.4);
+    }
+};
+
+/* --- 7.2 FootstepManager --- */
+function createFootstepSound(ctx, type) {
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+
+    if (type === 'sprint') {
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.value = 120;
+        gain.gain.setValueAtTime(0.45, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+        osc.connect(gain);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.06);
+    } else if (type === 'exhausted') {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = 80;
+        gain.gain.setValueAtTime(0.35, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+        osc.connect(gain);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.1);
+    } else {
+        // Walk
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.value = 180;
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+        osc.connect(gain);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.05);
+    }
+}
+
+const FootstepManager = {
+    intervalId: null,
+    currentState: null,
+    wasSprintingLastFrame: false,
+
+    start(state) {
+        if (this.currentState === state) return;
+        this.stop();
+        this.currentState = state;
+        const ctx = SoundManager.getCtx();
+        if (!ctx || !SoundManager.seEnabled) return;
+
+        let interval;
+        if (state === 'sprint') interval = 280;
+        else if (state === 'exhausted') interval = 550;
+        else interval = 450;
+
+        createFootstepSound(ctx, state);
+        this.intervalId = setInterval(() => {
+            if (!SoundManager.seEnabled) return;
+            const c = SoundManager.getCtx();
+            if (c) createFootstepSound(c, state);
+        }, interval);
+    },
+
+    stop() {
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+        this.currentState = null;
+    },
+
+    playSprintKick() {
+        const ctx = SoundManager.getCtx();
+        if (!ctx || !SoundManager.seEnabled) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.value = 80;
+        gain.gain.setValueAtTime(0.5, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.08);
+    },
+
+    playBrakeSound() {
+        const ctx = SoundManager.getCtx();
+        if (!ctx || !SoundManager.seEnabled) return;
+        const bufferSize = ctx.sampleRate * 0.08;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.03));
+        }
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        const bandpass = ctx.createBiquadFilter();
+        bandpass.type = 'bandpass';
+        bandpass.frequency.value = 2000;
+        bandpass.Q.value = 2;
+        const gain = ctx.createGain();
+        gain.gain.value = 0.25;
+        src.connect(bandpass);
+        bandpass.connect(gain);
+        gain.connect(ctx.destination);
+        src.start(ctx.currentTime);
+    }
+};
+
+/* --- 7.2b Movement SE update (called from game loop) --- */
+let prevMovementState = 'idle';
+let prevStaminaDepleted = false;
+
+function updateMovementSE() {
+    if (!GameState.alive) { FootstepManager.stop(); return; }
+
+    const isMoving = GameState.moveForward || GameState.moveBackward || GameState.turnLeft || GameState.turnRight;
+    const isSprinting = GameState.sprint && GameState.stamina > 0 && (GameState.moveForward || GameState.moveBackward);
+    const isExhausted = GameState.stamina <= 5 && !prevStaminaDepleted && GameState.sprint;
+
+    if (!isMoving) {
+        if (prevMovementState === 'sprint') {
+            FootstepManager.playBrakeSound();
+        }
+        FootstepManager.stop();
+        prevMovementState = 'idle';
+        FootstepManager.wasSprintingLastFrame = false;
+    } else if (isSprinting) {
+        if (!FootstepManager.wasSprintingLastFrame) {
+            FootstepManager.playSprintKick();
+        }
+        FootstepManager.start('sprint');
+        prevMovementState = 'sprint';
+        FootstepManager.wasSprintingLastFrame = true;
+    } else if (isExhausted) {
+        FootstepManager.start('exhausted');
+        prevMovementState = 'exhausted';
+        FootstepManager.wasSprintingLastFrame = false;
+    } else if (isMoving) {
+        FootstepManager.start('walk');
+        prevMovementState = 'walk';
+        FootstepManager.wasSprintingLastFrame = false;
+    }
+
+    prevStaminaDepleted = GameState.stamina <= 5;
+}
+
+/* --- 7.3 Oni Footstep Manager --- */
+function createOniFootstep(ctx, volume, pan) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 60;
+    gain.gain.setValueAtTime(volume, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pan));
+
+    osc.connect(gain);
+    gain.connect(panner);
+    panner.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.1);
+}
+
+const OniFootstepManager = {
+    intervalId: null,
+    active: false,
+
+    start() {
+        if (this.active) return;
+        this.active = true;
+    },
+
+    stop() {
+        this.active = false;
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+    },
+
+    _lastStep: 0,
+
+    update(oniList, playerPos, playerFloor, playerRotY) {
+        if (!this.active || !SoundManager.seEnabled) return;
+        const ctx = SoundManager.getCtx();
+        if (!ctx) return;
+        const now = performance.now();
+
+        for (let i = 0; i < oniList.length; i++) {
+            const oni = oniList[i];
+            const dx = oni.position.x - playerPos.x;
+            const dz = oni.position.z - playerPos.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            const sameFloor = oni.currentFloor === playerFloor;
+
+            // Volume based on distance
+            let volume = 0;
+            if (dist > 15) volume = 0;
+            else if (dist > 10) volume = 0.1;
+            else if (dist > 5) volume = 0.25;
+            else if (dist > 2) volume = 0.5;
+            else volume = 0.8;
+
+            if (!sameFloor) {
+                volume *= 0.3;
+            }
+            if (volume <= 0) continue;
+
+            // Tempo based on distance
+            const tempo = dist < 5 ? 300 : 500;
+            if (!oni._lastFootstepTime) oni._lastFootstepTime = 0;
+            if (now - oni._lastFootstepTime < tempo) continue;
+            oni._lastFootstepTime = now;
+
+            // Pan based on direction relative to player facing
+            const angle = Math.atan2(dx, dz) - playerRotY;
+            const pan = Math.sin(angle);
+
+            if (!sameFloor) {
+                // Cross-floor: use lowpass filter
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 60;
+                gain.gain.setValueAtTime(volume, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+                const lowpass = ctx.createBiquadFilter();
+                lowpass.type = 'lowpass';
+                lowpass.frequency.value = 300;
+                const panner = ctx.createStereoPanner();
+                panner.pan.value = Math.max(-1, Math.min(1, pan));
+                osc.connect(gain);
+                gain.connect(lowpass);
+                lowpass.connect(panner);
+                panner.connect(ctx.destination);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.1);
+            } else {
+                createOniFootstep(ctx, volume, pan);
+            }
+        }
+    }
+};
+
+/* --- 7.5 HeartbeatManager --- */
+const HeartbeatManager = {
+    intervalId: null,
+    active: false,
+    lastBPM: 0,
+
+    start() {
+        this.active = true;
+    },
+
+    stop() {
+        this.active = false;
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+        this.lastBPM = 0;
+    },
+
+    _playBeat(ctx) {
+        // "Lub-dub" double beat
+        const volume = Math.min(0.4, (GameState.currentBPM - 80) / 200);
+        if (volume <= 0) return;
+
+        // Lub
+        const osc1 = ctx.createOscillator();
+        const g1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.value = 50;
+        g1.gain.setValueAtTime(volume, ctx.currentTime);
+        g1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+        osc1.connect(g1);
+        g1.connect(ctx.destination);
+        osc1.start(ctx.currentTime);
+        osc1.stop(ctx.currentTime + 0.08);
+
+        // Dub (slightly delayed)
+        const osc2 = ctx.createOscillator();
+        const g2 = ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.value = 45;
+        g2.gain.setValueAtTime(volume * 0.7, ctx.currentTime + 0.1);
+        g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+        osc2.connect(g2);
+        g2.connect(ctx.destination);
+        osc2.start(ctx.currentTime + 0.1);
+        osc2.stop(ctx.currentTime + 0.18);
+    },
+
+    update() {
+        if (!this.active || !SoundManager.seEnabled) return;
+        const bpm = GameState.currentBPM;
+
+        // Only audible when BPM > 80 (oni within 12m)
+        if (bpm <= 80) {
+            if (this.intervalId) {
+                clearInterval(this.intervalId);
+                this.intervalId = null;
+                this.lastBPM = 0;
+            }
+            return;
+        }
+
+        // Restart interval if BPM changed significantly
+        if (Math.abs(bpm - this.lastBPM) > 5 || !this.intervalId) {
+            if (this.intervalId) clearInterval(this.intervalId);
+            this.lastBPM = bpm;
+            const interval = Math.round(60000 / bpm);
+            const ctx = SoundManager.getCtx();
+            if (ctx) this._playBeat(ctx);
+
+            this.intervalId = setInterval(() => {
+                if (!this.active || !SoundManager.seEnabled) return;
+                const c = SoundManager.getCtx();
+                if (c) this._playBeat(c);
+            }, interval);
+        }
+    }
+};
+
+/* --- 7.6 AmbientSoundManager --- */
+const AMBIENT_CONFIGS = {
+    1: { // Lab
+        layers: [
+            { type: 'drone', waveform: 'sine', freq: 100, volume: 0.04, label: 'HVAC hum' },
+        ],
+        events: [
+            { type: 'beep', freq: 1000, waveform: 'sine', duration: 0.05, volume: 0.06, interval: [8000, 15000] },
+        ]
+    },
+    2: { // Factory
+        layers: [
+            { type: 'drone', waveform: 'sawtooth', freq: 65, volume: 0.03, label: 'gear drone' },
+        ],
+        events: [
+            { type: 'creak', freq: 200, waveform: 'triangle', duration: 0.3, volume: 0.05, interval: [6000, 12000] },
+            { type: 'steam', noise: true, duration: 0.2, volume: 0.08, interval: [10000, 20000] },
+        ]
+    },
+    3: { // Night Streets
+        layers: [
+            { type: 'drone', waveform: 'sine', freq: 80, volume: 0.02, label: 'wind' },
+        ],
+        events: [
+            { type: 'bell', freq: 440, waveform: 'sine', duration: 1.0, volume: 0.04, interval: [15000, 30000] },
+            { type: 'crow', freq: 600, waveform: 'sawtooth', duration: 0.15, volume: 0.05, interval: [12000, 25000] },
+        ]
+    },
+    4: { // Edo Village
+        layers: [
+            { type: 'drone', waveform: 'sine', freq: 3800, volume: 0.015, label: 'cricket' },
+        ],
+        events: [
+            { type: 'chime', freq: 2000, waveform: 'sine', duration: 0.5, volume: 0.04, interval: [8000, 18000] },
+            { type: 'howl', freq: 150, waveform: 'sine', duration: 0.6, volume: 0.04, interval: [20000, 40000] },
+        ]
+    },
+    5: { // Data Center
+        layers: [
+            { type: 'drone', waveform: 'triangle', freq: 120, volume: 0.03, label: 'fan drone' },
+        ],
+        events: [
+            { type: 'spark', noise: true, duration: 0.05, volume: 0.1, interval: [5000, 12000] },
+            { type: 'collapse', freq: 40, waveform: 'sine', duration: 0.4, volume: 0.06, interval: [15000, 30000] },
+        ]
+    },
+    hidden: { // Temple
+        layers: [
+            { type: 'drone', waveform: 'sine', freq: 110, volume: 0.03, label: 'chanting' },
+            { type: 'drone', waveform: 'sine', freq: 55, volume: 0.025, label: 'heartbeat' },
+        ],
+        events: [
+            { type: 'bell', freq: 330, waveform: 'sine', duration: 1.5, volume: 0.05, interval: [10000, 20000] },
+            { type: 'taiko', freq: 60, waveform: 'sine', duration: 0.3, volume: 0.08, interval: [8000, 16000] },
+        ]
+    },
+    scoreAttack: {
+        layers: [
+            { type: 'drone', waveform: 'sine', freq: 90, volume: 0.03, label: 'base drone' },
+        ],
+        events: [
+            { type: 'beep', freq: 800, waveform: 'square', duration: 0.03, volume: 0.05, interval: [10000, 20000] },
+        ]
+    }
+};
+
+const AmbientSoundManager = {
+    droneLayers: [],
+    eventTimers: [],
+    active: false,
+    stageId: null,
+
+    init(stageId) {
+        this.stop();
+        this.stageId = stageId;
+        this.active = true;
+        const ctx = SoundManager.getCtx();
+        if (!ctx || !SoundManager.seEnabled) return;
+
+        const config = AMBIENT_CONFIGS[stageId] || AMBIENT_CONFIGS[1];
+
+        // Create drone layers
+        config.layers.forEach(layer => {
+            this.createLayer(ctx, layer);
+        });
+
+        // Schedule events
+        if (config.events) {
+            config.events.forEach(ev => {
+                this._scheduleEvent(ctx, ev);
+            });
+        }
+    },
+
+    createLayer(ctx, layer) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = layer.waveform || 'sine';
+        osc.frequency.value = layer.freq;
+        gain.gain.value = layer.volume;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        this.droneLayers.push({ osc, gain });
+    },
+
+    _scheduleEvent(ctx, ev) {
+        const schedule = () => {
+            if (!this.active) return;
+            const delay = ev.interval[0] + Math.random() * (ev.interval[1] - ev.interval[0]);
+            const timer = setTimeout(() => {
+                if (!this.active || !SoundManager.seEnabled) return;
+                this.playAmbientSound(ctx, ev);
+                schedule();
+            }, delay);
+            this.eventTimers.push(timer);
+        };
+        schedule();
+    },
+
+    playAmbientSound(ctx, ev) {
+        if (ev.noise) {
+            const bufferSize = Math.floor(ctx.sampleRate * ev.duration);
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.3));
+            }
+            const src = ctx.createBufferSource();
+            src.buffer = buffer;
+            const gain = ctx.createGain();
+            gain.gain.value = ev.volume;
+            src.connect(gain);
+            gain.connect(ctx.destination);
+            src.start(ctx.currentTime);
+        } else {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = ev.waveform || 'sine';
+            osc.frequency.value = ev.freq;
+            gain.gain.setValueAtTime(ev.volume, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + ev.duration);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + ev.duration);
+        }
+    },
+
+    addScoreAttackLayer(elapsed) {
+        if (!this.active) return;
+        const ctx = SoundManager.getCtx();
+        if (!ctx) return;
+
+        // At 60s, 120s, 240s add layers
+        if (elapsed >= 60 && this.droneLayers.length < 2) {
+            this.createLayer(ctx, { waveform: 'triangle', freq: 150, volume: 0.02 });
+        }
+        if (elapsed >= 120 && this.droneLayers.length < 3) {
+            this.createLayer(ctx, { waveform: 'sawtooth', freq: 55, volume: 0.015 });
+        }
+        if (elapsed >= 240 && this.droneLayers.length < 4) {
+            this.createLayer(ctx, { waveform: 'square', freq: 200, volume: 0.01 });
+        }
+    },
+
+    stop() {
+        this.active = false;
+        this.droneLayers.forEach(l => {
+            try { l.osc.stop(); } catch (e) {}
+            try { l.gain.disconnect(); } catch (e) {}
+        });
+        this.droneLayers = [];
+        this.eventTimers.forEach(t => clearTimeout(t));
+        this.eventTimers = [];
+        this.stageId = null;
+    }
+};
+
+/* --- 7.7 Navigator System --- */
+const NAV_TEXTS = {
+    ja: {
+        gameStart: 'ナビゲーター起動... 脱出経路を探索中',
+        oniApproaching: '警告: 敵接近中',
+        oniVeryClose: '危険! 敵が非常に近い!',
+        oniDirectionAhead: '敵: 前方に検知',
+        oniDirectionBehind: '敵: 後方に検知',
+        oniDirectionLeft: '敵: 左方向に検知',
+        oniDirectionRight: '敵: 右方向に検知',
+        exitFarAhead: '出口: 前方遠方',
+        exitTurnLeft: '出口: 左方向へ',
+        exitTurnRight: '出口: 右方向へ',
+        exitBehind: '出口: 後方',
+        exitNear: '出口: 接近中',
+        exitVeryNear: '出口はすぐそこだ!',
+        exitUpstairs: '出口: 上階層にあり',
+        exitDownstairs: '出口: 下階層にあり',
+        exitRelocated: '出口位置が変更された',
+        stairsFoundUp: '上り階段を発見',
+        stairsFoundDown: '下り階段を発見',
+        floorChanged: 'フロア移動',
+        sprintAvailable: 'ダッシュ可能',
+        staminaLow: 'スタミナ低下',
+        staminaDepleted: 'スタミナ切れ',
+        time30: '残り30秒!',
+        time10: '残り10秒! 急げ!',
+        stageClear: 'ステージクリア!',
+        escaped: '脱出成功!',
+        survive60: '60秒生存達成',
+        survive120: '120秒生存達成',
+        hintDeadEnd: '行き止まり - 引き返せ',
+        hintOniBlocking: '警告: 敵が出口方面を封鎖中',
+        hintSafeArea: '安全エリア検知',
+        hintMultipleOni: '警告: 複数の敵を検知',
+    },
+    en: {
+        gameStart: 'Navigator online... scanning escape routes',
+        oniApproaching: 'WARNING: Enemy approaching',
+        oniVeryClose: 'DANGER! Enemy very close!',
+        oniDirectionAhead: 'Enemy: detected ahead',
+        oniDirectionBehind: 'Enemy: detected behind',
+        oniDirectionLeft: 'Enemy: detected left',
+        oniDirectionRight: 'Enemy: detected right',
+        exitFarAhead: 'Exit: far ahead',
+        exitTurnLeft: 'Exit: turn left',
+        exitTurnRight: 'Exit: turn right',
+        exitBehind: 'Exit: behind you',
+        exitNear: 'Exit: approaching',
+        exitVeryNear: 'Exit is right there!',
+        exitUpstairs: 'Exit: on upper floor',
+        exitDownstairs: 'Exit: on lower floor',
+        exitRelocated: 'Exit position has changed',
+        stairsFoundUp: 'Stairs up found',
+        stairsFoundDown: 'Stairs down found',
+        floorChanged: 'Floor changed',
+        sprintAvailable: 'Sprint available',
+        staminaLow: 'Stamina low',
+        staminaDepleted: 'Stamina depleted',
+        time30: '30 seconds remaining!',
+        time10: '10 seconds! Hurry!',
+        stageClear: 'Stage Clear!',
+        escaped: 'Escaped!',
+        survive60: '60 seconds survived',
+        survive120: '120 seconds survived',
+        hintDeadEnd: 'Dead end - turn back',
+        hintOniBlocking: 'WARNING: Enemy blocking exit route',
+        hintSafeArea: 'Safe area detected',
+        hintMultipleOni: 'WARNING: Multiple enemies detected',
+    }
+};
+
+const Navigator = {
+    queue: [],
+    currentText: '',
+    displayUntil: 0,
+    minInterval: 3000,
+    hintInterval: 15000,
+    lastMessageTime: 0,
+    lastHintTime: 0,
+    lastExitHintTime: 0,
+    lastOniWarningTime: 0,
+    language: 'ja',
+    _wasOniClose: false,
+
+    getText(key) {
+        return NAV_TEXTS[this.language][key] || key;
+    },
+
+    add(key, isWarning) {
+        const now = performance.now();
+        if (now - this.lastMessageTime < this.minInterval && !isWarning) return;
+        const text = typeof key === 'string' && NAV_TEXTS[this.language][key] ? NAV_TEXTS[this.language][key] : key;
+        this.queue.push({ text, isWarning: !!isWarning, time: now });
+    },
+
+    update() {
+        const now = performance.now();
+        const bar = document.getElementById('navigator-bar');
+        if (!bar) return;
+
+        if (now > this.displayUntil && this.queue.length > 0) {
+            const msg = this.queue.shift();
+            this.currentText = msg.text;
+            this.lastMessageTime = now;
+            this.displayUntil = now + 4000;
+            bar.textContent = msg.text;
+            bar.style.opacity = '1';
+            bar.className = msg.isWarning ? 'warning' : '';
+        } else if (now > this.displayUntil) {
+            bar.style.opacity = '0';
+        }
+    },
+
+    setLanguage(lang) {
+        this.language = lang;
+    },
+
+    reset() {
+        this.queue = [];
+        this.currentText = '';
+        this.displayUntil = 0;
+        this.lastMessageTime = 0;
+        this.lastHintTime = 0;
+        this.lastExitHintTime = 0;
+        this.lastOniWarningTime = 0;
+        this._wasOniClose = false;
+        const bar = document.getElementById('navigator-bar');
+        if (bar) { bar.textContent = ''; bar.style.opacity = '0'; bar.className = ''; }
+    }
+};
+
+function getDirectionHint(playerPos, playerRotY, targetPos) {
+    const dx = targetPos.x - playerPos.x;
+    const dz = targetPos.z - playerPos.z;
+    const angle = Math.atan2(dx, dz) - playerRotY;
+    const norm = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    if (norm < Math.PI * 0.25 || norm > Math.PI * 1.75) return 'ahead';
+    if (norm < Math.PI * 0.75) return 'right';
+    if (norm < Math.PI * 1.25) return 'behind';
+    return 'left';
+}
+
+function checkOniDirectionWarning(playerPos, playerRotY, playerFloor, oniList) {
+    const now = performance.now();
+    if (now - Navigator.lastOniWarningTime < 5000) return;
+
+    let closestDist = Infinity;
+    let closestDir = '';
+    let sameFl = false;
+
+    for (const oni of oniList) {
+        const dx = oni.position.x - playerPos.x;
+        const dz = oni.position.z - playerPos.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < closestDist && oni.currentFloor === playerFloor) {
+            closestDist = dist;
+            closestDir = getDirectionHint(playerPos, playerRotY, { x: oni.position.x, z: oni.position.z });
+            sameFl = true;
+        }
+    }
+
+    if (!sameFl) return;
+
+    if (closestDist < 3) {
+        Navigator.add('oniVeryClose', true);
+        Navigator.lastOniWarningTime = now;
+    } else if (closestDist < 8) {
+        const dirKey = 'oniDirection' + closestDir.charAt(0).toUpperCase() + closestDir.slice(1);
+        Navigator.add(dirKey, true);
+        Navigator.lastOniWarningTime = now;
+    } else if (closestDist < 12) {
+        Navigator.add('oniApproaching', true);
+        Navigator.lastOniWarningTime = now;
+    }
+
+    // Near miss detection
+    if (closestDist < 5) {
+        Navigator._wasOniClose = true;
+    } else if (Navigator._wasOniClose && closestDist > 10) {
+        Navigator._wasOniClose = false;
+        SoundManager.playSE('nearMiss');
+    }
+}
+
+function checkExitHintNav(playerPos, playerRotY, playerFloor, exitPos, exitFloor) {
+    if (!exitPos) return;
+    const now = performance.now();
+    if (now - Navigator.lastExitHintTime < Navigator.hintInterval) return;
+
+    const exitWorldX = exitPos.x * CL + CL / 2;
+    const exitWorldZ = exitPos.z * CL + CL / 2;
+
+    if (exitFloor !== playerFloor) {
+        Navigator.add(exitFloor > playerFloor ? 'exitUpstairs' : 'exitDownstairs');
+        Navigator.lastExitHintTime = now;
+        return;
+    }
+
+    const dx = exitWorldX - playerPos.x;
+    const dz = exitWorldZ - playerPos.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist < 4) {
+        Navigator.add('exitVeryNear');
+    } else if (dist < 10) {
+        Navigator.add('exitNear');
+    } else {
+        const dir = getDirectionHint(playerPos, playerRotY, { x: exitWorldX, z: exitWorldZ });
+        if (dir === 'ahead') Navigator.add('exitFarAhead');
+        else if (dir === 'left') Navigator.add('exitTurnLeft');
+        else if (dir === 'right') Navigator.add('exitTurnRight');
+        else Navigator.add('exitBehind');
+    }
+    Navigator.lastExitHintTime = now;
+}
+
+function checkDeadEnd(playerPos, playerFloor, mazeFloors) {
+    if (!mazeFloors || !mazeFloors[playerFloor]) return;
+    const grid = mazeFloors[playerFloor];
+    const cellX = Math.floor(playerPos.x / CL);
+    const cellZ = Math.floor(playerPos.z / CL);
+    if (cellX < 0 || cellX >= grid[0].length || cellZ < 0 || cellZ >= grid.length) return;
+
+    const neighbors = getPassableNeighbors(grid, { x: cellX, z: cellZ });
+    if (neighbors.length <= 1) {
+        const now = performance.now();
+        if (now - Navigator.lastHintTime < Navigator.hintInterval) return;
+        Navigator.add('hintDeadEnd');
+        Navigator.lastHintTime = now;
+    }
+}
+
+function checkOniBlocking(playerPos, playerFloor, exitPos, exitFloor, oniList) {
+    if (!exitPos || exitFloor !== playerFloor) return;
+    const now = performance.now();
+    if (now - Navigator.lastHintTime < Navigator.hintInterval) return;
+
+    const cellX = Math.floor(playerPos.x / CL);
+    const cellZ = Math.floor(playerPos.z / CL);
+    const start = { x: cellX, z: cellZ, floor: playerFloor };
+    const goal = { x: exitPos.x, z: exitPos.z, floor: exitFloor };
+
+    const path = bfsPathfind3D(GameState.mazeFloors, start, goal);
+    if (path.length === 0) return;
+
+    // Check if any oni is on the path
+    for (const oni of oniList) {
+        if (oni.currentFloor !== playerFloor) continue;
+        const oniCellX = Math.floor(oni.position.x / CL);
+        const oniCellZ = Math.floor(oni.position.z / CL);
+        for (const node of path) {
+            if (node.x === oniCellX && node.z === oniCellZ) {
+                Navigator.add('hintOniBlocking', true);
+                Navigator.lastHintTime = now;
+                return;
+            }
+        }
+    }
+}
+
+function checkPeriodicHints() {
+    const now = performance.now();
+    if (now - Navigator.lastHintTime < Navigator.hintInterval) return;
+
+    // Multiple oni warning
+    if (GameState.onis.length > 1) {
+        let closeCnt = 0;
+        for (const oni of GameState.onis) {
+            if (oni.currentFloor === GameState.playerCurrentFloor) {
+                const dx = oni.position.x - camera.position.x;
+                const dz = oni.position.z - camera.position.z;
+                if (Math.sqrt(dx * dx + dz * dz) < 15) closeCnt++;
+            }
+        }
+        if (closeCnt >= 2) {
+            Navigator.add('hintMultipleOni', true);
+            Navigator.lastHintTime = now;
+            return;
+        }
+    }
+
+    // Dead end check
+    checkDeadEnd(
+        { x: camera.position.x, z: camera.position.z },
+        GameState.playerCurrentFloor,
+        GameState.mazeFloors
+    );
+}
+
+/* --- 7.8 Dust Particles --- */
+let dustParticles = [];
+
+function createDustParticles(stageId, numFloors) {
+    removeDustParticles();
+    if (!scene) return;
+
+    const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
+    const particleColor = colors.emissive;
+    const particlesPerFloor = 200;
+
+    for (let f = 0; f < numFloors; f++) {
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particlesPerFloor * 3);
+        const velocities = [];
+        const mazeW = GameState.mazeCols * CL;
+        const mazeD = GameState.mazeRows * CL;
+        const yBase = f * FLOOR_H;
+
+        for (let i = 0; i < particlesPerFloor; i++) {
+            positions[i * 3] = Math.random() * mazeW;
+            positions[i * 3 + 1] = yBase + 0.5 + Math.random() * (WH - 1);
+            positions[i * 3 + 2] = Math.random() * mazeD;
+            velocities.push({
+                vx: (Math.random() - 0.5) * 0.2,
+                vz: (Math.random() - 0.5) * 0.2,
+                phase: Math.random() * Math.PI * 2,
+                speed: 0.3 + Math.random() * 0.4
+            });
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const material = new THREE.PointsMaterial({
+            color: particleColor,
+            size: 0.06,
+            transparent: true,
+            opacity: 0.4,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+        dustParticles.push({ points, geometry, velocities, floor: f, yBase });
+    }
+}
+
+function updateDustParticles(delta) {
+    if (!dustParticles.length) return;
+    const playerFloor = GameState.playerCurrentFloor;
+    const t = clock ? clock.elapsedTime : 0;
+
+    dustParticles.forEach(dp => {
+        // Only render particles on current floor (and adjacent)
+        dp.points.visible = Math.abs(dp.floor - playerFloor) <= 1;
+        if (!dp.points.visible) return;
+
+        const positions = dp.geometry.attributes.position.array;
+        const mazeW = GameState.mazeCols * CL;
+        const mazeD = GameState.mazeRows * CL;
+
+        for (let i = 0; i < dp.velocities.length; i++) {
+            const v = dp.velocities[i];
+            positions[i * 3] += v.vx * delta;
+            positions[i * 3 + 1] = dp.yBase + 0.5 + (WH - 1) * 0.5 + Math.sin(t * v.speed + v.phase) * (WH - 1) * 0.3;
+            positions[i * 3 + 2] += v.vz * delta;
+
+            // Wrap around
+            if (positions[i * 3] < 0) positions[i * 3] += mazeW;
+            if (positions[i * 3] > mazeW) positions[i * 3] -= mazeW;
+            if (positions[i * 3 + 2] < 0) positions[i * 3 + 2] += mazeD;
+            if (positions[i * 3 + 2] > mazeD) positions[i * 3 + 2] -= mazeD;
+        }
+        dp.geometry.attributes.position.needsUpdate = true;
+    });
+}
+
+function removeDustParticles() {
+    dustParticles.forEach(dp => {
+        if (dp.points.parent) dp.points.parent.remove(dp.points);
+        dp.geometry.dispose();
+        dp.points.material.dispose();
+    });
+    dustParticles = [];
+}
+
+/* --- 7.9 Enhanced Light Flickering --- */
+function updateLightFlickerEnhanced(delta) {
+    const t = clock.elapsedTime;
+    const oniDist = GameState.nearestOniDistance;
+    const oniIntensityBoost = oniDist < 10 ? (1 - oniDist / 10) * 0.3 : 0;
+
+    pointLights.forEach(pl => {
+        // Subtle flickering
+        const flicker = Math.sin(t * pl.flickerSpeed + pl.flickerPhase) * 0.3 +
+                        Math.sin(t * pl.flickerSpeed * 2.3 + pl.flickerPhase) * 0.15;
+
+        // Dramatic flickering (rare, intensified by oni proximity)
+        let dramatic = 0;
+        if (oniIntensityBoost > 0 && Math.random() < 0.005 * (1 + oniIntensityBoost * 3)) {
+            dramatic = (Math.random() > 0.5 ? 0.5 : -0.4) * (1 + oniIntensityBoost);
+        }
+
+        pl.light.intensity = Math.max(0, pl.baseIntensity + flicker + dramatic);
+    });
+}
+
+/* --- 7.10 Escape Success Effect --- */
+function playEscapeEffect() {
+    // Green flash overlay
+    const flash = document.getElementById('escape-flash');
+    if (flash) {
+        flash.style.opacity = '1';
+        setTimeout(() => { flash.style.opacity = '0'; }, 300);
+    }
+
+    // SE
+    SoundManager.playSE('escapeSuccess');
+
+    // Camera FOV zoom-in effect
+    if (camera) {
+        const originalFov = camera.fov;
+        camera.fov = originalFov - 10;
+        camera.updateProjectionMatrix();
+        setTimeout(() => {
+            if (camera) {
+                camera.fov = originalFov;
+                camera.updateProjectionMatrix();
+            }
+        }, 500);
+    }
+}
+
+/* --- 7.11 Danger Drone --- */
+let dangerDroneOsc = null;
+let dangerDroneGain = null;
+
+function updateDangerDrone() {
+    if (!SoundManager.seEnabled) {
+        stopDangerDrone();
+        return;
+    }
+    const dist = GameState.nearestOniDistance;
+
+    if (dist < 12 && GameState.alive) {
+        const ctx = SoundManager.getCtx();
+        if (!ctx) return;
+
+        if (!dangerDroneOsc) {
+            dangerDroneOsc = ctx.createOscillator();
+            dangerDroneGain = ctx.createGain();
+            dangerDroneOsc.type = 'sine';
+            dangerDroneOsc.frequency.value = 35;
+            dangerDroneGain.gain.value = 0;
+            dangerDroneOsc.connect(dangerDroneGain);
+            dangerDroneGain.connect(ctx.destination);
+            dangerDroneOsc.start();
+        }
+
+        const volume = Math.min(0.15, (1 - dist / 12) * 0.15);
+        dangerDroneGain.gain.setTargetAtTime(volume, ctx.currentTime, 0.1);
+    } else {
+        stopDangerDrone();
+    }
+}
+
+function stopDangerDrone() {
+    if (dangerDroneOsc) {
+        try { dangerDroneOsc.stop(); } catch (e) {}
+        dangerDroneOsc = null;
+    }
+    if (dangerDroneGain) {
+        try { dangerDroneGain.disconnect(); } catch (e) {}
+        dangerDroneGain = null;
+    }
+}
+
+/* --- 7.12 UI Sound Effects for Buttons --- */
+function initUISounds() {
+    document.querySelectorAll('.btn, .stage-btn, .lang-btn, .bgm-btn, .lobby-mode-btn, .ranking-tab').forEach(btn => {
+        btn.addEventListener('mouseenter', () => SoundManager.playSE('hover'));
+        btn.addEventListener('click', () => SoundManager.playSE('click'));
+    });
+}
+
 /* --- Game Loop --- */
 function gameLoop() {
     if (!GameState.gameActive) return;
@@ -5864,7 +7166,7 @@ function gameLoop() {
     // Spectator mode
     if (GameState.isSpectating) {
         updateSpectatorCamera();
-        updateLightFlicker(delta);
+        updateLightFlickerEnhanced(delta);
         if (isMulti) {
             updateRemotePlayers(delta);
         }
@@ -5874,15 +7176,22 @@ function gameLoop() {
             SyncLayer.updateOniPositions(GameState.onis);
         }
         updateExitPulse();
+        updateDustParticles(delta);
         drawMinimap();
         if (renderer && scene && camera) renderer.render(scene, camera);
         GameState.animationId = requestAnimationFrame(gameLoop);
         return;
     }
 
+    // Step 1-2: Movement + stamina
     updatePlayerMovement(delta);
     updateHeadBob(delta);
-    updateLightFlicker(delta);
+
+    // Phase 7: Movement SE (after stamina update)
+    updateMovementSE();
+
+    // Step 3: Light flickering (enhanced)
+    updateLightFlickerEnhanced(delta);
 
     // ONI AI - host runs it, guests receive positions
     if (!isMulti || GameState.isHost) {
@@ -5890,6 +7199,14 @@ function gameLoop() {
             updateOniAI(delta);
         }
     }
+
+    // Phase 7: Oni footstep manager
+    OniFootstepManager.update(
+        GameState.onis,
+        { x: camera.position.x, z: camera.position.z },
+        GameState.playerCurrentFloor,
+        GameState.playerRotationY
+    );
 
     // Multiplayer sync
     if (isMulti && GameState.alive) {
@@ -5920,15 +7237,54 @@ function gameLoop() {
         checkCatch();
     }
 
+    // Phase 7: Heartbeat + danger drone (after catch check)
+    HeartbeatManager.update();
+    updateDangerDrone();
+
     checkExitReached();
     updateExitPulse();
     updateGameHUD();
+
+    // Phase 7: Navigator updates (after HUD)
+    if (GameState.alive) {
+        checkOniDirectionWarning(
+            { x: camera.position.x, z: camera.position.z },
+            GameState.playerRotationY,
+            GameState.playerCurrentFloor,
+            GameState.onis
+        );
+        checkPeriodicHints();
+        if (GameState.exitPosition) {
+            checkExitHintNav(
+                { x: camera.position.x, z: camera.position.z },
+                GameState.playerRotationY,
+                GameState.playerCurrentFloor,
+                GameState.exitPosition,
+                GameState.exitFloor
+            );
+            checkOniBlocking(
+                { x: camera.position.x, z: camera.position.z },
+                GameState.playerCurrentFloor,
+                GameState.exitPosition,
+                GameState.exitFloor,
+                GameState.onis
+            );
+        }
+    }
+    Navigator.update();
+
     drawMinimap();
+
+    // Phase 7: Dust particles
+    updateDustParticles(delta);
 
     // Score attack: accumulate score
     if (GameState.gameMode === 'scoreAttack' && GameState.alive) {
         GameState.score += delta;
         GameState.totalTime += delta;
+
+        // Phase 7: Score attack ambient layers
+        AmbientSoundManager.addScoreAttackLayer(GameState.totalTime);
     }
     if (GameState.gameMode !== 'scoreAttack') {
         GameState.totalTime += delta;
@@ -6149,6 +7505,20 @@ function startGame(stageId) {
     const hint = document.getElementById('pointer-lock-hint');
     if (hint) hint.classList.add('visible');
 
+    // Phase 7: Initialize sound & effects
+    prevMovementState = 'idle';
+    prevStaminaDepleted = false;
+    FootstepManager.stop();
+    FootstepManager.wasSprintingLastFrame = false;
+    OniFootstepManager.start();
+    HeartbeatManager.start();
+    AmbientSoundManager.init(stageId);
+    Navigator.setLanguage(GameState.language);
+    Navigator.reset();
+    Navigator.add('gameStart');
+    createDustParticles(stageId, GameState.mazeFloors.length);
+    if (SoundManager.bgmEnabled) SoundManager.playBGM(stageId);
+
     // Activate game
     GameState.gameActive = true;
     clock.start();
@@ -6252,6 +7622,16 @@ function cleanupGame() {
     GameState.spectateTarget = -1;
     GameState.pinMarkers = {};
 
+    // Phase 7: Clean up sound & effects
+    FootstepManager.stop();
+    OniFootstepManager.stop();
+    HeartbeatManager.stop();
+    AmbientSoundManager.stop();
+    SoundManager.stopBGM();
+    stopDangerDrone();
+    Navigator.reset();
+    removeDustParticles();
+
     if (renderer) {
         renderer.dispose();
         const container = document.getElementById('game-canvas-container');
@@ -6289,6 +7669,8 @@ window.addEventListener('DOMContentLoaded', () => {
     initCatchcopy();
     initButtons();
     checkRoomURL();
+    // Phase 7: UI sound effects on buttons
+    initUISounds();
 });
 </script>
 </body>
