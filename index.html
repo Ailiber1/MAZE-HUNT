@@ -8,6 +8,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <style>
 /* ============================================
    CSS Variables - Neon Theme
@@ -1465,6 +1466,134 @@ body {
     #title-logo h1 { font-size: 32px; letter-spacing: 4px; }
     #hud-timer { font-size: 16px; }
 }
+/* ============================================
+   Character Selection Grid
+   ============================================ */
+#char-select-section {
+    width: 100%;
+    max-width: 380px;
+    margin-top: 16px;
+}
+.char-select-label {
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--neon-green-dim);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
+.char-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    width: 100%;
+}
+.char-card {
+    border: 1px solid rgba(0, 170, 42, 0.3);
+    background: rgba(0, 20, 10, 0.5);
+    padding: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    position: relative;
+}
+.char-card:hover {
+    border-color: var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green-glow);
+}
+.char-card.selected {
+    border-color: var(--neon-green);
+    box-shadow: 0 0 12px var(--neon-green-glow);
+    background: rgba(0, 255, 65, 0.08);
+}
+.char-card.taken {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.char-card.taken::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+}
+.char-taken-label {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 10px;
+    color: var(--neon-red);
+    letter-spacing: 1px;
+    z-index: 2;
+    text-shadow: 0 0 6px var(--matrix-red-glow);
+}
+.char-preview {
+    width: 100%;
+    height: 100px;
+    position: relative;
+    overflow: hidden;
+}
+.char-preview canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+.char-name {
+    font-size: 10px;
+    color: var(--neon-green);
+    letter-spacing: 1px;
+    margin-top: 4px;
+    text-shadow: 0 0 4px var(--neon-green-glow);
+}
+.char-team-section {
+    margin-top: 12px;
+}
+.char-team-label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+    padding: 4px 8px;
+    display: inline-block;
+}
+.char-team-label.oni-label {
+    color: #ff2020;
+    border-bottom: 1px solid rgba(255, 32, 32, 0.4);
+}
+.char-team-label.runner-label {
+    color: #2060ff;
+    border-bottom: 1px solid rgba(32, 96, 255, 0.4);
+}
+
+/* ============================================
+   Pause Screen
+   ============================================ */
+#pause-screen {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 90;
+    background: rgba(0, 0, 0, 0.85);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+}
+#pause-screen.active {
+    display: flex;
+}
+#pause-title {
+    font-family: 'Creepster', cursive;
+    font-size: 48px;
+    letter-spacing: 8px;
+    color: var(--neon-green);
+    text-shadow: 0 0 20px var(--neon-green-glow), 0 0 60px rgba(0, 255, 65, 0.4);
+}
+#pause-info {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    color: var(--text-primary);
+    letter-spacing: 2px;
+}
 </style>
 </head>
 <body>
@@ -1558,6 +1687,10 @@ body {
                 <div id="team-runner-players"></div>
             </div>
         </div>
+        <div id="char-select-section">
+            <div class="char-select-label" data-i18n="selectChar">キャラクター選択</div>
+            <div class="char-grid" id="char-grid"></div>
+        </div>
         <div class="btn-group" style="max-width:380px;margin-top:16px;">
             <button id="btn-start-game" class="btn btn-neon" disabled data-i18n="startGame">ゲーム開始</button>
             <button id="btn-leave-lobby" class="btn btn-thin" data-i18n="leaveLobby">退出する</button>
@@ -1626,6 +1759,16 @@ body {
 
 <!-- Disconnect Notification -->
 <div id="disconnect-notif"></div>
+
+<!-- Pause Screen (Tab Visibility) -->
+<div id="pause-screen">
+    <div id="pause-title">PAUSED</div>
+    <div id="pause-info">ゲームが一時停止中です</div>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:300px;">
+        <button id="btn-resume" class="btn btn-neon">再開する</button>
+        <button id="btn-pause-quit" class="btn btn-thin">タイトルに戻る</button>
+    </div>
+</div>
 
 <!-- ============================================
      Layer 100: CRT Overlay
@@ -1823,7 +1966,368 @@ const GameState = {
     score: 0,
     totalTime: 0,
     captureInProgress: false,
+
+    // Character Selection
+    selectedCharacter: null,
 };
+
+/* ============================================
+   Character Data
+   ============================================ */
+const CHARACTER_LIST = {
+    runners: [
+        { id: 'Amy', name: 'Amy', file: 'characters/Amy.glb' },
+        { id: 'Bryce', name: 'Bryce', file: 'characters/Bryce.glb' },
+        { id: 'CH45', name: 'CH-45', file: 'characters/CH45.glb' },
+        { id: 'Crypto', name: 'Crypto', file: 'characters/Crypto.glb' },
+        { id: 'Hallin', name: 'Hallin', file: 'characters/Hallin.glb' },
+        { id: 'humanoid', name: 'Humanoid', file: 'characters/humanoid.glb' },
+        { id: 'James', name: 'James', file: 'characters/James.glb' },
+        { id: 'Jolleen', name: 'Jolleen', file: 'characters/Jolleen.glb' },
+        { id: 'Ortiz', name: 'Ortiz', file: 'characters/Ortiz.glb' },
+    ],
+    enemies: [
+        { id: 'Mutant', name: 'Mutant', file: 'characters/Mutant.glb' },
+        { id: 'Skeletonzombi', name: 'Skeleton Zombie', file: 'characters/Skeletonzombi.glb' },
+        { id: 'zombie', name: 'Zombie', file: 'characters/zombie.glb' },
+    ]
+};
+
+/* ============================================
+   Character Preview System
+   ============================================ */
+const CharacterPreview = {
+    previews: {},
+    loader: null,
+
+    init() {
+        if (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined') {
+            this.loader = new THREE.GLTFLoader();
+        }
+    },
+
+    createPreview(charId, containerEl, glbPath) {
+        if (!this.loader) return;
+
+        const width = containerEl.clientWidth || 100;
+        const height = containerEl.clientHeight || 100;
+
+        const pScene = new THREE.Scene();
+        pScene.background = new THREE.Color(0x050505);
+
+        const pCamera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
+        pCamera.position.set(0, 1.2, 2.5);
+        pCamera.lookAt(0, 1.0, 0);
+
+        const pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        pRenderer.setSize(width, height);
+        pRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        containerEl.appendChild(pRenderer.domElement);
+
+        var ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+        pScene.add(ambientLight);
+        var dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(1, 2, 2);
+        pScene.add(dirLight);
+        var rimLight = new THREE.DirectionalLight(0x00ff41, 0.3);
+        rimLight.position.set(-1, 1, -1);
+        pScene.add(rimLight);
+
+        this.loader.load(glbPath, (gltf) => {
+            var model = gltf.scene;
+
+            var box = new THREE.Box3().setFromObject(model);
+            var size = box.getSize(new THREE.Vector3());
+            var center = box.getCenter(new THREE.Vector3());
+
+            var maxDim = Math.max(size.x, size.y, size.z);
+            var scale = 2.0 / maxDim;
+            model.scale.setScalar(scale);
+
+            model.position.x = -center.x * scale;
+            model.position.y = -box.min.y * scale;
+            model.position.z = -center.z * scale;
+
+            pScene.add(model);
+
+            var preview = { scene: pScene, camera: pCamera, renderer: pRenderer, model: model, animId: null };
+            this.previews[charId] = preview;
+
+            var animate = () => {
+                preview.animId = requestAnimationFrame(animate);
+                model.rotation.y += 0.01;
+                pRenderer.render(pScene, pCamera);
+            };
+            animate();
+        }, undefined, (err) => {
+            console.warn('Failed to load character:', charId, err);
+        });
+    },
+
+    stopPreview(charId) {
+        var preview = this.previews[charId];
+        if (preview) {
+            if (preview.animId) cancelAnimationFrame(preview.animId);
+            if (preview.renderer) {
+                preview.renderer.dispose();
+                preview.renderer.domElement.remove();
+            }
+            if (preview.model) {
+                preview.model.traverse(function(child) {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) child.material.forEach(function(m) { m.dispose(); });
+                        else if (child.material.dispose) child.material.dispose();
+                    }
+                });
+            }
+            delete this.previews[charId];
+        }
+    },
+
+    stopAll() {
+        var keys = Object.keys(this.previews);
+        for (var i = 0; i < keys.length; i++) {
+            this.stopPreview(keys[i]);
+        }
+    }
+};
+
+/* ============================================
+   Character Selection Logic
+   ============================================ */
+function buildCharacterGrid(mode) {
+    var grid = document.getElementById('char-grid');
+    var section = document.getElementById('char-select-section');
+    if (!grid || !section) return;
+
+    CharacterPreview.stopAll();
+    grid.innerHTML = '';
+
+    var chars;
+    if (mode === 'teamBattle') {
+        buildTeamBattleCharGrid(grid);
+        return;
+    } else {
+        chars = CHARACTER_LIST.runners;
+    }
+
+    chars.forEach(function(char) {
+        var card = createCharCard(char);
+        grid.appendChild(card);
+    });
+}
+
+function buildTeamBattleCharGrid(grid) {
+    var isOniTeam = GameState.teamAssignment &&
+        GameState.teamAssignment[GameState.playerIndex] === 'oni';
+
+    var chars = isOniTeam ? CHARACTER_LIST.enemies : CHARACTER_LIST.runners;
+    var label = isOniTeam
+        ? (GameState.language === 'ja' ? '鬼キャラクター' : 'ONI Characters')
+        : (GameState.language === 'ja' ? '逃走キャラクター' : 'Runner Characters');
+
+    var teamLabel = document.createElement('div');
+    teamLabel.className = 'char-team-label ' + (isOniTeam ? 'oni-label' : 'runner-label');
+    teamLabel.textContent = label;
+    grid.appendChild(teamLabel);
+
+    var charContainer = document.createElement('div');
+    charContainer.className = 'char-grid';
+    charContainer.style.display = 'grid';
+    charContainer.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    charContainer.style.gap = '8px';
+
+    chars.forEach(function(char) {
+        var card = createCharCard(char);
+        charContainer.appendChild(card);
+    });
+
+    grid.appendChild(charContainer);
+}
+
+function createCharCard(char) {
+    var card = document.createElement('div');
+    card.className = 'char-card';
+    card.dataset.charId = char.id;
+
+    var takenBy = getCharacterTakenBy(char.id);
+    if (takenBy !== null && takenBy !== GameState.playerIndex) {
+        card.classList.add('taken');
+        var takenLabel = document.createElement('div');
+        takenLabel.className = 'char-taken-label';
+        takenLabel.textContent = GameState.language === 'ja' ? '使用中' : 'IN USE';
+        card.appendChild(takenLabel);
+    }
+
+    if (GameState.selectedCharacter && GameState.selectedCharacter.id === char.id) {
+        card.classList.add('selected');
+    }
+
+    var preview = document.createElement('div');
+    preview.className = 'char-preview';
+    preview.id = 'char-preview-' + char.id;
+    card.appendChild(preview);
+
+    var name = document.createElement('div');
+    name.className = 'char-name';
+    name.textContent = char.name;
+    card.appendChild(name);
+
+    card.addEventListener('click', function() {
+        if (card.classList.contains('taken')) return;
+        selectCharacter(char);
+    });
+
+    requestAnimationFrame(function() {
+        var previewEl = document.getElementById('char-preview-' + char.id);
+        if (previewEl) {
+            CharacterPreview.createPreview(char.id, previewEl, char.file);
+        }
+    });
+
+    return card;
+}
+
+function selectCharacter(char) {
+    GameState.selectedCharacter = char;
+
+    document.querySelectorAll('.char-card').forEach(function(c) { c.classList.remove('selected'); });
+    var card = document.querySelector('.char-card[data-char-id="' + char.id + '"]');
+    if (card) card.classList.add('selected');
+
+    if (firebaseReady && GameState.roomId && GameState.playerIndex !== null) {
+        database.ref('rooms/' + GameState.roomId + '/players/' + GameState.playerIndex + '/character')
+            .set(char.id);
+    }
+}
+
+function getCharacterTakenBy(charId) {
+    var keys = Object.keys(GameState.players);
+    for (var i = 0; i < keys.length; i++) {
+        var idx = parseInt(keys[i]);
+        if (idx !== GameState.playerIndex && GameState.players[idx] && GameState.players[idx].character === charId) {
+            return idx;
+        }
+    }
+    return null;
+}
+
+function refreshCharacterGrid() {
+    var cards = document.querySelectorAll('.char-card');
+    cards.forEach(function(card) {
+        var charId = card.dataset.charId;
+        var takenBy = getCharacterTakenBy(charId);
+
+        card.classList.remove('taken');
+        var oldLabel = card.querySelector('.char-taken-label');
+        if (oldLabel) oldLabel.remove();
+
+        if (takenBy !== null && takenBy !== GameState.playerIndex) {
+            card.classList.add('taken');
+            var takenLabel = document.createElement('div');
+            takenLabel.className = 'char-taken-label';
+            takenLabel.textContent = GameState.language === 'ja' ? '使用中' : 'IN USE';
+            card.appendChild(takenLabel);
+        }
+
+        if (GameState.selectedCharacter && GameState.selectedCharacter.id === charId) {
+            card.classList.add('selected');
+        } else {
+            card.classList.remove('selected');
+        }
+    });
+}
+
+/* ============================================
+   Tab Visibility Change Handler
+   ============================================ */
+let gamePaused = false;
+
+function initVisibilityHandler() {
+    document.addEventListener('visibilitychange', function() {
+        if (!GameState.gameActive) return;
+
+        if (document.hidden) {
+            onTabHidden();
+        } else {
+            onTabVisible();
+        }
+    });
+}
+
+function onTabHidden() {
+    if (isMultiplayerMode()) {
+        GameState.moveForward = false;
+        GameState.moveBackward = false;
+        GameState.turnLeft = false;
+        GameState.turnRight = false;
+        GameState.sprint = false;
+        if (GameState.isMobile) {
+            VirtualJoystick.reset();
+        }
+    } else {
+        pauseGame();
+    }
+}
+
+function onTabVisible() {
+    // Solo: pause screen is already shown from pauseGame()
+    // Multiplayer: nothing to do, controls resume on input
+}
+
+function pauseGame() {
+    if (gamePaused) return;
+    gamePaused = true;
+
+    if (GameState.animationId) {
+        cancelAnimationFrame(GameState.animationId);
+        GameState.animationId = null;
+    }
+
+    if (GameState.timerInterval) {
+        clearInterval(GameState.timerInterval);
+        GameState.timerInterval = null;
+    }
+
+    FootstepManager.stop();
+    OniFootstepManager.stop();
+    HeartbeatManager.stop();
+
+    var pauseScreen = document.getElementById('pause-screen');
+    if (pauseScreen) pauseScreen.classList.add('active');
+
+    document.getElementById('pause-title').textContent = 'PAUSED';
+    document.getElementById('pause-info').textContent =
+        GameState.language === 'ja' ? 'ゲームが一時停止中です' : 'Game is paused';
+    document.getElementById('btn-resume').textContent =
+        GameState.language === 'ja' ? '再開する' : 'Resume';
+    document.getElementById('btn-pause-quit').textContent =
+        GameState.language === 'ja' ? 'タイトルに戻る' : 'Back to Title';
+}
+
+function resumeGame() {
+    if (!gamePaused) return;
+    gamePaused = false;
+
+    var pauseScreen = document.getElementById('pause-screen');
+    if (pauseScreen) pauseScreen.classList.remove('active');
+
+    if (GameState.timeRemaining > 0) {
+        startTimer(GameState.timeRemaining);
+    }
+
+    GameState.gameActive = true;
+    clock.getDelta(); // Discard accumulated delta to avoid time jump
+    gameLoop();
+}
+
+function isMultiplayerMode() {
+    return GameState.gameMode === 'freeForAll' ||
+           GameState.gameMode === 'teamBattle' ||
+           GameState.gameMode === 'coop' ||
+           (GameState.gameMode && GameState.gameMode.startsWith('multi_'));
+}
 
 /* ============================================
    Device ID
@@ -2262,9 +2766,11 @@ function joinRoom() {
     }
 
     GameState.roomId = roomId;
+    GameState.selectedCharacter = null;
     hideModal('lobby-modal');
     showScreen('lobby-screen');
     updateLobbyDisplay();
+    buildCharacterGrid(GameState.multiMode);
 
     if (firebaseReady) {
         const roomRef = database.ref('rooms/' + roomId);
@@ -2311,6 +2817,7 @@ function joinRoom() {
             roomRef.child('players').on('value', snap => {
                 GameState.players = snap.val() || {};
                 updateLobbyPlayerList();
+                refreshCharacterGrid();
                 if (GameState.multiMode === 'teamBattle') {
                     initTeamAssignment();
                 }
@@ -2323,6 +2830,7 @@ function joinRoom() {
                     GameState.teamAssignment = ta;
                     if (GameState.multiMode === 'teamBattle') {
                         renderTeamAssignment();
+                        buildCharacterGrid('teamBattle');
                     }
                 }
             });
@@ -2444,11 +2952,13 @@ function leaveLobby() {
             roomRef.remove();
         }
     }
+    CharacterPreview.stopAll();
     GameState.roomId = null;
     GameState.playerIndex = null;
     GameState.isHost = false;
     GameState.players = {};
     GameState.teamAssignment = {};
+    GameState.selectedCharacter = null;
     document.getElementById('team-assignment').classList.remove('active');
     showScreen('title-screen');
 }
@@ -3054,6 +3564,7 @@ function renderTeamAssignment() {
             item.addEventListener('click', function() {
                 GameState.teamAssignment[pi] = GameState.teamAssignment[pi] === 'oni' ? 'runner' : 'oni';
                 renderTeamAssignment();
+                buildCharacterGrid('teamBattle');
                 // Sync to Firebase
                 if (firebaseReady && GameState.roomId) {
                     database.ref('rooms/' + GameState.roomId + '/teamAssignment').set(GameState.teamAssignment);
@@ -3155,6 +3666,7 @@ function getMultiStageConfig(mode, stageNum) {
 
 function startMultiplayerGame() {
     if (!GameState.isHost) return;
+    CharacterPreview.stopAll();
 
     var stageConfig = getMultiStageConfig(GameState.multiMode, GameState.multiCurrentStage);
 
@@ -3184,6 +3696,7 @@ function startMultiplayerGame() {
 }
 
 function launchMultiGame(config) {
+    CharacterPreview.stopAll();
     GameState.gameMode = 'multi_' + GameState.multiMode;
     GameState.currentStage = GameState.multiCurrentStage;
     GameState.multiEscapeOrder = 0;
@@ -3849,6 +4362,15 @@ function initButtons() {
         document.getElementById('username-error').textContent = '';
     });
 
+    // Pause screen buttons
+    document.getElementById('btn-resume').addEventListener('click', resumeGame);
+    document.getElementById('btn-pause-quit').addEventListener('click', function() {
+        gamePaused = false;
+        document.getElementById('pause-screen').classList.remove('active');
+        cleanupGame();
+        showScreen('title-screen');
+    });
+
     // Load saved username
     const savedName = localStorage.getItem('maze_hunt_username');
     if (savedName) {
@@ -3880,6 +4402,7 @@ const i18n = {
         storyMode: 'STORY MODE',
         startGame: 'ゲーム開始',
         leaveLobby: '退出する',
+        selectChar: 'キャラクター選択',
         copy: 'コピー',
         multiplayer: 'MULTIPLAYER',
         roomIdPlaceholder: 'ルームIDを入力...',
@@ -3912,6 +4435,7 @@ const i18n = {
         storyMode: 'STORY MODE',
         startGame: 'Start Game',
         leaveLobby: 'Leave Room',
+        selectChar: 'Select Character',
         copy: 'Copy',
         multiplayer: 'MULTIPLAYER',
         roomIdPlaceholder: 'Enter Room ID...',
@@ -7990,6 +8514,10 @@ function startGame(stageId) {
 
 /* --- Cleanup Game (for returning to title) --- */
 function cleanupGame() {
+    gamePaused = false;
+    var pauseScreen = document.getElementById('pause-screen');
+    if (pauseScreen) pauseScreen.classList.remove('active');
+
     GameState.gameActive = false;
     if (GameState.animationId) {
         cancelAnimationFrame(GameState.animationId);
@@ -8138,6 +8666,10 @@ window.addEventListener('DOMContentLoaded', () => {
     checkRoomURL();
     // Phase 7: UI sound effects on buttons
     initUISounds();
+    // Character preview system
+    CharacterPreview.init();
+    // Tab visibility change handler
+    initVisibilityHandler();
 });
 </script>
 </body>
