@@ -1272,6 +1272,18 @@ body {
         font-size: 18px;
         letter-spacing: 2px;
     }
+    #solo-char-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .char-preview {
+        height: 80px;
+    }
+    #solo-char-stage-label {
+        font-size: 22px;
+    }
+    .char-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
 @media (max-width: 360px) {
     #title-logo h1 {
@@ -1284,6 +1296,17 @@ body {
     }
     #chase-container {
         width: 260px;
+    }
+    #solo-char-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+    .char-preview {
+        height: 70px;
+    }
+    .char-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
     }
 }
 
@@ -2907,9 +2930,19 @@ function loadRankings(gameMode) {
                 return;
             }
 
-            listEl.innerHTML = entries.map((e, i) =>
-                `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${e.score}</span></div>`
-            ).join('');
+            listEl.innerHTML = entries.map((e, i) => {
+                var detail = '';
+                if (e.gameMode === 'story' && e.stage) {
+                    detail = ' <span style="color:var(--text-dim);font-size:11px;">Stage ' + e.stage + '</span>';
+                } else if (e.gameMode === 'scoreAttack' && e.survivalTime) {
+                    var m = Math.floor(e.survivalTime / 60);
+                    var s = e.survivalTime % 60;
+                    detail = ' <span style="color:var(--text-dim);font-size:11px;">' + m + ':' + (s < 10 ? '0' : '') + s + '</span>';
+                } else if (e.gameMode === 'freeForAll' || e.gameMode === 'coop') {
+                    detail = ' <span style="color:var(--text-dim);font-size:11px;">' + e.score + 'pt</span>';
+                }
+                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${e.score}${detail}</span></div>`;
+            }).join('');
         })
         .catch(() => {
             listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
@@ -4305,6 +4338,35 @@ function showMultiResult() {
         infoEl.textContent = GameState.language === 'ja' ? '全ステージクリア！' : 'All stages cleared!';
     }
 
+    // Ranking registration for multiplayer (guest excluded)
+    if (firebaseReady && !GameState.isGuest && GameState.username) {
+        if (GameState.multiMode === 'freeForAll') {
+            // Register FFA points: 1st=100, 2nd=70, 3rd=40, 4th=10
+            var ffaPointMap = [100, 70, 40, 10];
+            var sortedPlayers = Object.keys(GameState.players).map(function(idx) {
+                var pi = parseInt(idx);
+                return { index: pi, points: GameState.multiPoints[pi] || 0 };
+            }).sort(function(a, b) { return b.points - a.points; });
+            var myRank = sortedPlayers.findIndex(function(p) { return p.index === GameState.playerIndex; });
+            var rankScore = ffaPointMap[myRank] || 10;
+            database.ref('rankings').push({
+                username: GameState.username,
+                score: rankScore,
+                gameMode: 'freeForAll',
+                timestamp: firebase.database.ServerValue.TIMESTAMP,
+            });
+        } else if (GameState.multiMode === 'coop') {
+            // Register coop score: remaining time x 10
+            var coopScore = Math.floor(GameState.timeRemaining * 10);
+            database.ref('rankings').push({
+                username: GameState.username,
+                score: coopScore,
+                gameMode: 'coop',
+                timestamp: firebase.database.ServerValue.TIMESTAMP,
+            });
+        }
+    }
+
     btnsEl.innerHTML =
         '<button class="btn btn-neon" onclick="rematchMulti()">' +
         (GameState.language === 'ja' ? '再戦' : 'Rematch') + '</button>' +
@@ -4747,6 +4809,21 @@ function updateLanguage() {
     // Lobby screen
     document.getElementById('btn-leave-lobby').textContent = lang.leaveLobby;
     document.getElementById('btn-copy-link').textContent = lang.copy;
+
+    // Catchcopy
+    var catchcopyEl = document.getElementById('catchcopy-text');
+    if (catchcopyEl) catchcopyEl.textContent = lang.catchcopy;
+
+    // Solo character select screen (if visible)
+    var soloCharScreen = document.getElementById('solo-char-screen');
+    if (soloCharScreen && soloCharScreen.classList.contains('active') && pendingSoloStageId !== null) {
+        var instrLabel = document.getElementById('solo-char-instruction');
+        var startBtn = document.getElementById('btn-solo-start');
+        var backBtn = document.getElementById('btn-solo-char-back');
+        if (instrLabel) instrLabel.textContent = GameState.language === 'ja' ? 'キャラクター選択' : 'SELECT CHARACTER';
+        if (startBtn) startBtn.textContent = GameState.language === 'ja' ? 'ゲーム開始' : 'START GAME';
+        if (backBtn) backBtn.textContent = GameState.language === 'ja' ? '戻る' : 'Back';
+    }
 
     // Rebuild stage list if on that screen
     if (GameState.currentScreen === 'story') buildStageList();
@@ -6141,6 +6218,15 @@ function onStageCleared() {
             storyClearedStage5: GameState.storyClearedStage5,
             bestStage: Math.max(stageId, 0),
         });
+
+        // Ranking registration for story mode
+        database.ref('rankings').push({
+            username: GameState.username,
+            score: Math.floor(GameState.timeRemaining),
+            gameMode: 'story',
+            stage: GameState.currentStage,
+            timestamp: firebase.database.ServerValue.TIMESTAMP,
+        });
     }
 
     // Check if all stages cleared
@@ -6302,6 +6388,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
         floorMesh.rotation.x = -Math.PI / 2;
         floorMesh.position.set(cols * CL / 2, yOffset, rows * CL / 2);
         floorMesh.receiveShadow = true;
+        floorMesh.userData.floor = f;
         scene.add(floorMesh);
         wallMeshes.push(floorMesh);
 
@@ -6313,6 +6400,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
                 new THREE.Vector3(i * CL, yOffset + 0.01, rows * CL)
             ]);
             const line = new THREE.Line(lineGeo, gridLineMat);
+            line.userData.floor = f;
             scene.add(line);
             wallMeshes.push(line);
         }
@@ -6322,6 +6410,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
                 new THREE.Vector3(cols * CL, yOffset + 0.01, j * CL)
             ]);
             const line = new THREE.Line(lineGeo, gridLineMat);
+            line.userData.floor = f;
             scene.add(line);
             wallMeshes.push(line);
         }
@@ -6346,6 +6435,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
                     const tile = new THREE.Mesh(tileGeo, ceilMat);
                     tile.rotation.x = -Math.PI / 2;
                     tile.position.set(cx * CL + CL / 2, yOffset + WH, cy * CL + CL / 2);
+                    tile.userData.floor = f;
                     scene.add(tile);
                     wallMeshes.push(tile);
                 }
@@ -6359,6 +6449,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
             mesh.position.set(x, yOff + h / 2, z);
             mesh.castShadow = true;
             mesh.receiveShadow = true;
+            mesh.userData.floor = f;
             scene.add(mesh);
             wallMeshes.push(mesh);
 
@@ -6366,6 +6457,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
             const edges = new THREE.EdgesGeometry(geo);
             const wireframe = new THREE.LineSegments(edges, wireMat);
             wireframe.position.copy(mesh.position);
+            wireframe.userData.floor = f;
             scene.add(wireframe);
             wallMeshes.push(wireframe);
         }
@@ -6524,6 +6616,7 @@ function setupLighting(stageId) {
                 baseIntensity: 0.6 + Math.random() * 0.4,
                 flickerSpeed: 1.5 + Math.random() * 2,
                 flickerPhase: Math.random() * Math.PI * 2,
+                floor: f,
             });
         }
     }
@@ -8354,6 +8447,27 @@ function initUISounds() {
     });
 }
 
+/* --- Floor Visibility Culling --- */
+function updateFloorVisibility() {
+    var playerFloor = GameState.playerCurrentFloor;
+    // Point lights
+    pointLights.forEach(function(pl) {
+        if (pl.floor !== undefined) {
+            pl.light.visible = Math.abs(pl.floor - playerFloor) <= 1;
+        }
+    });
+    // ONI models
+    GameState.onis.forEach(function(oni) {
+        oni.group.visible = Math.abs(oni.currentFloor - playerFloor) <= 1;
+    });
+    // Wall meshes floor culling
+    wallMeshes.forEach(function(wm) {
+        if (wm.userData && wm.userData.floor !== undefined) {
+            wm.visible = Math.abs(wm.userData.floor - playerFloor) <= 1;
+        }
+    });
+}
+
 /* --- Game Loop --- */
 function gameLoop() {
     if (!GameState.gameActive) return;
@@ -8493,6 +8607,10 @@ function gameLoop() {
     if (GameState.gameMode !== 'scoreAttack') {
         GameState.totalTime += delta;
     }
+
+    // Floor visibility culling for performance
+    updateFloorVisibility();
+
     if (renderer && scene && camera) renderer.render(scene, camera);
     GameState.animationId = requestAnimationFrame(gameLoop);
 }
