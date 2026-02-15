@@ -7213,7 +7213,6 @@ function updateTimerDisplay() {
 /* --- 7.1 SoundManager --- */
 const SoundManager = {
     bgm: null,
-    bgmGain: null,
     bgmEnabled: false,
     seEnabled: true,
     audioCtx: null,
@@ -7233,63 +7232,35 @@ const SoundManager = {
         return this.audioCtx;
     },
 
+    getBGMFile(stageId) {
+        const isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+        if (stageId === 'op') return 'BGM/MAZE_HUNT_OP.mp3';
+        if (stageId === 'scoreAttack') return 'BGM/MAZE_HUNT_Score_Attack.mp3';
+        if (stageId === 'hidden') return 'BGM/MAZE_HUNT_secret.mp3';
+        const num = parseInt(stageId);
+        if (num >= 1 && num <= 5) {
+            return isMulti ? 'BGM/MAZE_HUNT_Multi' + num + '.mp3' : 'BGM/MAZE_HUNT_Stage' + num + '.mp3';
+        }
+        return 'BGM/MAZE_HUNT_Stage1.mp3';
+    },
+
     playBGM(stageId) {
         this.stopBGM();
         if (!this.bgmEnabled) return;
-        const ctx = this.getCtx();
-        if (!ctx) return;
 
-        this.bgmGain = ctx.createGain();
-        this.bgmGain.gain.value = 0.08;
-        this.bgmGain.connect(ctx.destination);
-
-        // Generate ambient drone BGM based on stage theme
-        const freqs = {
-            1: [55, 82.5, 110],
-            2: [49, 73.5, 98],
-            3: [62, 93, 124],
-            4: [52, 78, 104],
-            5: [44, 66, 88],
-            scoreAttack: [58, 87, 116],
-            hidden: [46, 69, 92],
-        };
-        const stageFreqs = freqs[stageId] || freqs[1];
-        const oscs = [];
-
-        stageFreqs.forEach((freq, i) => {
-            const osc = ctx.createOscillator();
-            const oscGain = ctx.createGain();
-            osc.type = i === 0 ? 'sine' : 'triangle';
-            osc.frequency.value = freq;
-            oscGain.gain.value = i === 0 ? 0.06 : 0.03;
-            osc.connect(oscGain);
-            oscGain.connect(this.bgmGain);
-            osc.start();
-            oscs.push(osc);
-        });
-
-        // LFO for subtle volume modulation
-        const lfo = ctx.createOscillator();
-        const lfoGain = ctx.createGain();
-        lfo.type = 'sine';
-        lfo.frequency.value = 0.15;
-        lfoGain.gain.value = 0.02;
-        lfo.connect(lfoGain);
-        lfoGain.connect(this.bgmGain.gain);
-        lfo.start();
-        oscs.push(lfo);
-
-        this.bgm = oscs;
+        const file = this.getBGMFile(stageId);
+        const audio = new Audio(file);
+        audio.loop = true;
+        audio.volume = 0.3;
+        audio.play().catch(function() {});
+        this.bgm = audio;
     },
 
     stopBGM() {
         if (this.bgm) {
-            this.bgm.forEach(osc => { try { osc.stop(); } catch (e) {} });
+            this.bgm.pause();
+            this.bgm.currentTime = 0;
             this.bgm = null;
-        }
-        if (this.bgmGain) {
-            try { this.bgmGain.disconnect(); } catch (e) {}
-            this.bgmGain = null;
         }
     },
 
