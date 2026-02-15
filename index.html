@@ -1594,6 +1594,65 @@ body {
     color: var(--text-primary);
     letter-spacing: 2px;
 }
+
+/* ============================================
+   Solo Character Select Screen
+   ============================================ */
+#solo-char-screen {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 85;
+    background: rgba(0, 0, 0, 0.95);
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 40px;
+    overflow-y: auto;
+}
+#solo-char-screen.active {
+    display: flex;
+}
+#solo-char-stage-label {
+    font-family: 'Creepster', cursive;
+    font-size: 28px;
+    letter-spacing: 6px;
+    color: var(--neon-green);
+    text-shadow: 0 0 15px var(--neon-green-glow);
+    margin-bottom: 4px;
+}
+#solo-char-theme-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 2px;
+    margin-bottom: 16px;
+}
+#solo-char-instruction {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--neon-green-dim);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+#solo-char-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    width: 100%;
+    max-width: 380px;
+    margin-bottom: 20px;
+}
+#solo-char-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    max-width: 300px;
+    margin-bottom: 30px;
+}
 </style>
 </head>
 <body>
@@ -1767,6 +1826,18 @@ body {
     <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:300px;">
         <button id="btn-resume" class="btn btn-neon">再開する</button>
         <button id="btn-pause-quit" class="btn btn-thin">タイトルに戻る</button>
+    </div>
+</div>
+
+<!-- Solo Character Select Screen -->
+<div id="solo-char-screen">
+    <div id="solo-char-stage-label"></div>
+    <div id="solo-char-theme-label"></div>
+    <div id="solo-char-instruction">キャラクター選択</div>
+    <div id="solo-char-grid"></div>
+    <div id="solo-char-buttons">
+        <button id="btn-solo-start" class="btn btn-neon" disabled>ゲーム開始</button>
+        <button id="btn-solo-char-back" class="btn btn-thin">戻る</button>
     </div>
 </div>
 
@@ -2025,9 +2096,9 @@ const CharacterPreview = {
         const pScene = new THREE.Scene();
         pScene.background = new THREE.Color(0x050505);
 
-        const pCamera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
-        pCamera.position.set(0, 1.2, 2.5);
-        pCamera.lookAt(0, 1.0, 0);
+        const pCamera = new THREE.PerspectiveCamera(30, width / height, 0.1, 100);
+        pCamera.position.set(0, 1.5, 1.6);
+        pCamera.lookAt(0, 1.3, 0);
 
         const pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         pRenderer.setSize(width, height);
@@ -2247,6 +2318,95 @@ function refreshCharacterGrid() {
             card.classList.remove('selected');
         }
     });
+}
+
+/* ============================================
+   Solo Character Select Screen
+   ============================================ */
+var pendingSoloStageId = null;
+
+function showSoloCharSelect(stageId) {
+    pendingSoloStageId = stageId;
+    GameState.selectedCharacter = null;
+
+    var screen = document.getElementById('solo-char-screen');
+    var stageLabel = document.getElementById('solo-char-stage-label');
+    var themeLabel = document.getElementById('solo-char-theme-label');
+    var instrLabel = document.getElementById('solo-char-instruction');
+    var startBtn = document.getElementById('btn-solo-start');
+    var grid = document.getElementById('solo-char-grid');
+
+    // Set stage info
+    var lang = GameState.language;
+    if (stageId === 'scoreAttack') {
+        stageLabel.textContent = 'SCORE ATTACK';
+        themeLabel.textContent = '';
+    } else if (stageId === 'hidden') {
+        stageLabel.textContent = '???';
+        themeLabel.textContent = lang === 'ja' ? HIDDEN_STAGE.theme : HIDDEN_STAGE.themeEn;
+    } else {
+        var stageDef = STAGES.find(function(s) { return s.id === stageId; });
+        if (stageDef) {
+            stageLabel.textContent = stageDef.name;
+            themeLabel.textContent = lang === 'ja' ? stageDef.theme : stageDef.themeEn;
+        }
+    }
+
+    instrLabel.textContent = lang === 'ja' ? 'キャラクター選択' : 'SELECT CHARACTER';
+    startBtn.textContent = lang === 'ja' ? 'ゲーム開始' : 'START GAME';
+    startBtn.disabled = true;
+    document.getElementById('btn-solo-char-back').textContent = lang === 'ja' ? '戻る' : 'Back';
+
+    // Build character grid
+    CharacterPreview.stopAll();
+    grid.innerHTML = '';
+
+    CHARACTER_LIST.runners.forEach(function(char) {
+        var card = document.createElement('div');
+        card.className = 'char-card';
+        card.dataset.charId = char.id;
+
+        var preview = document.createElement('div');
+        preview.className = 'char-preview';
+        preview.id = 'solo-preview-' + char.id;
+        card.appendChild(preview);
+
+        var name = document.createElement('div');
+        name.className = 'char-name';
+        name.textContent = char.name;
+        card.appendChild(name);
+
+        card.addEventListener('click', function() {
+            selectSoloCharacter(char);
+        });
+
+        grid.appendChild(card);
+
+        requestAnimationFrame(function() {
+            var previewEl = document.getElementById('solo-preview-' + char.id);
+            if (previewEl) {
+                CharacterPreview.createPreview(char.id, previewEl, char.file);
+            }
+        });
+    });
+
+    screen.classList.add('active');
+}
+
+function selectSoloCharacter(char) {
+    GameState.selectedCharacter = char;
+
+    var grid = document.getElementById('solo-char-grid');
+    grid.querySelectorAll('.char-card').forEach(function(c) { c.classList.remove('selected'); });
+    var card = grid.querySelector('.char-card[data-char-id="' + char.id + '"]');
+    if (card) card.classList.add('selected');
+
+    document.getElementById('btn-solo-start').disabled = false;
+}
+
+function hideSoloCharSelect() {
+    CharacterPreview.stopAll();
+    document.getElementById('solo-char-screen').classList.remove('active');
 }
 
 /* ============================================
@@ -2695,7 +2855,7 @@ function buildStageList() {
             if (!isUnlocked) return;
             GameState.currentStage = stage.id;
             GameState.gameMode = 'story';
-            startGame(stage.id);
+            showSoloCharSelect(stage.id);
         });
         list.appendChild(btn);
     });
@@ -2709,7 +2869,7 @@ function buildStageList() {
         btn.addEventListener('click', () => {
             GameState.currentStage = 'hidden';
             GameState.gameMode = 'story';
-            startGame('hidden');
+            showSoloCharSelect('hidden');
         });
         list.appendChild(btn);
     }
@@ -4242,7 +4402,7 @@ function initButtons() {
             guestLogin();
         }
         GameState.gameMode = 'scoreAttack';
-        startGame('scoreAttack');
+        showSoloCharSelect('scoreAttack');
     });
 
     // Multiplayer
@@ -4382,6 +4542,18 @@ function initButtons() {
         document.getElementById('pause-screen').classList.remove('active');
         cleanupGame();
         showScreen('title-screen');
+    });
+
+    // Solo character select buttons
+    document.getElementById('btn-solo-start').addEventListener('click', function() {
+        if (!GameState.selectedCharacter || !pendingSoloStageId) return;
+        hideSoloCharSelect();
+        startGame(pendingSoloStageId);
+    });
+    document.getElementById('btn-solo-char-back').addEventListener('click', function() {
+        hideSoloCharSelect();
+        pendingSoloStageId = null;
+        GameState.selectedCharacter = null;
     });
 
     // Load saved username
