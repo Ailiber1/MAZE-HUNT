@@ -1976,21 +1976,31 @@ const GameState = {
    ============================================ */
 const CHARACTER_LIST = {
     runners: [
-        { id: 'Amy', name: 'Amy', file: 'characters/Amy.glb' },
-        { id: 'Bryce', name: 'Bryce', file: 'characters/Bryce.glb' },
-        { id: 'CH45', name: 'CH-45', file: 'characters/CH45.glb' },
-        { id: 'Crypto', name: 'Crypto', file: 'characters/Crypto.glb' },
-        { id: 'Hallin', name: 'Hallin', file: 'characters/Hallin.glb' },
-        { id: 'humanoid', name: 'Humanoid', file: 'characters/humanoid.glb' },
-        { id: 'James', name: 'James', file: 'characters/James.glb' },
-        { id: 'Jolleen', name: 'Jolleen', file: 'characters/Jolleen.glb' },
-        { id: 'Ortiz', name: 'Ortiz', file: 'characters/Ortiz.glb' },
+        { id: 'Atienza', name: 'Atienza', file: 'characters/Atienza.glb' },
+        { id: 'Erika', name: 'Erika', file: 'characters/Erika.glb' },
+        { id: 'Aj', name: 'Aj', file: 'characters/Aj.glb' },
+        { id: 'Granny', name: 'Granny', file: 'characters/Granny.glb' },
+        { id: 'CH03', name: 'CH-03', file: 'characters/CH03.glb' },
+        { id: 'CH18', name: 'CH-18', file: 'characters/CH18.glb' },
     ],
     enemies: [
-        { id: 'Mutant', name: 'Mutant', file: 'characters/Mutant.glb' },
-        { id: 'Skeletonzombi', name: 'Skeleton Zombie', file: 'characters/Skeletonzombi.glb' },
+        { id: 'Hallin', name: 'Hallin', file: 'characters/Hallin.glb' },
         { id: 'zombie', name: 'Zombie', file: 'characters/zombie.glb' },
+        { id: 'Vampire', name: 'Vampire', file: 'characters/Vampire.glb' },
+        { id: 'Mutant', name: 'Mutant', file: 'characters/Mutant.glb' },
+        { id: 'Desbiens', name: 'Desbiens', file: 'characters/Desbiens.glb' },
+        { id: 'Skeletonzombi', name: 'Skeleton Zombie', file: 'characters/Skeletonzombi.glb' },
     ]
+};
+
+const STAGE_ONI_ASSIGNMENTS = {
+    1: ['Mutant'],
+    2: ['zombie'],
+    3: ['Vampire'],
+    4: ['Desbiens'],
+    5: ['Hallin', 'Skeletonzombi'],
+    hidden: ['Hallin', 'Skeletonzombi', 'zombie'],
+    scoreAttack: 'random'
 };
 
 /* ============================================
@@ -3778,9 +3788,12 @@ function launchMultiGame(config) {
             });
             GameState.onis = [];
             GameState.oniSpeedMultiplier = config.speedMul;
+            var coopOniModelIds = getOniModelsForStage(stageId);
             for (var oi = 0; oi < config.oni; oi++) {
                 var model = createOniModel();
                 addOniLights(model, stageId);
+                var coopCharId = coopOniModelIds[oi % coopOniModelIds.length];
+                loadOniGLB(model, coopCharId);
                 var floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor(oi / 2)) : 0;
                 var spawnX = Math.max(1, cols - 2 - (oi % 3));
                 var spawnZ = Math.max(1, rows - 2 - Math.floor(oi / 3));
@@ -5273,6 +5286,43 @@ function bfsPathfind3D(floors, start, goal) {
     return []; // no path found
 }
 
+/* --- C4: Get ONI model IDs for stage --- */
+function getOniModelsForStage(stageId) {
+    const assignment = STAGE_ONI_ASSIGNMENTS[stageId];
+    if (!assignment) return ['Mutant'];
+    if (assignment === 'random') {
+        const enemies = CHARACTER_LIST.enemies;
+        return [enemies[Math.floor(Math.random() * enemies.length)].id];
+    }
+    return assignment;
+}
+
+/* --- C4: Load GLB model into ONI group --- */
+function loadOniGLB(group, charId) {
+    var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
+    if (!enemy) return;
+    var loader = new THREE.GLTFLoader();
+    loader.load(enemy.file, function(gltf) {
+        var glbModel = gltf.scene;
+        var box = new THREE.Box3().setFromObject(glbModel);
+        var size = box.getSize(new THREE.Vector3());
+        var center = box.getCenter(new THREE.Vector3());
+        var maxDim = Math.max(size.x, size.y, size.z);
+        var scale = 1.8 / maxDim;
+        glbModel.scale.setScalar(scale);
+        glbModel.position.x = -center.x * scale;
+        glbModel.position.y = -box.min.y * scale;
+        glbModel.position.z = -center.z * scale;
+        // Remove placeholder geometry children (keep lights)
+        var toRemove = [];
+        group.children.forEach(function(child) {
+            if (child.isMesh) toRemove.push(child);
+        });
+        toRemove.forEach(function(child) { group.remove(child); });
+        group.add(glbModel);
+    });
+}
+
 /* --- C4: Spawn ONIs --- */
 function spawnOnis(stageId) {
     GameState.onis = [];
@@ -5295,9 +5345,16 @@ function spawnOnis(stageId) {
     const rows = GameState.mazeRows;
     const numFloors = GameState.mazeFloors.length;
 
+    // Get assigned ONI models for this stage
+    const oniModelIds = getOniModelsForStage(stageId);
+
     for (let i = 0; i < oniCount; i++) {
         const model = createOniModel();
         addOniLights(model, stageId);
+
+        // Load GLB model (cycles through assigned models)
+        const charId = oniModelIds[i % oniModelIds.length];
+        loadOniGLB(model, charId);
 
         // Distribute across floors (highest floors first for horror effect)
         const floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor((numFloors - 1) * (i / Math.max(1, oniCount - 1)) + 0.5)) : 0;
