@@ -4460,18 +4460,33 @@ function initButtons() {
     // Score Attack
     document.getElementById('btn-score').addEventListener('click', async () => {
         const name = document.getElementById('username-input').value.trim();
-        if (name) {
-            const ok = await registerUser();
-            if (!ok) return;
-        } else {
-            guestLogin();
+        if (!name) {
+            const errorEl = document.getElementById('username-error');
+            errorEl.textContent = GameState.language === 'ja' ? 'スコアアタックにはユーザー名の登録が必要です' : 'Username registration is required for Score Attack';
+            const input = document.getElementById('username-input');
+            input.classList.add('error-shake');
+            setTimeout(() => input.classList.remove('error-shake'), 400);
+            return;
         }
+        const ok = await registerUser();
+        if (!ok) return;
         GameState.gameMode = 'scoreAttack';
         showSoloCharSelect('scoreAttack');
     });
 
     // Multiplayer
-    document.getElementById('btn-multi').addEventListener('click', () => {
+    document.getElementById('btn-multi').addEventListener('click', async () => {
+        const name = document.getElementById('username-input').value.trim();
+        if (!name) {
+            const errorEl = document.getElementById('username-error');
+            errorEl.textContent = GameState.language === 'ja' ? 'マルチプレイにはユーザー名の登録が必要です' : 'Username registration is required for Multiplayer';
+            const input = document.getElementById('username-input');
+            input.classList.add('error-shake');
+            setTimeout(() => input.classList.remove('error-shake'), 400);
+            return;
+        }
+        const ok = await registerUser();
+        if (!ok) return;
         showModal('lobby-modal');
     });
 
@@ -4561,13 +4576,16 @@ function initButtons() {
 
     // Join room
     document.getElementById('btn-join-room').addEventListener('click', () => {
-        const name = document.getElementById('username-input').value.trim();
-        if (name) {
-            registerUser().then(ok => { if (ok) joinRoom(); });
-        } else {
-            guestLogin();
-            joinRoom();
+        if (!GameState.username || GameState.isGuest) {
+            hideModal('lobby-modal');
+            const errorEl = document.getElementById('username-error');
+            errorEl.textContent = GameState.language === 'ja' ? 'マルチプレイにはユーザー名の登録が必要です' : 'Username registration is required for Multiplayer';
+            const input = document.getElementById('username-input');
+            input.classList.add('error-shake');
+            setTimeout(() => input.classList.remove('error-shake'), 400);
+            return;
         }
+        joinRoom();
     });
 
     // Copy link
