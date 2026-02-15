@@ -1251,16 +1251,50 @@ body {
    Responsive
    ============================================ */
 @media (max-width: 600px) {
+    #title-screen {
+        padding-top: 12px;
+        gap: 4px;
+    }
+    #chase-container {
+        width: 90%;
+        height: 48px;
+        margin: 4px auto;
+    }
+    .chase-char svg {
+        width: 20px;
+        height: 36px;
+    }
+    .chase-oni svg {
+        width: 28px;
+        height: 42px;
+    }
     .ui-panel {
-        padding: 15px;
+        padding: 14px;
         width: 95%;
+    }
+    .neon-input {
+        padding: 8px 12px;
+        font-size: 14px;
+    }
+    .input-error-msg {
+        min-height: 14px;
+        font-size: 11px;
     }
     .btn {
         padding: 10px;
         font-size: 13px;
     }
-    #chase-container {
-        width: 90%;
+    .btn-group {
+        gap: 6px;
+        margin-top: 8px;
+    }
+    .btn-group-secondary {
+        margin-top: 6px;
+        gap: 6px;
+    }
+    .panel-footer {
+        margin-top: 10px;
+        padding-top: 10px;
     }
     #catchcopy-text {
         font-size: 18px;
@@ -1280,6 +1314,21 @@ body {
     }
 }
 @media (max-width: 380px) {
+    .ui-panel {
+        padding: 12px;
+    }
+    .btn {
+        padding: 8px;
+        font-size: 12px;
+    }
+    .btn-group {
+        gap: 5px;
+        margin-top: 6px;
+    }
+    .btn-group-secondary {
+        margin-top: 5px;
+        gap: 5px;
+    }
     #solo-char-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 6px;
@@ -2593,7 +2642,13 @@ function createChaseAnimation() {
     container.innerHTML = '';
 
     const playerColors = ['#ff3296', '#00dcff', '#ffdc00'];
-    const containerW = container.offsetWidth || 380;
+
+    // Defer to next frame to ensure layout is computed
+    requestAnimationFrame(() => { _initChaseAnimation(container, playerColors); });
+}
+
+function _initChaseAnimation(container, playerColors) {
+    const containerW = container.offsetWidth || container.getBoundingClientRect().width || 300;
 
     const playerSVG = (color) => `
         <svg viewBox="0 0 28 48" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2626,10 +2681,11 @@ function createChaseAnimation() {
         const el = document.createElement('div');
         el.className = 'chase-char';
         el.innerHTML = playerSVG(color);
-        el.style.left = (80 + i * 50) + 'px';
+        const startX = containerW * 0.2 + i * (containerW * 0.12);
+        el.style.left = startX + 'px';
         container.appendChild(el);
         players.push({
-            el, x: 80 + i * 50, speed: 1.1,
+            el, x: startX, speed: 1.1,
             stumbling: false, stumbleTimer: 0, cooldown: 0,
             baseY: 0, rotation: 0
         });
@@ -2638,10 +2694,11 @@ function createChaseAnimation() {
     const oniEl = document.createElement('div');
     oniEl.className = 'chase-char chase-oni';
     oniEl.innerHTML = oniSVG;
-    oniEl.style.left = '20px';
+    const oniStartX = containerW * 0.05;
+    oniEl.style.left = oniStartX + 'px';
     container.appendChild(oniEl);
 
-    let oniX = 20;
+    let oniX = oniStartX;
     let oniSpeed = 0.9;
     let oniScale = 1.0;
     let nextStumbleTime = 600 + Math.random() * 300;
