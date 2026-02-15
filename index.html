@@ -862,6 +862,164 @@ body {
 .player-slot.slot-p4 { border-color: #b450ff; }
 
 /* ============================================
+   Team Assignment (Team Battle Lobby)
+   ============================================ */
+#team-assignment {
+    display: none;
+    width: 100%;
+    max-width: 380px;
+    margin-top: 12px;
+}
+#team-assignment.active { display: block; }
+.team-section {
+    border: 1px solid;
+    padding: 10px;
+    margin-bottom: 8px;
+    min-height: 60px;
+}
+.team-section.team-oni {
+    border-color: #ff3366;
+    background: rgba(255, 51, 102, 0.05);
+}
+.team-section.team-runner {
+    border-color: #00aaff;
+    background: rgba(0, 170, 255, 0.05);
+}
+.team-section-title {
+    font-size: 12px;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+.team-oni .team-section-title { color: #ff3366; text-shadow: 0 0 6px rgba(255,51,102,0.4); }
+.team-runner .team-section-title { color: #00aaff; text-shadow: 0 0 6px rgba(0,170,255,0.4); }
+.team-player-item {
+    display: inline-block;
+    padding: 4px 10px;
+    margin: 2px;
+    font-size: 12px;
+    border: 1px solid rgba(0,170,42,0.3);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.team-player-item:hover {
+    border-color: var(--neon-green);
+    box-shadow: 0 0 6px var(--neon-green-glow);
+}
+
+/* ============================================
+   Quick Chat (Coop)
+   ============================================ */
+#quick-chat-hud {
+    position: absolute;
+    bottom: 50px;
+    left: 20px;
+    pointer-events: none;
+    z-index: 26;
+    display: none;
+}
+#quick-chat-hud.active { display: block; }
+.chat-log-entry {
+    font-size: 11px;
+    color: var(--neon-green);
+    text-shadow: 0 0 6px var(--neon-green-glow);
+    margin-bottom: 4px;
+    opacity: 1;
+    transition: opacity 0.5s;
+}
+.chat-log-entry.fading { opacity: 0; }
+#quick-chat-keys {
+    position: absolute;
+    bottom: 180px;
+    left: 20px;
+    pointer-events: none;
+    z-index: 26;
+    display: none;
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.8;
+}
+#quick-chat-keys.active { display: block; }
+
+/* ============================================
+   Speech Bubble (above player model)
+   ============================================ */
+.speech-bubble-canvas {
+    pointer-events: none;
+}
+
+/* ============================================
+   Spectator Badge
+   ============================================ */
+#spectator-badge {
+    position: absolute;
+    top: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 8px rgba(0,255,255,0.5);
+    letter-spacing: 2px;
+    pointer-events: none;
+    z-index: 26;
+    display: none;
+    background: rgba(0,0,0,0.5);
+    padding: 6px 16px;
+    border: 1px solid rgba(0,255,255,0.3);
+}
+#spectator-badge.active { display: block; }
+
+/* ============================================
+   Multi-Player Result
+   ============================================ */
+#multi-result-table {
+    width: 100%;
+    max-width: 400px;
+    margin-top: 10px;
+}
+.multi-result-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    border: 1px solid rgba(0,170,42,0.2);
+    font-size: 13px;
+    gap: 10px;
+}
+.multi-result-row.winner {
+    border-color: var(--neon-gold);
+    box-shadow: 0 0 8px rgba(255,204,0,0.3);
+}
+.multi-result-rank { width: 30px; color: var(--neon-gold); font-size: 16px; }
+.multi-result-name { flex: 1; }
+.multi-result-status { width: 80px; text-align: right; font-size: 11px; }
+.multi-result-pts { width: 50px; text-align: right; color: var(--neon-gold); }
+
+/* ============================================
+   Disconnect Notification
+   ============================================ */
+#disconnect-notif {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 300;
+    background: rgba(0,0,0,0.8);
+    border: 1px solid var(--matrix-red);
+    color: var(--matrix-red);
+    text-shadow: 0 0 6px var(--matrix-red-glow);
+    padding: 8px 20px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    pointer-events: none;
+    display: none;
+    opacity: 0;
+    transition: opacity 0.5s;
+}
+#disconnect-notif.show { display: block; opacity: 1; }
+
+/* ============================================
    Notification Toast
    ============================================ */
 #notification {
@@ -1210,6 +1368,16 @@ body {
         </div>
         <div class="lobby-mode-label" id="lobby-mode-display"></div>
         <div id="lobby-player-list"></div>
+        <div id="team-assignment">
+            <div class="team-section team-oni">
+                <div class="team-section-title">ONI TEAM</div>
+                <div id="team-oni-players"></div>
+            </div>
+            <div class="team-section team-runner">
+                <div class="team-section-title">RUNNER TEAM</div>
+                <div id="team-runner-players"></div>
+            </div>
+        </div>
         <div class="btn-group" style="max-width:380px;margin-top:16px;">
             <button id="btn-start-game" class="btn btn-neon" disabled data-i18n="startGame">ゲーム開始</button>
             <button id="btn-leave-lobby" class="btn btn-thin" data-i18n="leaveLobby">退出する</button>
@@ -1231,6 +1399,9 @@ body {
             <div id="hud-enemy-dist"></div>
             <div id="hud-bpm"></div>
             <div id="minimap-container"><canvas id="minimap-canvas" width="150" height="150"></canvas></div>
+            <div id="quick-chat-hud"></div>
+            <div id="quick-chat-keys"></div>
+            <div id="spectator-badge"></div>
         </div>
     </div>
 
@@ -1257,6 +1428,9 @@ body {
 
 <!-- Caught Text -->
 <div id="caught-text"></div>
+
+<!-- Disconnect Notification -->
+<div id="disconnect-notif"></div>
 
 <!-- ============================================
      Layer 100: CRT Overlay
@@ -1941,6 +2115,44 @@ function joinRoom() {
             roomRef.child('players').on('value', snap => {
                 GameState.players = snap.val() || {};
                 updateLobbyPlayerList();
+                if (GameState.multiMode === 'teamBattle') {
+                    initTeamAssignment();
+                }
+            });
+
+            // Listen for team assignment changes
+            roomRef.child('teamAssignment').on('value', snap => {
+                var ta = snap.val();
+                if (ta) {
+                    GameState.teamAssignment = ta;
+                    if (GameState.multiMode === 'teamBattle') {
+                        renderTeamAssignment();
+                    }
+                }
+            });
+
+            // Listen for game start (guests)
+            roomRef.child('status').on('value', snap => {
+                var status = snap.val();
+                if (status === 'playing' && !GameState.isHost && !GameState.gameActive) {
+                    // Get game config
+                    roomRef.child('gameConfig').once('value').then(configSnap => {
+                        var config = configSnap.val();
+                        if (config) {
+                            GameState.multiMode = config.mode;
+                            GameState.multiCurrentStage = config.stage;
+                            GameState.teamAssignment = config.teamAssignment || {};
+                            launchMultiGame(config);
+                        }
+                    });
+                }
+                if (status === 'waiting' && GameState.gameActive) {
+                    // Host reset game
+                    cleanupGame();
+                    showScreen('lobby-screen');
+                    updateLobbyDisplay();
+                    updateLobbyPlayerList();
+                }
             });
         });
     } else {
@@ -2012,12 +2224,22 @@ function updateLobbyPlayerList() {
         startBtn.disabled = false;
         startBtn.textContent = GameState.language === 'ja' ? 'ゲーム開始' : 'Start Game';
     }
+
+    // Show/hide team assignment for team battle
+    if (GameState.multiMode === 'teamBattle' && playerCount >= 2) {
+        initTeamAssignment();
+    } else {
+        document.getElementById('team-assignment').classList.remove('active');
+    }
 }
 
 function leaveLobby() {
+    SyncLayer.disconnect();
     if (firebaseReady && GameState.roomId) {
         const roomRef = database.ref('rooms/' + GameState.roomId);
         roomRef.child('players').off();
+        roomRef.child('status').off();
+        roomRef.child('teamAssignment').off();
         if (GameState.playerIndex !== null) {
             roomRef.child('players/' + GameState.playerIndex).remove();
         }
@@ -2030,7 +2252,1212 @@ function leaveLobby() {
     GameState.playerIndex = null;
     GameState.isHost = false;
     GameState.players = {};
+    GameState.teamAssignment = {};
+    document.getElementById('team-assignment').classList.remove('active');
     showScreen('title-screen');
+}
+
+/* ============================================
+   Phase 6: Multiplayer Stage Configs
+   ============================================ */
+const TEAM_STAGES = [
+    { id: 1, size: '12x12', floors: 1, time: 75, speedMul: 1.0 },
+    { id: 2, size: '14x14', floors: 1, time: 90, speedMul: 1.0 },
+    { id: 3, size: '16x16', floors: 2, time: 105, speedMul: 1.2 },
+    { id: 4, size: '20x20', floors: 2, time: 120, speedMul: 1.3 },
+    { id: 5, size: '24x24', floors: 3, time: 135, speedMul: 1.5 },
+];
+
+const COOP_STAGES = [
+    { id: 1, size: '16x16', floors: 2, oni: 2, time: 150, speedMul: 1.2 },
+    { id: 2, size: '20x20', floors: 2, oni: 3, time: 180, speedMul: 1.3 },
+    { id: 3, size: '24x24', floors: 3, oni: 4, time: 210, speedMul: 1.5 },
+    { id: 4, size: '24x24', floors: 3, oni: 5, time: 210, speedMul: 1.6 },
+    { id: 5, size: '28x28', floors: 3, oni: 6, time: 270, speedMul: 1.8 },
+];
+
+/* ============================================
+   Phase 6: SyncLayer
+   ============================================ */
+const SyncLayer = {
+    roomRef: null,
+    listeners: [],
+    lastSyncTime: 0,
+    lastOniSyncTime: 0,
+
+    connect(roomId) {
+        if (!firebaseReady) return;
+        this.roomRef = database.ref('rooms/' + roomId);
+    },
+
+    updatePlayerPosition(playerIndex, position, rotationY, currentFloor) {
+        const now = Date.now();
+        if (now - this.lastSyncTime < 50) return;
+        this.lastSyncTime = now;
+        if (!this.roomRef) return;
+        this.roomRef.child('playerPositions/' + playerIndex).set({
+            x: Math.round(position.x * 100) / 100,
+            z: Math.round(position.z * 100) / 100,
+            rotY: Math.round(rotationY * 1000) / 1000,
+            floor: currentFloor,
+            t: firebase.database.ServerValue.TIMESTAMP
+        });
+    },
+
+    updateOniPositions(oniList) {
+        const now = Date.now();
+        if (now - this.lastOniSyncTime < 80) return;
+        this.lastOniSyncTime = now;
+        if (!this.roomRef) return;
+        const data = {};
+        oniList.forEach(function(oni, i) {
+            data[i] = {
+                x: Math.round(oni.position.x * 100) / 100,
+                y: Math.round(oni.position.y * 100) / 100,
+                z: Math.round(oni.position.z * 100) / 100,
+                floor: oni.currentFloor,
+                rotY: Math.round(oni.group.rotation.y * 1000) / 1000
+            };
+        });
+        this.roomRef.child('oniPositions').set(data);
+    },
+
+    updateGameTimer(time) {
+        if (!this.roomRef || !GameState.isHost) return;
+        this.roomRef.child('gameTimer').set(time);
+    },
+
+    reportCaught(playerIndex) {
+        if (!this.roomRef) return;
+        this.roomRef.child('players/' + playerIndex).update({
+            alive: false,
+            catchTimestamp: firebase.database.ServerValue.TIMESTAMP
+        });
+    },
+
+    reportEscaped(playerIndex, escapeTime) {
+        if (!this.roomRef) return;
+        this.roomRef.child('players/' + playerIndex).update({
+            escaped: true,
+            escapeTime: escapeTime
+        });
+    },
+
+    sendQuickChat(playerIndex, msgIndex) {
+        if (!this.roomRef) return;
+        this.roomRef.child('chat').push({
+            player: playerIndex,
+            msg: msgIndex,
+            t: firebase.database.ServerValue.TIMESTAMP
+        });
+    },
+
+    sendPinMarker(playerIndex, position, floor) {
+        if (!this.roomRef) return;
+        this.roomRef.child('pins/' + playerIndex).set({
+            x: Math.round(position.x * 100) / 100,
+            z: Math.round(position.z * 100) / 100,
+            floor: floor,
+            t: firebase.database.ServerValue.TIMESTAMP
+        });
+    },
+
+    onPlayersUpdate(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('playerPositions');
+        ref.on('value', cb);
+        this.listeners.push({ ref: ref, event: 'value', cb: cb });
+    },
+
+    onOniUpdate(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('oniPositions');
+        ref.on('value', cb);
+        this.listeners.push({ ref: ref, event: 'value', cb: cb });
+    },
+
+    onTimerUpdate(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('gameTimer');
+        ref.on('value', cb);
+        this.listeners.push({ ref: ref, event: 'value', cb: cb });
+    },
+
+    onStatusChange(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('status');
+        ref.on('value', cb);
+        this.listeners.push({ ref: ref, event: 'value', cb: cb });
+    },
+
+    onGameStart(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('gameConfig');
+        ref.on('value', cb);
+        this.listeners.push({ ref: ref, event: 'value', cb: cb });
+    },
+
+    onChatMessage(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('chat');
+        ref.orderByChild('t').limitToLast(1).on('child_added', cb);
+        this.listeners.push({ ref: ref, event: 'child_added', cb: cb });
+    },
+
+    onPinUpdate(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('pins');
+        ref.on('value', cb);
+        this.listeners.push({ ref: ref, event: 'value', cb: cb });
+    },
+
+    onPlayerStatusUpdate(cb) {
+        if (!this.roomRef) return;
+        var ref = this.roomRef.child('players');
+        ref.on('value', cb);
+        this.listeners.push({ ref: ref, event: 'value', cb: cb });
+    },
+
+    setupDisconnect(playerIndex) {
+        if (!this.roomRef) return;
+        this.roomRef.child('players/' + playerIndex).onDisconnect().remove();
+        this.roomRef.child('playerPositions/' + playerIndex).onDisconnect().remove();
+    },
+
+    disconnect() {
+        this.listeners.forEach(function(l) {
+            l.ref.off(l.event, l.cb);
+        });
+        this.listeners = [];
+        if (this.roomRef && GameState.playerIndex !== null) {
+            this.roomRef.child('playerPositions/' + GameState.playerIndex).remove();
+            this.roomRef.child('pins/' + GameState.playerIndex).remove();
+        }
+        this.roomRef = null;
+        this.lastSyncTime = 0;
+        this.lastOniSyncTime = 0;
+    }
+};
+
+/* ============================================
+   Phase 6: Remote Player Models
+   ============================================ */
+const PLAYER_COLORS = [0xff3296, 0x00dcff, 0xffdc00, 0xb450ff];
+const PLAYER_COLOR_HEX = ['#ff3296', '#00dcff', '#ffdc00', '#b450ff'];
+
+GameState.remotePlayers = {};
+GameState.multiPoints = [0, 0, 0, 0];
+GameState.multiStagePoints = [0, 0, 0, 0];
+GameState.multiEscapeOrder = 0;
+GameState.teamAssignment = {};
+GameState.teamRound = 1;
+GameState.teamScores = { oni: 0, runner: 0 };
+GameState.isSpectating = false;
+GameState.spectateTarget = -1;
+GameState.pinMarkers = {};
+GameState.chatLog = [];
+GameState.multiCurrentStage = 1;
+GameState.multiMaxStages = 5;
+GameState.coopRetrying = false;
+
+function createPlayerModel(playerIndex) {
+    var group = new THREE.Group();
+    var color = PLAYER_COLORS[playerIndex] || 0xffffff;
+    var mat = new THREE.MeshStandardMaterial({
+        color: color,
+        roughness: 0.5,
+        metalness: 0.1,
+        emissive: color,
+        emissiveIntensity: 0.15
+    });
+
+    // Head (sphere)
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 10), mat);
+    head.position.y = 1.65;
+    group.add(head);
+
+    // Body (cylinder)
+    var body = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.55, 10), mat);
+    body.position.y = 1.25;
+    group.add(body);
+
+    // Left leg
+    var legL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 8), mat);
+    legL.position.set(-0.07, 0.7, 0);
+    group.add(legL);
+
+    // Right leg
+    var legR = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 8), mat);
+    legR.position.set(0.07, 0.7, 0);
+    group.add(legR);
+
+    // Left arm
+    var armL = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.45, 8), mat);
+    armL.position.set(-0.18, 1.2, 0);
+    group.add(armL);
+
+    // Right arm
+    var armR = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.45, 8), mat);
+    armR.position.set(0.18, 1.2, 0);
+    group.add(armR);
+
+    // Glow light
+    var glow = new THREE.PointLight(color, 0.6, 5);
+    glow.position.set(0, 1.3, 0);
+    group.add(glow);
+
+    // Name sprite
+    var nameCanvas = document.createElement('canvas');
+    nameCanvas.width = 128;
+    nameCanvas.height = 32;
+    var nctx = nameCanvas.getContext('2d');
+    nctx.fillStyle = PLAYER_COLOR_HEX[playerIndex] || '#ffffff';
+    nctx.font = 'bold 18px Share Tech Mono';
+    nctx.textAlign = 'center';
+    var pname = GameState.players[playerIndex] ? GameState.players[playerIndex].username : ('P' + (playerIndex + 1));
+    nctx.fillText(pname, 64, 22);
+    var nameTex = new THREE.CanvasTexture(nameCanvas);
+    var nameSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTex, transparent: true, opacity: 0.8 }));
+    nameSprite.position.set(0, 2.0, 0);
+    nameSprite.scale.set(1.5, 0.4, 1);
+    group.add(nameSprite);
+    group.userData.nameSprite = nameSprite;
+
+    // Speech bubble holder
+    group.userData.speechBubble = null;
+    group.userData.speechTimer = 0;
+
+    return group;
+}
+
+function createOniPlayerModel(playerIndex) {
+    var group = createPlayerModel(playerIndex);
+    // Add red glow for oni team players
+    var oniGlow = new THREE.PointLight(0xff0000, 1.5, 8);
+    oniGlow.position.set(0, 1.3, 0);
+    group.add(oniGlow);
+    // Tint the existing materials darker
+    group.traverse(function(child) {
+        if (child.isMesh && child.material) {
+            child.material = child.material.clone();
+            child.material.emissive = new THREE.Color(0x440000);
+            child.material.emissiveIntensity = 0.3;
+        }
+    });
+    return group;
+}
+
+function spawnRemotePlayers() {
+    // Remove existing remote players
+    Object.keys(GameState.remotePlayers).forEach(function(idx) {
+        var rp = GameState.remotePlayers[idx];
+        if (rp.model && rp.model.parent) rp.model.parent.remove(rp.model);
+        rp.model.traverse(function(child) {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (child.material.map) child.material.map.dispose();
+                if (child.material.dispose) child.material.dispose();
+            }
+        });
+    });
+    GameState.remotePlayers = {};
+
+    Object.keys(GameState.players).forEach(function(idx) {
+        var pi = parseInt(idx);
+        if (pi === GameState.playerIndex) return;
+
+        var isOniTeam = GameState.multiMode === 'teamBattle' &&
+            GameState.teamAssignment[pi] === 'oni';
+        var model = isOniTeam ? createOniPlayerModel(pi) : createPlayerModel(pi);
+        model.position.set(CL * 1.5 + pi * 2, 0, CL * 1.5);
+        if (scene) scene.add(model);
+
+        GameState.remotePlayers[pi] = {
+            model: model,
+            position: { x: CL * 1.5 + pi * 2, y: 0, z: CL * 1.5 },
+            targetPosition: { x: CL * 1.5 + pi * 2, y: 0, z: CL * 1.5 },
+            rotationY: 0,
+            targetRotationY: 0,
+            currentFloor: 0,
+            alive: true,
+            escaped: false
+        };
+    });
+}
+
+function cleanupRemotePlayers() {
+    Object.keys(GameState.remotePlayers).forEach(function(idx) {
+        var rp = GameState.remotePlayers[idx];
+        if (rp.model && rp.model.parent) rp.model.parent.remove(rp.model);
+        rp.model.traverse(function(child) {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (child.material.map) child.material.map.dispose();
+                if (child.material.dispose) child.material.dispose();
+            }
+        });
+    });
+    GameState.remotePlayers = {};
+}
+
+function updateRemotePlayers(delta) {
+    Object.keys(GameState.remotePlayers).forEach(function(idx) {
+        var rp = GameState.remotePlayers[idx];
+        if (!rp.alive && !rp.escaped) {
+            // Hide dead players
+            rp.model.visible = false;
+            return;
+        }
+        rp.model.visible = true;
+
+        // Interpolate position
+        rp.position.x += (rp.targetPosition.x - rp.position.x) * Math.min(1, delta * 10);
+        rp.position.z += (rp.targetPosition.z - rp.position.z) * Math.min(1, delta * 10);
+        rp.position.y = rp.currentFloor * FLOOR_H;
+
+        // Interpolate rotation
+        var rotDiff = rp.targetRotationY - rp.rotationY;
+        while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+        while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+        rp.rotationY += rotDiff * Math.min(1, delta * 10);
+
+        rp.model.position.set(rp.position.x, rp.position.y, rp.position.z);
+        rp.model.rotation.y = rp.rotationY;
+
+        // Animate legs (simple bob)
+        var legPhase = (Date.now() * 0.01) % (Math.PI * 2);
+        var isMoving = Math.abs(rp.targetPosition.x - rp.position.x) > 0.05 ||
+                       Math.abs(rp.targetPosition.z - rp.position.z) > 0.05;
+        if (isMoving) {
+            rp.model.children[2].rotation.x = Math.sin(legPhase) * 0.3;
+            rp.model.children[3].rotation.x = -Math.sin(legPhase) * 0.3;
+            rp.model.children[4].rotation.x = Math.sin(legPhase) * 0.2;
+            rp.model.children[5].rotation.x = -Math.sin(legPhase) * 0.2;
+        }
+
+        // Speech bubble timer
+        if (rp.model.userData.speechTimer > 0) {
+            rp.model.userData.speechTimer -= delta;
+            if (rp.model.userData.speechTimer <= 0 && rp.model.userData.speechBubble) {
+                rp.model.remove(rp.model.userData.speechBubble);
+                rp.model.userData.speechBubble = null;
+            }
+        }
+    });
+}
+
+/* ============================================
+   Phase 6: Speech Bubble (for quick chat)
+   ============================================ */
+function showSpeechBubble(playerGroup, text) {
+    // Remove old bubble
+    if (playerGroup.userData.speechBubble) {
+        playerGroup.remove(playerGroup.userData.speechBubble);
+    }
+    var canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.roundRect(4, 4, 248, 56, 8);
+    ctx.fill();
+    ctx.strokeStyle = '#00ff41';
+    ctx.lineWidth = 2;
+    ctx.roundRect(4, 4, 248, 56, 8);
+    ctx.stroke();
+    ctx.fillStyle = '#00ff41';
+    ctx.font = 'bold 20px Share Tech Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, 128, 40);
+    var tex = new THREE.CanvasTexture(canvas);
+    var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+    sprite.position.set(0, 2.5, 0);
+    sprite.scale.set(2.5, 0.6, 1);
+    playerGroup.add(sprite);
+    playerGroup.userData.speechBubble = sprite;
+    playerGroup.userData.speechTimer = 3;
+}
+
+/* ============================================
+   Phase 6: Quick Chat System (Coop)
+   ============================================ */
+const QUICK_CHAT_MESSAGES = {
+    ja: ['こっち!', '危険!', '出口発見!', '逃げろ!'],
+    en: ['Over here!', 'Danger!', 'Exit found!', 'Run!']
+};
+
+function initQuickChat() {
+    if (GameState.multiMode !== 'coop') return;
+    var keysEl = document.getElementById('quick-chat-keys');
+    var lang = GameState.language;
+    var msgs = QUICK_CHAT_MESSAGES[lang];
+    keysEl.innerHTML = msgs.map(function(m, i) {
+        return '[' + (i + 1) + '] ' + m;
+    }).join('<br>');
+    keysEl.classList.add('active');
+    document.getElementById('quick-chat-hud').classList.add('active');
+}
+
+function sendQuickChat(msgIndex) {
+    if (GameState.multiMode !== 'coop') return;
+    if (msgIndex < 0 || msgIndex > 3) return;
+    SyncLayer.sendQuickChat(GameState.playerIndex, msgIndex);
+    // Show locally
+    var lang = GameState.language;
+    var msg = QUICK_CHAT_MESSAGES[lang][msgIndex];
+    addChatLogEntry(GameState.playerIndex, msg);
+}
+
+function addChatLogEntry(playerIndex, msg) {
+    var hud = document.getElementById('quick-chat-hud');
+    if (!hud) return;
+    var pname = GameState.players[playerIndex] ? GameState.players[playerIndex].username : ('P' + (playerIndex + 1));
+    var entry = document.createElement('div');
+    entry.className = 'chat-log-entry';
+    entry.style.color = PLAYER_COLOR_HEX[playerIndex] || '#00ff41';
+    entry.textContent = pname + ': ' + msg;
+    hud.appendChild(entry);
+
+    // Show speech bubble on remote player
+    if (playerIndex !== GameState.playerIndex && GameState.remotePlayers[playerIndex]) {
+        showSpeechBubble(GameState.remotePlayers[playerIndex].model, msg);
+    }
+
+    // Keep max 5 entries
+    while (hud.children.length > 5) {
+        hud.removeChild(hud.firstChild);
+    }
+
+    // Fade out after 4 seconds
+    setTimeout(function() {
+        entry.classList.add('fading');
+        setTimeout(function() {
+            if (entry.parentNode) entry.parentNode.removeChild(entry);
+        }, 500);
+    }, 4000);
+}
+
+/* ============================================
+   Phase 6: Pin Marker System (Coop)
+   ============================================ */
+function placePinMarker() {
+    if (GameState.multiMode !== 'coop') return;
+    if (!GameState.alive && !GameState.isSpectating) return;
+    SyncLayer.sendPinMarker(
+        GameState.playerIndex,
+        { x: camera.position.x, z: camera.position.z },
+        GameState.playerCurrentFloor
+    );
+}
+
+/* ============================================
+   Phase 6: Spectator Mode (Coop)
+   ============================================ */
+function enterSpectatorMode() {
+    GameState.isSpectating = true;
+    // Find first alive teammate
+    var aliveTargets = [];
+    Object.keys(GameState.remotePlayers).forEach(function(idx) {
+        if (GameState.remotePlayers[idx].alive) {
+            aliveTargets.push(parseInt(idx));
+        }
+    });
+    if (aliveTargets.length > 0) {
+        GameState.spectateTarget = aliveTargets[0];
+    }
+    updateSpectatorBadge();
+}
+
+function switchSpectateTarget() {
+    if (!GameState.isSpectating) return;
+    var aliveTargets = [];
+    Object.keys(GameState.remotePlayers).forEach(function(idx) {
+        if (GameState.remotePlayers[idx].alive) {
+            aliveTargets.push(parseInt(idx));
+        }
+    });
+    if (aliveTargets.length === 0) return;
+    var currentIdx = aliveTargets.indexOf(GameState.spectateTarget);
+    GameState.spectateTarget = aliveTargets[(currentIdx + 1) % aliveTargets.length];
+    updateSpectatorBadge();
+}
+
+function updateSpectatorCamera() {
+    if (!GameState.isSpectating || GameState.spectateTarget < 0) return;
+    var rp = GameState.remotePlayers[GameState.spectateTarget];
+    if (!rp || !rp.alive) {
+        switchSpectateTarget();
+        return;
+    }
+    // Follow behind target
+    var offsetX = Math.sin(rp.rotationY) * 3;
+    var offsetZ = Math.cos(rp.rotationY) * 3;
+    var targetCamX = rp.position.x - offsetX;
+    var targetCamZ = rp.position.z - offsetZ;
+    var targetCamY = rp.currentFloor * FLOOR_H + PLAYER_HEIGHT + 1;
+
+    camera.position.x += (targetCamX - camera.position.x) * 0.05;
+    camera.position.z += (targetCamZ - camera.position.z) * 0.05;
+    camera.position.y += (targetCamY - camera.position.y) * 0.05;
+    camera.lookAt(rp.position.x, rp.currentFloor * FLOOR_H + PLAYER_HEIGHT, rp.position.z);
+}
+
+function updateSpectatorBadge() {
+    var badge = document.getElementById('spectator-badge');
+    if (!badge) return;
+    if (GameState.isSpectating && GameState.spectateTarget >= 0) {
+        var pname = GameState.players[GameState.spectateTarget] ?
+            GameState.players[GameState.spectateTarget].username : ('P' + (GameState.spectateTarget + 1));
+        badge.textContent = (GameState.language === 'ja' ? '観戦中: ' : 'Spectating: ') + pname;
+        badge.classList.add('active');
+    } else {
+        badge.classList.remove('active');
+    }
+}
+
+/* ============================================
+   Phase 6: Team Assignment (Team Battle)
+   ============================================ */
+function initTeamAssignment() {
+    if (GameState.multiMode !== 'teamBattle') {
+        document.getElementById('team-assignment').classList.remove('active');
+        return;
+    }
+    document.getElementById('team-assignment').classList.add('active');
+
+    // Default: first half oni, second half runner
+    var playerKeys = Object.keys(GameState.players);
+    playerKeys.forEach(function(idx, i) {
+        var pi = parseInt(idx);
+        if (i < Math.ceil(playerKeys.length / 2)) {
+            GameState.teamAssignment[pi] = 'oni';
+        } else {
+            GameState.teamAssignment[pi] = 'runner';
+        }
+    });
+    renderTeamAssignment();
+}
+
+function renderTeamAssignment() {
+    var oniDiv = document.getElementById('team-oni-players');
+    var runnerDiv = document.getElementById('team-runner-players');
+    oniDiv.innerHTML = '';
+    runnerDiv.innerHTML = '';
+
+    Object.keys(GameState.players).forEach(function(idx) {
+        var pi = parseInt(idx);
+        var p = GameState.players[pi];
+        if (!p) return;
+        var item = document.createElement('div');
+        item.className = 'team-player-item';
+        item.style.color = PLAYER_COLOR_HEX[pi] || '#fff';
+        item.style.borderColor = PLAYER_COLOR_HEX[pi] || '#fff';
+        item.textContent = p.username;
+
+        if (GameState.isHost) {
+            item.addEventListener('click', function() {
+                GameState.teamAssignment[pi] = GameState.teamAssignment[pi] === 'oni' ? 'runner' : 'oni';
+                renderTeamAssignment();
+                // Sync to Firebase
+                if (firebaseReady && GameState.roomId) {
+                    database.ref('rooms/' + GameState.roomId + '/teamAssignment').set(GameState.teamAssignment);
+                }
+            });
+        }
+
+        if (GameState.teamAssignment[pi] === 'oni') {
+            oniDiv.appendChild(item);
+        } else {
+            runnerDiv.appendChild(item);
+        }
+    });
+}
+
+/* ============================================
+   Phase 6: Disconnect Handling
+   ============================================ */
+function showDisconnectNotification(username) {
+    var el = document.getElementById('disconnect-notif');
+    if (!el) return;
+    el.textContent = (GameState.language === 'ja' ?
+        (username + 'さんが退席しました') :
+        (username + ' has disconnected'));
+    el.classList.add('show');
+    setTimeout(function() {
+        el.classList.remove('show');
+    }, 2500);
+}
+
+function handlePlayerDisconnect(playerIndex) {
+    // Remove 3D model
+    var rp = GameState.remotePlayers[playerIndex];
+    if (rp && rp.model) {
+        if (rp.model.parent) rp.model.parent.remove(rp.model);
+        rp.model.traverse(function(child) {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (child.material.map) child.material.map.dispose();
+                if (child.material.dispose) child.material.dispose();
+            }
+        });
+        delete GameState.remotePlayers[playerIndex];
+    }
+
+    // Check remaining players
+    var remainingCount = Object.keys(GameState.remotePlayers).length + 1;
+    if (remainingCount <= 1 && GameState.gameActive) {
+        // Auto-win
+        GameState.gameActive = false;
+        if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+        showNotification(GameState.language === 'ja' ? '自動勝利!' : 'Auto Win!');
+        setTimeout(function() {
+            showMultiResult();
+        }, 1500);
+    }
+}
+
+/* ============================================
+   Phase 6: Start Multiplayer Game
+   ============================================ */
+function getMultiStageConfig(mode, stageNum) {
+    if (mode === 'freeForAll') {
+        var stage = STAGES[Math.min(stageNum - 1, STAGES.length - 1)];
+        var parts = stage.size.split('x');
+        return {
+            cols: parseInt(parts[0]),
+            rows: parseInt(parts[1]),
+            floors: stage.floors,
+            oni: stage.oni,
+            time: stage.time,
+            speedMul: [1.0, 1.0, 1.2, 1.3, 1.5][stageNum - 1] || 1.0
+        };
+    } else if (mode === 'teamBattle') {
+        var ts = TEAM_STAGES[Math.min(stageNum - 1, TEAM_STAGES.length - 1)];
+        var tparts = ts.size.split('x');
+        return {
+            cols: parseInt(tparts[0]),
+            rows: parseInt(tparts[1]),
+            floors: ts.floors,
+            oni: 0,
+            time: ts.time,
+            speedMul: ts.speedMul
+        };
+    } else if (mode === 'coop') {
+        var cs = COOP_STAGES[Math.min(stageNum - 1, COOP_STAGES.length - 1)];
+        var cparts = cs.size.split('x');
+        return {
+            cols: parseInt(cparts[0]),
+            rows: parseInt(cparts[1]),
+            floors: cs.floors,
+            oni: cs.oni,
+            time: cs.time,
+            speedMul: cs.speedMul
+        };
+    }
+    return { cols: 10, rows: 10, floors: 1, oni: 1, time: 90, speedMul: 1.0 };
+}
+
+function startMultiplayerGame() {
+    if (!GameState.isHost) return;
+
+    var stageConfig = getMultiStageConfig(GameState.multiMode, GameState.multiCurrentStage);
+
+    // Write game config and status to Firebase
+    if (firebaseReady && GameState.roomId) {
+        var roomRef = database.ref('rooms/' + GameState.roomId);
+        roomRef.update({
+            status: 'playing',
+            currentStage: GameState.multiCurrentStage,
+            gameConfig: {
+                cols: stageConfig.cols,
+                rows: stageConfig.rows,
+                floors: stageConfig.floors,
+                oni: stageConfig.oni,
+                time: stageConfig.time,
+                speedMul: stageConfig.speedMul,
+                mode: GameState.multiMode,
+                seed: Math.floor(Math.random() * 999999),
+                stage: GameState.multiCurrentStage,
+                teamAssignment: GameState.teamAssignment || {}
+            }
+        });
+    }
+
+    // Start locally
+    launchMultiGame(stageConfig);
+}
+
+function launchMultiGame(config) {
+    GameState.gameMode = 'multi_' + GameState.multiMode;
+    GameState.currentStage = GameState.multiCurrentStage;
+    GameState.multiEscapeOrder = 0;
+    GameState.multiStagePoints = [0, 0, 0, 0];
+    GameState.isSpectating = false;
+    GameState.spectateTarget = -1;
+
+    // Reset player alive status
+    Object.keys(GameState.players).forEach(function(idx) {
+        if (GameState.players[idx]) {
+            GameState.players[idx].alive = true;
+            GameState.players[idx].escaped = false;
+        }
+    });
+
+    // Determine if local player is ONI in team battle
+    var isLocalOni = GameState.multiMode === 'teamBattle' &&
+        GameState.teamAssignment[GameState.playerIndex] === 'oni';
+
+    // Start the core game
+    var stageId = GameState.multiCurrentStage;
+    var cols = config.cols;
+    var rows = config.rows;
+    var numFloors = config.floors;
+    var numStairs = numFloors > 1 ? (2 + Math.floor(numFloors * 1.5)) : 0;
+
+    GameState.mazeCols = cols;
+    GameState.mazeRows = rows;
+    GameState.oniSpeedMultiplier = config.speedMul;
+
+    // Hide overlays
+    document.getElementById('matrix-bg').style.display = 'none';
+    document.getElementById('red-glow').style.display = 'none';
+    document.getElementById('fog-overlay').style.display = 'none';
+    document.getElementById('crt-overlay').style.display = 'none';
+
+    showScreen('game-screen');
+
+    // HUD label
+    var label = document.getElementById('hud-stage-label');
+    if (label) {
+        var modeLabel = GameState.multiMode === 'freeForAll' ? 'FREE FOR ALL' :
+            GameState.multiMode === 'teamBattle' ? 'TEAM BATTLE' : 'CO-OP';
+        label.textContent = modeLabel + ' - STAGE ' + GameState.multiCurrentStage;
+    }
+
+    initThreeJS();
+
+    // Generate maze
+    var mazeResult = generateMultiFloorMaze(cols, rows, numFloors, numStairs, stageId);
+    GameState.mazeFloors = mazeResult.floors;
+    GameState.stairsData = mazeResult.stairs;
+    GameState.mazeGrid = mazeResult.floors[0];
+    GameState.playerCurrentFloor = 0;
+    GameState.onStairs = false;
+
+    // Floor label
+    var floorLabel = document.getElementById('hud-floor-label');
+    if (floorLabel) {
+        floorLabel.style.display = numFloors > 1 ? 'block' : 'none';
+        floorLabel.textContent = '1F';
+    }
+
+    buildMaze3D(GameState.mazeFloors, cols, rows, stageId);
+    setupLighting(stageId);
+
+    // Spawn ONIs based on mode
+    if (GameState.multiMode === 'teamBattle') {
+        // No CPU oni in team battle - oni team players ARE the oni
+        GameState.onis = [];
+    } else {
+        // freeForAll and coop use CPU onis
+        spawnOnis(stageId);
+        // Override oni count for coop
+        if (GameState.multiMode === 'coop') {
+            // Clear default onis and respawn with coop count
+            GameState.onis.forEach(function(oni) {
+                if (oni.group.parent) oni.group.parent.remove(oni.group);
+            });
+            GameState.onis = [];
+            GameState.oniSpeedMultiplier = config.speedMul;
+            for (var oi = 0; oi < config.oni; oi++) {
+                var model = createOniModel();
+                addOniLights(model, stageId);
+                var floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor(oi / 2)) : 0;
+                var spawnX = Math.max(1, cols - 2 - (oi % 3));
+                var spawnZ = Math.max(1, rows - 2 - Math.floor(oi / 3));
+                var worldX = spawnX * CL + CL / 2;
+                var worldZ = spawnZ * CL + CL / 2;
+                model.position.set(worldX, floor * FLOOR_H, worldZ);
+                scene.add(model);
+                GameState.onis.push({
+                    group: model,
+                    position: { x: worldX, y: floor * FLOOR_H, z: worldZ },
+                    currentFloor: floor,
+                    cellX: spawnX, cellZ: spawnZ,
+                    path: [], pathTimer: 0,
+                    speed: ONI_CONFIG.baseSpeed * config.speedMul,
+                    onStairs: false
+                });
+            }
+        }
+    }
+
+    // Place EXIT based on mode
+    if (GameState.multiMode === 'teamBattle') {
+        // No exit in team battle
+        GameState.exitPosition = null;
+        GameState.exitGroup = null;
+    } else {
+        var exitInfo = placeExit(cols, rows, stageId, numFloors);
+        GameState.exitPosition = { x: exitInfo.x, z: exitInfo.z };
+        GameState.exitFloor = exitInfo.floor;
+        GameState.exitReached = false;
+        GameState.exitGroup = createExitZone(exitInfo.x, exitInfo.z, exitInfo.floor);
+        scene.add(GameState.exitGroup);
+    }
+
+    GameState.score = 0;
+    GameState.totalTime = 0;
+    GameState.captureInProgress = false;
+    GameState.nearestOniDistance = Infinity;
+    GameState.currentBPM = 72;
+
+    // Player start position (offset by playerIndex)
+    var startX = CL * 1.5 + GameState.playerIndex * 2;
+    var startZ = CL * 1.5;
+    camera.position.set(startX, PLAYER_HEIGHT, startZ);
+    GameState.playerRotationY = 0;
+    GameState.playerPosition = { x: startX, y: PLAYER_HEIGHT, z: startZ };
+    GameState.stamina = 100;
+    GameState.alive = true;
+    GameState.moveForward = false;
+    GameState.moveBackward = false;
+    GameState.turnLeft = false;
+    GameState.turnRight = false;
+    GameState.sprint = false;
+    headBobTimer = 0;
+
+    initPointerLock();
+    initKeyInput();
+
+    // Spawn remote player models
+    spawnRemotePlayers();
+
+    // Start SyncLayer
+    SyncLayer.connect(GameState.roomId);
+    SyncLayer.setupDisconnect(GameState.playerIndex);
+
+    // Listen for remote player positions
+    SyncLayer.onPlayersUpdate(function(snap) {
+        var data = snap.val();
+        if (!data) return;
+        Object.keys(data).forEach(function(idx) {
+            var pi = parseInt(idx);
+            if (pi === GameState.playerIndex) return;
+            var rp = GameState.remotePlayers[pi];
+            if (!rp) return;
+            var pd = data[idx];
+            rp.targetPosition.x = pd.x;
+            rp.targetPosition.z = pd.z;
+            rp.targetRotationY = pd.rotY;
+            rp.currentFloor = pd.floor;
+        });
+    });
+
+    // Guest: listen for oni position updates
+    if (!GameState.isHost && GameState.multiMode !== 'teamBattle') {
+        SyncLayer.onOniUpdate(function(snap) {
+            var data = snap.val();
+            if (!data) return;
+            Object.keys(data).forEach(function(idx) {
+                var oi = parseInt(idx);
+                if (oi >= GameState.onis.length) return;
+                var oni = GameState.onis[oi];
+                oni.position.x = data[idx].x;
+                oni.position.y = data[idx].y;
+                oni.position.z = data[idx].z;
+                oni.currentFloor = data[idx].floor;
+                oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
+                oni.group.rotation.y = data[idx].rotY;
+            });
+        });
+    }
+
+    // Listen for player status changes (caught/escaped)
+    SyncLayer.onPlayerStatusUpdate(function(snap) {
+        var data = snap.val();
+        if (!data) return;
+        Object.keys(data).forEach(function(idx) {
+            var pi = parseInt(idx);
+            var pdata = data[idx];
+            if (pi === GameState.playerIndex) return;
+            var rp = GameState.remotePlayers[pi];
+            if (!rp) return;
+            if (pdata.alive === false && rp.alive) {
+                rp.alive = false;
+                rp.model.visible = false;
+            }
+            if (pdata.escaped === true && !rp.escaped) {
+                rp.escaped = true;
+                rp.model.visible = false;
+                if (GameState.multiMode === 'freeForAll') {
+                    GameState.multiEscapeOrder++;
+                }
+            }
+        });
+
+        // Check if game should end
+        checkMultiGameEnd(data);
+    });
+
+    // Chat listener (coop)
+    if (GameState.multiMode === 'coop') {
+        initQuickChat();
+        SyncLayer.onChatMessage(function(snap) {
+            var d = snap.val();
+            if (!d || d.player === GameState.playerIndex) return;
+            var lang = GameState.language;
+            var msg = QUICK_CHAT_MESSAGES[lang][d.msg];
+            if (msg) addChatLogEntry(d.player, msg);
+        });
+        SyncLayer.onPinUpdate(function(snap) {
+            GameState.pinMarkers = snap.val() || {};
+        });
+    }
+
+    // Listen for disconnects
+    if (firebaseReady && GameState.roomId) {
+        database.ref('rooms/' + GameState.roomId + '/players').on('child_removed', function(snap) {
+            var removedIdx = parseInt(snap.key);
+            if (removedIdx === GameState.playerIndex) return;
+            var pdata = snap.val();
+            var username = pdata ? pdata.username : ('P' + (removedIdx + 1));
+            showDisconnectNotification(username);
+            handlePlayerDisconnect(removedIdx);
+        });
+    }
+
+    // Timer
+    if (config.time > 0) {
+        startTimer(config.time);
+    }
+
+    // Pointer lock hint
+    var hint = document.getElementById('pointer-lock-hint');
+    if (hint) hint.classList.add('visible');
+
+    GameState.gameActive = true;
+    clock.start();
+    gameLoop();
+}
+
+/* ============================================
+   Phase 6: Check Multi Game End Conditions
+   ============================================ */
+function checkMultiGameEnd(playersData) {
+    if (!GameState.gameActive) return;
+    if (!playersData) return;
+
+    var playerCount = Object.keys(playersData).length;
+
+    if (GameState.multiMode === 'freeForAll') {
+        // Check if all escaped/caught/timeout
+        var allDone = true;
+        Object.keys(playersData).forEach(function(idx) {
+            var p = playersData[idx];
+            if (p.alive !== false && !p.escaped) allDone = false;
+        });
+        if (allDone) {
+            GameState.gameActive = false;
+            if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+            setTimeout(function() { showMultiStageResult(); }, 1500);
+        }
+    } else if (GameState.multiMode === 'teamBattle') {
+        // Check if all runners caught
+        var allRunnersCaught = true;
+        Object.keys(playersData).forEach(function(idx) {
+            var pi = parseInt(idx);
+            if (GameState.teamAssignment[pi] === 'runner' && playersData[idx].alive !== false) {
+                allRunnersCaught = false;
+            }
+        });
+        if (allRunnersCaught) {
+            GameState.gameActive = false;
+            if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+            GameState.teamScores.oni++;
+            setTimeout(function() { showMultiStageResult(); }, 1500);
+        }
+    } else if (GameState.multiMode === 'coop') {
+        // Check if any player escaped
+        var anyEscaped = false;
+        var allCaught = true;
+        Object.keys(playersData).forEach(function(idx) {
+            if (playersData[idx].escaped) anyEscaped = true;
+            if (playersData[idx].alive !== false) allCaught = false;
+        });
+        if (anyEscaped) {
+            GameState.gameActive = false;
+            if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+            setTimeout(function() { showMultiStageResult(); }, 1500);
+        } else if (allCaught) {
+            GameState.gameActive = false;
+            if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+            // Retry same stage in coop
+            GameState.coopRetrying = true;
+            setTimeout(function() { showMultiStageResult(); }, 1500);
+        }
+    }
+}
+
+/* ============================================
+   Phase 6: Multi-Player Result Screens
+   ============================================ */
+function showMultiStageResult() {
+    cleanupGame();
+    var lang = HUD_TEXT[GameState.language];
+    var titleEl = document.getElementById('result-title');
+    var infoEl = document.getElementById('result-info');
+    var btnsEl = document.getElementById('result-buttons');
+
+    var isLastStage = GameState.multiCurrentStage >= GameState.multiMaxStages;
+
+    if (GameState.multiMode === 'freeForAll') {
+        titleEl.textContent = 'STAGE ' + GameState.multiCurrentStage + ' ' +
+            (GameState.language === 'ja' ? '結果' : 'RESULT');
+        titleEl.className = 'escaped';
+
+        // Calculate stage points based on escape order
+        var pointMap = [10, 6, 3, 1];
+        var resultRows = '';
+        Object.keys(GameState.players).forEach(function(idx) {
+            var pi = parseInt(idx);
+            var p = GameState.players[pi];
+            if (!p) return;
+            var status = p.escaped ? (GameState.language === 'ja' ? '脱出' : 'ESCAPED') :
+                (p.alive === false ? (GameState.language === 'ja' ? '捕獲' : 'CAUGHT') :
+                (GameState.language === 'ja' ? 'タイムアップ' : 'TIME UP'));
+            var pts = p.escaped ? (pointMap[GameState.multiStagePoints[pi]] || 0) : 0;
+            GameState.multiPoints[pi] = (GameState.multiPoints[pi] || 0) + pts;
+            resultRows += '<div class="multi-result-row">' +
+                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[pi] + '">' + p.username + '</span>' +
+                '<span class="multi-result-status">' + status + '</span>' +
+                '<span class="multi-result-pts">+' + pts + 'pt</span></div>';
+        });
+        infoEl.innerHTML = '<div id="multi-result-table">' + resultRows + '</div>';
+    } else if (GameState.multiMode === 'teamBattle') {
+        var roundWinner = GameState.teamScores.oni > GameState.teamScores.runner ? 'ONI' : 'RUNNER';
+        titleEl.textContent = 'STAGE ' + GameState.multiCurrentStage + ' R' + GameState.teamRound;
+        titleEl.className = 'escaped';
+        infoEl.innerHTML = 'ONI: ' + GameState.teamScores.oni + ' - RUNNER: ' + GameState.teamScores.runner;
+    } else if (GameState.multiMode === 'coop') {
+        if (GameState.coopRetrying) {
+            titleEl.textContent = GameState.language === 'ja' ? '全滅...' : 'WIPED OUT...';
+            titleEl.className = 'gameover';
+            infoEl.textContent = GameState.language === 'ja' ? '再挑戦します' : 'Retrying...';
+        } else {
+            titleEl.textContent = 'STAGE ' + GameState.multiCurrentStage + ' CLEAR!';
+            titleEl.className = 'escaped';
+            infoEl.textContent = GameState.language === 'ja' ? 'ステージクリア！' : 'Stage Cleared!';
+        }
+    }
+
+    // Buttons
+    if (isLastStage && !GameState.coopRetrying) {
+        btnsEl.innerHTML =
+            '<button class="btn btn-neon" onclick="showMultiResult()">' +
+            (GameState.language === 'ja' ? '最終結果' : 'Final Result') + '</button>';
+    } else {
+        var nextLabel = GameState.coopRetrying ?
+            (GameState.language === 'ja' ? 'リトライ' : 'Retry') :
+            (GameState.language === 'ja' ? '次のステージ' : 'Next Stage');
+        btnsEl.innerHTML =
+            '<button class="btn btn-neon" onclick="nextMultiStage()">' + nextLabel + '</button>' +
+            '<button class="btn btn-thin" onclick="backToMultiTitle()">' + lang.backTitle + '</button>';
+    }
+
+    showScreen('result-screen');
+}
+
+function showMultiResult() {
+    cleanupGame();
+    var lang = HUD_TEXT[GameState.language];
+    var titleEl = document.getElementById('result-title');
+    var infoEl = document.getElementById('result-info');
+    var btnsEl = document.getElementById('result-buttons');
+
+    if (GameState.multiMode === 'freeForAll') {
+        titleEl.textContent = 'FINAL RESULT';
+        titleEl.className = 'allclear';
+
+        // Sort by total points
+        var rankings = Object.keys(GameState.players).map(function(idx) {
+            var pi = parseInt(idx);
+            return { index: pi, points: GameState.multiPoints[pi] || 0, name: GameState.players[pi].username };
+        }).sort(function(a, b) { return b.points - a.points; });
+
+        var rows = '';
+        rankings.forEach(function(r, i) {
+            var isWinner = i === 0;
+            rows += '<div class="multi-result-row' + (isWinner ? ' winner' : '') + '">' +
+                '<span class="multi-result-rank">#' + (i + 1) + '</span>' +
+                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[r.index] + '">' + r.name + '</span>' +
+                '<span class="multi-result-pts">' + r.points + 'pt</span></div>';
+        });
+        infoEl.innerHTML = '<div id="multi-result-table">' + rows + '</div>';
+    } else if (GameState.multiMode === 'teamBattle') {
+        var winner = GameState.teamScores.oni > GameState.teamScores.runner ? 'ONI TEAM WINS!' :
+            GameState.teamScores.oni < GameState.teamScores.runner ? 'RUNNER TEAM WINS!' : 'DRAW!';
+        titleEl.textContent = winner;
+        titleEl.className = 'allclear';
+        infoEl.innerHTML = 'ONI: ' + GameState.teamScores.oni + ' - RUNNER: ' + GameState.teamScores.runner;
+    } else if (GameState.multiMode === 'coop') {
+        titleEl.textContent = GameState.language === 'ja' ? 'ミッションコンプリート!' : 'MISSION COMPLETE!';
+        titleEl.className = 'allclear';
+        infoEl.textContent = GameState.language === 'ja' ? '全ステージクリア！' : 'All stages cleared!';
+    }
+
+    btnsEl.innerHTML =
+        '<button class="btn btn-neon" onclick="rematchMulti()">' +
+        (GameState.language === 'ja' ? '再戦' : 'Rematch') + '</button>' +
+        '<button class="btn btn-thin" onclick="backToMultiTitle()">' + lang.backTitle + '</button>';
+
+    showScreen('result-screen');
+}
+
+function nextMultiStage() {
+    if (!GameState.coopRetrying) {
+        GameState.multiCurrentStage++;
+        // Team battle round swap
+        if (GameState.multiMode === 'teamBattle') {
+            GameState.teamRound++;
+            if (GameState.teamRound > 2) {
+                GameState.teamRound = 1;
+                // Swap teams
+                Object.keys(GameState.teamAssignment).forEach(function(idx) {
+                    GameState.teamAssignment[idx] = GameState.teamAssignment[idx] === 'oni' ? 'runner' : 'oni';
+                });
+            }
+        }
+    }
+    GameState.coopRetrying = false;
+
+    if (GameState.isHost) {
+        startMultiplayerGame();
+    }
+    // Guests will receive the game start via onStatusChange listener
+}
+
+function rematchMulti() {
+    GameState.multiCurrentStage = 1;
+    GameState.multiPoints = [0, 0, 0, 0];
+    GameState.teamScores = { oni: 0, runner: 0 };
+    GameState.teamRound = 1;
+
+    if (GameState.isHost && firebaseReady && GameState.roomId) {
+        database.ref('rooms/' + GameState.roomId).update({
+            status: 'waiting',
+            currentStage: 1
+        });
+    }
+    showScreen('lobby-screen');
+    updateLobbyDisplay();
+    updateLobbyPlayerList();
+}
+
+function backToMultiTitle() {
+    SyncLayer.disconnect();
+    leaveLobby();
+    backToTitle();
 }
 
 /* ============================================
@@ -2156,6 +3583,11 @@ function initButtons() {
         });
     });
 
+    // Listen for team assignment updates from Firebase
+    if (firebaseReady) {
+        // This will be set up when joining a room - handled in joinRoom listeners
+    }
+
     // Join room
     document.getElementById('btn-join-room').addEventListener('click', () => {
         const name = document.getElementById('username-input').value.trim();
@@ -2183,7 +3615,14 @@ function initButtons() {
     // Start game (host)
     document.getElementById('btn-start-game').addEventListener('click', () => {
         if (!GameState.isHost) return;
-        startGame(1);
+        GameState.multiCurrentStage = 1;
+        GameState.multiPoints = [0, 0, 0, 0];
+        GameState.teamScores = { oni: 0, runner: 0 };
+        GameState.teamRound = 1;
+        if (GameState.multiMode === 'teamBattle') {
+            initTeamAssignment();
+        }
+        startMultiplayerGame();
     });
 
     // Hidden stage check on username input
@@ -2291,6 +3730,17 @@ const HUD_TEXT = {
         nextStage: '次のステージへ',
         score: 'スコア',
         survivalTime: '生存時間',
+        spectating: '観戦中',
+        disconnected: 'さんが退席しました',
+        autoWin: '自動勝利!',
+        stageResult: '結果',
+        finalResult: '最終結果',
+        rematch: '再戦',
+        coopWiped: '全滅...',
+        coopRetry: '再挑戦します',
+        missionComplete: 'ミッションコンプリート!',
+        allStagesCleared: '全ステージクリア！',
+        stageCleared: 'ステージクリア！',
     },
     en: {
         status_runner: 'STATUS: RUNNER',
@@ -2311,6 +3761,17 @@ const HUD_TEXT = {
         nextStage: 'Next Stage',
         score: 'SCORE',
         survivalTime: 'SURVIVAL TIME',
+        spectating: 'SPECTATING',
+        disconnected: ' has disconnected',
+        autoWin: 'Auto Win!',
+        stageResult: 'RESULT',
+        finalResult: 'FINAL RESULT',
+        rematch: 'Rematch',
+        coopWiped: 'WIPED OUT...',
+        coopRetry: 'Retrying...',
+        missionComplete: 'MISSION COMPLETE!',
+        allStagesCleared: 'All stages cleared!',
+        stageCleared: 'Stage Cleared!',
     }
 };
 
@@ -3305,6 +4766,7 @@ function createExitZone(cellX, cellZ, floor) {
 
 function checkExitReached() {
     if (!GameState.exitPosition || GameState.exitReached) return;
+    if (!GameState.alive) return;
     if (GameState.playerCurrentFloor !== GameState.exitFloor) return;
 
     const dx = camera.position.x - (GameState.exitPosition.x * CL + CL / 2);
@@ -3314,7 +4776,39 @@ function checkExitReached() {
 
     if (dist < 2.0) {
         GameState.exitReached = true;
-        onStageCleared();
+
+        var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+        if (isMulti) {
+            // Report escape
+            var escapeTime = GameState.totalTime;
+            SyncLayer.reportEscaped(GameState.playerIndex, escapeTime);
+
+            if (GameState.multiMode === 'freeForAll') {
+                // Track escape order for points
+                GameState.multiStagePoints[GameState.playerIndex] = GameState.multiEscapeOrder;
+                GameState.multiEscapeOrder++;
+
+                // Spawn new exit for remaining players
+                if (GameState.isHost) {
+                    var newExit = placeExit(GameState.mazeCols, GameState.mazeRows,
+                        GameState.currentStage, GameState.mazeFloors.length);
+                    if (firebaseReady && GameState.roomId) {
+                        database.ref('rooms/' + GameState.roomId + '/exitPosition').set(newExit);
+                    }
+                }
+
+                // Show escaped notification
+                showNotification(HUD_TEXT[GameState.language].escaped);
+
+                // Player becomes inactive but game continues for others
+                GameState.alive = false;
+            } else if (GameState.multiMode === 'coop') {
+                // One escape = stage clear for all
+                showNotification(HUD_TEXT[GameState.language].escaped);
+            }
+        } else {
+            onStageCleared();
+        }
     }
 }
 
@@ -3350,6 +4844,14 @@ function checkCatch() {
 }
 
 function onPlayerCaught(oni) {
+    var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+
+    // In multiplayer, use different flow
+    if (isMulti) {
+        onMultiPlayerCaught();
+        return;
+    }
+
     GameState.alive = false;
     GameState.captureInProgress = true;
 
@@ -3571,16 +5073,46 @@ function drawMinimap() {
         ctx.beginPath(); ctx.arc(ox, oy, Math.max(2, cellW * 0.3), 0, Math.PI * 2); ctx.fill();
     });
 
+    // Remote players (minimap dots)
+    var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+    if (isMulti) {
+        Object.keys(GameState.remotePlayers).forEach(function(idx) {
+            var rp = GameState.remotePlayers[idx];
+            if (!rp.alive || rp.currentFloor !== floor) return;
+            var rpx = (rp.position.x / CL) * cellW;
+            var rpy = (rp.position.z / CL) * cellH;
+            ctx.fillStyle = PLAYER_COLOR_HEX[parseInt(idx)] || '#ffffff';
+            ctx.beginPath(); ctx.arc(rpx, rpy, Math.max(2, cellW * 0.3), 0, Math.PI * 2); ctx.fill();
+        });
+
+        // Pin markers (coop mode, green triangles)
+        if (GameState.multiMode === 'coop' && GameState.pinMarkers) {
+            Object.keys(GameState.pinMarkers).forEach(function(idx) {
+                var pin = GameState.pinMarkers[idx];
+                if (!pin || pin.floor !== floor) return;
+                // Check if pin is still valid (15 seconds)
+                var pinAge = Date.now() - (pin.t || 0);
+                if (pinAge > 15000) return;
+                var pinX = (pin.x / CL) * cellW;
+                var pinY = (pin.z / CL) * cellH;
+                ctx.fillStyle = '#00ff41';
+                ctx.font = Math.max(8, cellW * 0.8) + 'px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('\u25BC', pinX, pinY);
+            });
+        }
+    }
+
     // Player position
     var px = (camera.position.x / CL) * cellW;
     var py = (camera.position.z / CL) * cellH;
-    ctx.fillStyle = '#00ff41';
+    ctx.fillStyle = PLAYER_COLOR_HEX[GameState.playerIndex] || '#00ff41';
     ctx.beginPath(); ctx.arc(px, py, Math.max(2, cellW * 0.35), 0, Math.PI * 2); ctx.fill();
 
     // Player direction indicator
     var dirX = px + Math.sin(GameState.playerRotationY) * cellW * 0.6;
     var dirY = py - Math.cos(GameState.playerRotationY) * cellH * 0.6;
-    ctx.strokeStyle = '#00ff41';
+    ctx.strokeStyle = PLAYER_COLOR_HEX[GameState.playerIndex] || '#00ff41';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(dirX, dirY); ctx.stroke();
 }
@@ -4060,6 +5592,20 @@ function initKeyInput() {
             case 'KeyA': case 'ArrowLeft': GameState.turnLeft = true; break;
             case 'KeyD': case 'ArrowRight': GameState.turnRight = true; break;
             case 'ShiftLeft': case 'ShiftRight': GameState.sprint = true; break;
+            // Quick chat (coop)
+            case 'Digit1': sendQuickChat(0); break;
+            case 'Digit2': sendQuickChat(1); break;
+            case 'Digit3': sendQuickChat(2); break;
+            case 'Digit4': sendQuickChat(3); break;
+            // Pin marker (coop)
+            case 'KeyE': placePinMarker(); break;
+            // Spectator switch
+            case 'Tab':
+                if (GameState.isSpectating) {
+                    e.preventDefault();
+                    switchSpectateTarget();
+                }
+                break;
         }
     });
 
@@ -4265,7 +5811,26 @@ function startTimer(seconds) {
         updateTimerDisplay();
         if (GameState.timeRemaining <= 0) {
             clearInterval(GameState.timerInterval);
-            if (GameState.alive && !GameState.exitReached) {
+            var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+            if (isMulti) {
+                if (GameState.multiMode === 'teamBattle') {
+                    // Time up = runners survive = runner wins
+                    GameState.gameActive = false;
+                    GameState.teamScores.runner++;
+                    setTimeout(function() { showMultiStageResult(); }, 1500);
+                } else if (GameState.multiMode === 'coop') {
+                    // Time up = fail, retry
+                    GameState.alive = false;
+                    GameState.gameActive = false;
+                    GameState.coopRetrying = true;
+                    setTimeout(function() { showMultiStageResult(); }, 1500);
+                } else {
+                    // freeForAll - time up for remaining players
+                    GameState.alive = false;
+                    GameState.gameActive = false;
+                    setTimeout(function() { showMultiStageResult(); }, 1500);
+                }
+            } else if (GameState.alive && !GameState.exitReached) {
                 GameState.alive = false;
                 GameState.gameActive = false;
                 showGameOverResult('timeup');
@@ -4293,15 +5858,73 @@ function updateTimerDisplay() {
 function gameLoop() {
     if (!GameState.gameActive) return;
     const delta = Math.min(clock.getDelta(), 0.1);
+
+    var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+
+    // Spectator mode
+    if (GameState.isSpectating) {
+        updateSpectatorCamera();
+        updateLightFlicker(delta);
+        if (isMulti) {
+            updateRemotePlayers(delta);
+        }
+        // Host still runs oni AI even while spectating
+        if (GameState.isHost && GameState.multiMode !== 'teamBattle') {
+            updateOniAI(delta);
+            SyncLayer.updateOniPositions(GameState.onis);
+        }
+        updateExitPulse();
+        drawMinimap();
+        if (renderer && scene && camera) renderer.render(scene, camera);
+        GameState.animationId = requestAnimationFrame(gameLoop);
+        return;
+    }
+
     updatePlayerMovement(delta);
     updateHeadBob(delta);
     updateLightFlicker(delta);
-    updateOniAI(delta);
-    checkCatch();
+
+    // ONI AI - host runs it, guests receive positions
+    if (!isMulti || GameState.isHost) {
+        if (GameState.multiMode !== 'teamBattle' || !isMulti) {
+            updateOniAI(delta);
+        }
+    }
+
+    // Multiplayer sync
+    if (isMulti && GameState.alive) {
+        SyncLayer.updatePlayerPosition(
+            GameState.playerIndex,
+            GameState.playerPosition,
+            GameState.playerRotationY,
+            GameState.playerCurrentFloor
+        );
+
+        // Host syncs oni positions
+        if (GameState.isHost && GameState.multiMode !== 'teamBattle') {
+            SyncLayer.updateOniPositions(GameState.onis);
+        }
+
+        // Host syncs timer
+        if (GameState.isHost && GameState.timeRemaining > 0) {
+            SyncLayer.updateGameTimer(GameState.timeRemaining);
+        }
+
+        updateRemotePlayers(delta);
+    }
+
+    // Catch check (varies by mode)
+    if (isMulti && GameState.multiMode === 'teamBattle') {
+        checkTeamBattleCatch();
+    } else {
+        checkCatch();
+    }
+
     checkExitReached();
     updateExitPulse();
     updateGameHUD();
     drawMinimap();
+
     // Score attack: accumulate score
     if (GameState.gameMode === 'scoreAttack' && GameState.alive) {
         GameState.score += delta;
@@ -4310,8 +5933,81 @@ function gameLoop() {
     if (GameState.gameMode !== 'scoreAttack') {
         GameState.totalTime += delta;
     }
-    renderer.render(scene, camera);
+    if (renderer && scene && camera) renderer.render(scene, camera);
     GameState.animationId = requestAnimationFrame(gameLoop);
+}
+
+/* ============================================
+   Phase 6: Team Battle Catch
+   ============================================ */
+function checkTeamBattleCatch() {
+    if (!GameState.alive || GameState.captureInProgress) return;
+    var localTeam = GameState.teamAssignment[GameState.playerIndex];
+
+    if (localTeam === 'runner') {
+        // Check if any oni team player is nearby
+        Object.keys(GameState.remotePlayers).forEach(function(idx) {
+            var pi = parseInt(idx);
+            if (GameState.teamAssignment[pi] !== 'oni') return;
+            var rp = GameState.remotePlayers[pi];
+            if (!rp || !rp.alive) return;
+            if (rp.currentFloor !== GameState.playerCurrentFloor) return;
+            var dx = camera.position.x - rp.position.x;
+            var dz = camera.position.z - rp.position.z;
+            var dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < ONI_CONFIG.catchDistance) {
+                onMultiPlayerCaught();
+            }
+        });
+    } else if (localTeam === 'oni') {
+        // Oni player can catch runners
+        Object.keys(GameState.remotePlayers).forEach(function(idx) {
+            var pi = parseInt(idx);
+            if (GameState.teamAssignment[pi] !== 'runner') return;
+            var rp = GameState.remotePlayers[pi];
+            if (!rp || !rp.alive) return;
+            if (rp.currentFloor !== GameState.playerCurrentFloor) return;
+            var dx = camera.position.x - rp.position.x;
+            var dz = camera.position.z - rp.position.z;
+            var dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < ONI_CONFIG.catchDistance) {
+                // Report the runner as caught
+                SyncLayer.reportCaught(pi);
+                rp.alive = false;
+                rp.model.visible = false;
+            }
+        });
+    }
+}
+
+function onMultiPlayerCaught() {
+    GameState.alive = false;
+    SyncLayer.reportCaught(GameState.playerIndex);
+
+    if (GameState.multiMode === 'coop') {
+        // Enter spectator mode instead of game over
+        GameState.captureInProgress = true;
+        document.getElementById('danger-frame').style.boxShadow = 'inset 0 0 60px rgba(255,0,0,0.6)';
+        document.getElementById('danger-frame').style.display = 'block';
+        setTimeout(function() {
+            document.getElementById('danger-frame').style.display = 'none';
+            GameState.captureInProgress = false;
+            enterSpectatorMode();
+        }, 1500);
+    } else {
+        // Show brief caught effect
+        GameState.captureInProgress = true;
+        document.getElementById('danger-frame').style.boxShadow = 'inset 0 0 60px rgba(255,0,0,0.6)';
+        document.getElementById('danger-frame').style.display = 'block';
+        var text = document.getElementById('caught-text');
+        text.textContent = HUD_TEXT[GameState.language].caught_big;
+        text.classList.add('visible');
+        setTimeout(function() {
+            text.classList.remove('visible');
+            document.getElementById('danger-frame').style.display = 'none';
+            GameState.captureInProgress = false;
+        }, 2000);
+    }
 }
 
 /* Note: updateFloorLabel is called from updatePlayerY when floor changes */
@@ -4541,6 +6237,20 @@ function cleanupGame() {
         if (oni.group.parent) oni.group.parent.remove(oni.group);
     });
     GameState.onis = [];
+
+    // Clean up remote players
+    cleanupRemotePlayers();
+
+    // Clean up multi-player HUD
+    var quickChatHud = document.getElementById('quick-chat-hud');
+    if (quickChatHud) { quickChatHud.classList.remove('active'); quickChatHud.innerHTML = ''; }
+    var quickChatKeys = document.getElementById('quick-chat-keys');
+    if (quickChatKeys) quickChatKeys.classList.remove('active');
+    var specBadge = document.getElementById('spectator-badge');
+    if (specBadge) specBadge.classList.remove('active');
+    GameState.isSpectating = false;
+    GameState.spectateTarget = -1;
+    GameState.pinMarkers = {};
 
     if (renderer) {
         renderer.dispose();
