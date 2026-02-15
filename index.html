@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>MAZE HUNT</title>
+<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+/* ============================================
+   CSS Variables - Neon Theme
+   ============================================ */
+:root {
+    --neon-green: #00ff41;
+    --neon-green-dim: #00aa2a;
+    --neon-green-glow: rgba(0, 255, 65, 0.6);
+    --neon-cyan: #00ffff;
+    --neon-pink: #ff00ff;
+    --neon-yellow: #ffff00;
+    --neon-red: #ff3366;
+    --neon-gold: #ffcc00;
+    --neon-purple: #b450ff;
+    --bg-dark: #0a0204;
+    --bg-darker: #050000;
+    --bg-panel: rgba(0, 20, 10, 0.85);
+    --text-primary: #c0ffc0;
+    --text-dim: #4a8a4a;
+    --border-glow: 0 0 8px var(--neon-green), inset 0 0 8px rgba(0, 255, 65, 0.1);
+    --matrix-red: #e02020;
+    --matrix-red-glow: rgba(224, 32, 32, 0.6);
+}
+
+/* ============================================
+   Reset & Base
+   ============================================ */
+*, *::before, *::after {
+    margin: 0; padding: 0; box-sizing: border-box;
+}
+body {
+    background: #000;
+    color: var(--text-primary);
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+    width: 100vw; height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+/* ============================================
+   Layer Structure (z-index)
+   ============================================ */
+#matrix-bg {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 0;
+    overflow: hidden;
+    background: linear-gradient(180deg,
+        #0f0308 0%,
+        #1a0508 30%,
+        #0d0204 70%,
+        #080002 100%
+    );
+}
+#red-glow {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background:
+        radial-gradient(ellipse at 50% 20%, rgba(180,15,15,0.12) 0%, transparent 60%),
+        radial-gradient(ellipse at 50% 80%, rgba(120,8,8,0.1) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(5,0,0,0.4) 100%);
+    pointer-events: none;
+    z-index: 1;
+}
+#fog-overlay {
+    position: fixed; bottom: 0; left: 0;
+    width: 100%; height: 30%;
+    background: linear-gradient(to top, rgba(10,2,4,0.6) 0%, transparent 100%);
+    pointer-events: none;
+    z-index: 5;
+}
+#content {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-y: auto;
+}
+#crt-overlay {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: repeating-linear-gradient(
+        0deg, transparent, transparent 2px,
+        rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+}
+#catchcopy {
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.95);
+    cursor: pointer;
+    transition: opacity 0.8s ease;
+}
+
+/* ============================================
+   Matrix Background Columns
+   ============================================ */
+.matrix-col {
+    position: absolute;
+    top: -100%;
+    width: 22px;
+    font-size: 16px;
+    line-height: 1.2;
+    white-space: pre;
+    color: var(--matrix-red);
+    opacity: 0.45;
+    text-shadow: 0 0 10px var(--matrix-red-glow), 0 0 20px rgba(224,32,32,0.3);
+    animation: matrixFall linear infinite;
+}
+.matrix-col-pulse {
+    animation: matrixFall linear infinite, redPulse 4s ease-in-out infinite alternate;
+}
+.matrix-col-flash {
+    animation: matrixFall linear infinite, redFlash 8s ease-in-out infinite;
+}
+@keyframes matrixFall {
+    0%   { transform: translateY(0); }
+    100% { transform: translateY(200%); }
+}
+@keyframes redPulse {
+    0%   { opacity: 0.25; }
+    100% { opacity: 0.6; }
+}
+@keyframes redFlash {
+    0%, 93% { opacity: 0.4; }
+    96%     { opacity: 1.0; }
+    100%    { opacity: 0.4; }
+}
+
+/* ============================================
+   Catchcopy
+   ============================================ */
+#catchcopy-text {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 22px;
+    letter-spacing: 4px;
+    color: var(--matrix-red);
+    text-shadow:
+        0 0 10px var(--matrix-red),
+        0 0 30px var(--matrix-red-glow),
+        0 0 60px rgba(224,32,32,0.4);
+    text-align: center;
+    padding: 0 20px;
+}
+
+/* ============================================
+   Screens
+   ============================================ */
+.screen {
+    display: none;
+    width: 100%;
+    min-height: 100%;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+}
+.screen.active {
+    display: flex;
+}
+
+/* ============================================
+   Title Screen
+   ============================================ */
+#title-screen {
+    justify-content: flex-start;
+    padding-top: 40px;
+    gap: 10px;
+}
+#title-logo h1 {
+    font-family: 'Creepster', cursive;
+    font-weight: 400;
+    font-size: 82px;
+    line-height: 0.95;
+    letter-spacing: 18px;
+    color: var(--matrix-red);
+    text-shadow:
+        0 0 10px var(--matrix-red),
+        0 0 30px var(--matrix-red-glow),
+        0 0 60px rgba(224,32,32,0.4),
+        0 0 100px rgba(224,32,32,0.2);
+    text-align: center;
+    animation: titlePulse 3s ease-in-out infinite alternate;
+}
+@keyframes titlePulse {
+    0%   { filter: brightness(1.0); }
+    100% { filter: brightness(1.2); }
+}
+
+/* ============================================
+   Chase Animation
+   ============================================ */
+#chase-container {
+    width: 380px;
+    height: 64px;
+    position: relative;
+    overflow: hidden;
+    margin: 10px auto;
+}
+.chase-char {
+    position: absolute;
+    bottom: 8px;
+    transition: none;
+}
+.chase-char svg {
+    width: 28px;
+    height: 48px;
+}
+.chase-oni {
+    bottom: 4px;
+}
+.chase-oni svg {
+    width: 36px;
+    height: 56px;
+}
+
+/* ============================================
+   UI Panel
+   ============================================ */
+.ui-panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--neon-green-dim);
+    box-shadow: var(--border-glow);
+    padding: 28px 24px;
+    width: 100%;
+    max-width: 380px;
+    position: relative;
+}
+/* Corner brackets */
+.ui-panel::before,
+.ui-panel::after {
+    content: '';
+    position: absolute;
+    width: 16px; height: 16px;
+    border-color: var(--neon-green);
+    border-style: solid;
+}
+.ui-panel::before {
+    top: -1px; left: -1px;
+    border-width: 2px 0 0 2px;
+}
+.ui-panel::after {
+    top: -1px; right: -1px;
+    border-width: 2px 2px 0 0;
+}
+.ui-panel .corner-bl,
+.ui-panel .corner-br {
+    position: absolute;
+    width: 16px; height: 16px;
+    border-color: var(--neon-green);
+    border-style: solid;
+}
+.ui-panel .corner-bl {
+    bottom: -1px; left: -1px;
+    border-width: 0 0 2px 2px;
+}
+.ui-panel .corner-br {
+    bottom: -1px; right: -1px;
+    border-width: 0 2px 2px 0;
+}
+
+/* ============================================
+   Form Elements
+   ============================================ */
+.input-label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--neon-green-dim);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+.neon-input {
+    width: 100%;
+    background: rgba(0, 20, 10, 0.6);
+    border: 1px solid var(--neon-green-dim);
+    color: var(--neon-green);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 15px;
+    padding: 10px 14px;
+    outline: none;
+    transition: all 0.2s;
+}
+.neon-input:focus {
+    border-color: var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green-glow), inset 0 0 8px rgba(0,255,65,0.05);
+}
+.neon-input::placeholder {
+    color: var(--text-dim);
+    opacity: 0.6;
+}
+.input-error-msg {
+    font-size: 12px;
+    color: var(--matrix-red);
+    margin-top: 4px;
+    min-height: 16px;
+    text-shadow: 0 0 6px var(--matrix-red-glow);
+}
+
+/* ============================================
+   Buttons
+   ============================================ */
+.btn {
+    width: 100%;
+    padding: 12px 16px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    background: transparent;
+    transition: all 0.2s;
+    position: relative;
+    text-align: center;
+}
+/* Neon green border (primary) */
+.btn-neon {
+    color: var(--neon-green);
+    border: 1px solid var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green-glow), inset 0 0 8px rgba(0,255,65,0.05);
+}
+.btn-neon:hover {
+    background: rgba(0, 255, 65, 0.08);
+    box-shadow: 0 0 16px var(--neon-green-glow), inset 0 0 16px rgba(0,255,65,0.08);
+    transform: translateY(-2px);
+}
+/* Thin green border (secondary) */
+.btn-thin {
+    color: var(--text-primary);
+    border: 1px solid rgba(0, 170, 42, 0.4);
+}
+.btn-thin:hover {
+    border-color: var(--neon-green-dim);
+    background: rgba(0, 255, 65, 0.04);
+    transform: translateY(-2px);
+}
+/* Gold border (score attack) */
+.btn-gold {
+    color: var(--neon-gold);
+    border: 1px solid var(--neon-gold);
+    box-shadow: 0 0 8px rgba(255, 204, 0, 0.3), inset 0 0 8px rgba(255, 204, 0, 0.05);
+}
+.btn-gold:hover {
+    background: rgba(255, 204, 0, 0.08);
+    box-shadow: 0 0 16px rgba(255, 204, 0, 0.4), inset 0 0 16px rgba(255, 204, 0, 0.08);
+    transform: translateY(-2px);
+}
+/* Disabled state */
+.btn:disabled, .btn.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none !important;
+}
+/* Active state (selected) */
+.btn.active {
+    box-shadow: 0 0 16px var(--neon-green-glow);
+    animation: btnPulse 2s ease-in-out infinite alternate;
+}
+@keyframes btnPulse {
+    0%   { box-shadow: 0 0 8px var(--neon-green-glow); }
+    100% { box-shadow: 0 0 20px var(--neon-green-glow); }
+}
+/* Button spacing */
+.btn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    margin-top: 14px;
+}
+.btn-group-secondary {
+    margin-top: 10px;
+    gap: 8px;
+}
+
+/* ============================================
+   Footer bar (language + BGM)
+   ============================================ */
+.panel-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(0, 170, 42, 0.2);
+    flex-wrap: wrap;
+}
+.lang-btn {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid rgba(0, 170, 42, 0.3);
+    transition: all 0.2s;
+}
+.lang-btn.active {
+    color: var(--neon-green);
+    border-color: var(--neon-green);
+    box-shadow: 0 0 6px var(--neon-green-glow);
+}
+.lang-btn:hover {
+    color: var(--neon-green);
+}
+.footer-divider {
+    color: var(--text-dim);
+    opacity: 0.3;
+    font-size: 14px;
+}
+.bgm-btn {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    background: transparent;
+    transition: all 0.2s;
+}
+.bgm-btn.bgm-off {
+    color: var(--matrix-red);
+    border: 1px solid rgba(224, 32, 32, 0.5);
+}
+.bgm-btn.bgm-on {
+    color: var(--neon-green);
+    border: 1px solid var(--neon-green);
+    box-shadow: 0 0 6px var(--neon-green-glow);
+}
+
+/* ============================================
+   Modals
+   ============================================ */
+.modal-overlay {
+    display: none;
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 50;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.modal-overlay.active {
+    display: flex;
+}
+.modal-box {
+    background: var(--bg-panel);
+    border: 1px solid var(--neon-green-dim);
+    box-shadow: var(--border-glow);
+    padding: 24px;
+    max-width: 500px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+}
+.modal-box::before,
+.modal-box::after {
+    content: '';
+    position: absolute;
+    width: 16px; height: 16px;
+    border-color: var(--neon-green);
+    border-style: solid;
+}
+.modal-box::before {
+    top: -1px; left: -1px;
+    border-width: 2px 0 0 2px;
+}
+.modal-box::after {
+    top: -1px; right: -1px;
+    border-width: 2px 2px 0 0;
+}
+.modal-title {
+    font-size: 18px;
+    letter-spacing: 3px;
+    color: var(--neon-green);
+    text-shadow: 0 0 10px var(--neon-green-glow);
+    margin-bottom: 16px;
+    text-align: center;
+    text-transform: uppercase;
+}
+.modal-close {
+    position: absolute;
+    top: 12px; right: 16px;
+    background: none; border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    font-family: 'Share Tech Mono', monospace;
+    transition: color 0.2s;
+}
+.modal-close:hover {
+    color: var(--neon-green);
+    text-shadow: 0 0 8px var(--neon-green-glow);
+}
+.modal-body {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.8;
+}
+
+/* ============================================
+   Ranking Modal - Tabs
+   ============================================ */
+.ranking-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.ranking-tab {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    padding: 6px 10px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid rgba(0, 170, 42, 0.2);
+    transition: all 0.2s;
+}
+.ranking-tab.active {
+    color: var(--neon-green);
+    border-color: var(--neon-green);
+    box-shadow: 0 0 6px var(--neon-green-glow);
+}
+.ranking-list {
+    width: 100%;
+}
+.ranking-row {
+    display: flex;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(0, 170, 42, 0.1);
+    font-size: 12px;
+    gap: 8px;
+}
+.ranking-row .rank { width: 30px; color: var(--neon-gold); }
+.ranking-row .name { flex: 1; color: var(--neon-green); }
+.ranking-row .score { width: 70px; text-align: right; color: var(--text-primary); }
+
+/* ============================================
+   Game Screen (placeholder)
+   ============================================ */
+#game-screen {
+    padding: 0;
+}
+#game-canvas-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+/* ============================================
+   Error Animation
+   ============================================ */
+@keyframes errorShake {
+    0%, 100% { transform: translateX(0); }
+    20%      { transform: translateX(-4px); }
+    40%      { transform: translateX(4px); }
+    60%      { transform: translateX(-4px); }
+    80%      { transform: translateX(4px); }
+}
+.error-shake {
+    animation: errorShake 0.4s ease;
+    border-color: var(--matrix-red) !important;
+    box-shadow: 0 0 8px var(--matrix-red-glow) !important;
+}
+
+/* ============================================
+   Scrollbar
+   ============================================ */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--neon-green-dim);
+    border-radius: 2px;
+}
+
+/* ============================================
+   Responsive
+   ============================================ */
+@media (max-width: 480px) {
+    #title-logo h1 {
+        font-size: 52px;
+        letter-spacing: 10px;
+    }
+    #title-screen {
+        padding-top: 24px;
+    }
+    .ui-panel {
+        padding: 20px 16px;
+        max-width: 340px;
+    }
+    #chase-container {
+        width: 300px;
+    }
+    .btn {
+        font-size: 13px;
+        padding: 10px 12px;
+    }
+    #catchcopy-text {
+        font-size: 18px;
+        letter-spacing: 2px;
+    }
+}
+@media (max-width: 360px) {
+    #title-logo h1 {
+        font-size: 42px;
+        letter-spacing: 6px;
+    }
+    .ui-panel {
+        max-width: 300px;
+        padding: 16px 12px;
+    }
+    #chase-container {
+        width: 260px;
+    }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================
+     Layer 0: Matrix Background
+     ============================================ -->
+<div id="matrix-bg"></div>
+
+<!-- ============================================
+     Layer 1: Red Glow Overlay
+     ============================================ -->
+<div id="red-glow"></div>
+
+<!-- ============================================
+     Layer 5: Fog Overlay
+     ============================================ -->
+<div id="fog-overlay"></div>
+
+<!-- ============================================
+     Layer 10: Content (Screens)
+     ============================================ -->
+<div id="content">
+
+    <!-- ========== Title Screen ========== -->
+    <div id="title-screen" class="screen">
+        <div id="title-logo">
+            <h1>MAZE<br>HUNT</h1>
+        </div>
+
+        <!-- Chase Animation -->
+        <div id="chase-container"></div>
+
+        <!-- UI Panel -->
+        <div class="ui-panel">
+            <div class="corner-bl"></div>
+            <div class="corner-br"></div>
+
+            <div class="input-label">USER NAME</div>
+            <input type="text" id="username-input" class="neon-input" placeholder="名前を入力..." maxlength="16" autocomplete="off">
+            <div id="username-error" class="input-error-msg"></div>
+
+            <div class="btn-group">
+                <button id="btn-register" class="btn btn-neon">登録してゲームを始める</button>
+                <button id="btn-guest" class="btn btn-thin">&#9654; 登録しないでゲームを始める</button>
+            </div>
+
+            <div class="btn-group btn-group-secondary">
+                <button id="btn-multi" class="btn btn-neon">マルチプレイ（最大4人）</button>
+                <button id="btn-score" class="btn btn-gold">&#127942; スコアアタック</button>
+            </div>
+
+            <div class="btn-group btn-group-secondary">
+                <button id="btn-rules" class="btn btn-thin">ルール説明を見る</button>
+                <button id="btn-ranking" class="btn btn-thin">ランキングを見る</button>
+            </div>
+
+            <div class="panel-footer">
+                <button id="lang-ja" class="lang-btn active">日本語</button>
+                <button id="lang-en" class="lang-btn">English</button>
+                <span class="footer-divider">|</span>
+                <button id="bgm-toggle" class="bgm-btn bgm-off">&#128263; BGM</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== Game Screen (placeholder) ========== -->
+    <div id="game-screen" class="screen">
+        <div id="game-canvas-container"></div>
+    </div>
+
+</div>
+
+<!-- ============================================
+     Layer 100: CRT Overlay
+     ============================================ -->
+<div id="crt-overlay"></div>
+
+<!-- ============================================
+     Layer 200: Catchcopy (Splash)
+     ============================================ -->
+<div id="catchcopy">
+    <div id="catchcopy-text">捕まるな！何があっても逃げ切れ！</div>
+</div>
+
+<!-- ============================================
+     Modals (z-index: 50)
+     ============================================ -->
+
+<!-- Rule Modal -->
+<div id="rule-modal" class="modal-overlay">
+    <div class="modal-box">
+        <button class="modal-close" onclick="hideModal('rule-modal')">&times;</button>
+        <div class="modal-title">RULE</div>
+        <div class="modal-body">
+            <p>&#9632; 暗い迷路の中、鬼（CPU）から逃げ延びる3Dホラー鬼ごっこ</p><br>
+            <p>&#9632; 一人称視点で移動、矢印キー or WASD で操作</p>
+            <p>&nbsp;&nbsp;&#8593;/W: 前進 &nbsp; &#8595;/S: 後退 &nbsp; &#8592;/A: 左回転 &nbsp; &#8594;/D: 右回転</p>
+            <p>&nbsp;&nbsp;Shift: スプリント（スタミナ消費）</p><br>
+            <p>&#9632; 鬼が近づくと警告フレーム表示</p>
+            <p>&nbsp;&nbsp;黄色（12m以内）→ 赤（6m以内）+ 心拍上昇</p><br>
+            <p>&#9632; ストーリーモード: 5ステージクリア制</p>
+            <p>&nbsp;&nbsp;制限時間内に出口（EXIT）を見つけて脱出</p><br>
+            <p>&#9632; スコアアタック: 逃げ続けるほどスコア加算</p><br>
+            <p>&#9632; マルチプレイ: 最大4人</p>
+            <p>&nbsp;&nbsp;個人戦 / チーム戦 / 協力プレイ</p><br>
+            <p>&#9632; ランキングは登録ユーザーのみ対象</p>
+        </div>
+    </div>
+</div>
+
+<!-- Ranking Modal -->
+<div id="ranking-modal" class="modal-overlay">
+    <div class="modal-box">
+        <button class="modal-close" onclick="hideModal('ranking-modal')">&times;</button>
+        <div class="modal-title">RANKING</div>
+        <div class="ranking-tabs">
+            <button class="ranking-tab active" data-tab="story">ストーリー</button>
+            <button class="ranking-tab" data-tab="score">スコアアタック</button>
+            <button class="ranking-tab" data-tab="multi">マルチ個人戦</button>
+            <button class="ranking-tab" data-tab="coop">協力</button>
+        </div>
+        <div class="ranking-list" id="ranking-list">
+            <div style="text-align:center;color:var(--text-dim);padding:40px 0;">データなし</div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================
+     JavaScript
+     ============================================ -->
+<script>
+/* ============================================
+   GameState
+   ============================================ */
+const GameState = {
+    currentScreen: 'splash',
+    gameMode: 'story',
+    gameActive: false,
+    language: 'ja',
+    bgmEnabled: false,
+    username: '',
+    isGuest: false,
+    hiddenStageUnlocked: false,
+    storyClearedStage5: false,
+};
+
+/* ============================================
+   Screen Management
+   ============================================ */
+function showScreen(screenId) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    const target = document.getElementById(screenId);
+    if (target) {
+        target.classList.add('active');
+        GameState.currentScreen = screenId.replace('-screen', '');
+    }
+}
+
+function showModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.classList.add('active');
+}
+
+function hideModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.classList.remove('active');
+}
+
+/* ============================================
+   Matrix Background
+   ============================================ */
+function createMatrixBg() {
+    const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF';
+    const bg = document.getElementById('matrix-bg');
+    bg.innerHTML = '';
+    const colCount = Math.floor(window.innerWidth / 22);
+
+    for (let i = 0; i < colCount; i++) {
+        const col = document.createElement('div');
+        const duration = 8 + Math.random() * 14;
+        col.style.left = (i * 22) + 'px';
+        col.style.animationDelay = -(Math.random() * duration) + 's';
+
+        const r = Math.random();
+        if (r < 0.05) {
+            col.className = 'matrix-col matrix-col-flash';
+            col.style.animationDuration = duration + 's, ' + (6 + Math.random() * 8) + 's';
+        } else if (r < 0.5) {
+            col.className = 'matrix-col matrix-col-pulse';
+            col.style.animationDuration = duration + 's, ' + (3 + Math.random() * 4) + 's';
+        } else {
+            col.className = 'matrix-col';
+            col.style.animationDuration = duration + 's';
+        }
+
+        let text = '';
+        const len = 30 + Math.floor(Math.random() * 30);
+        for (let j = 0; j < len; j++) {
+            text += chars[Math.floor(Math.random() * chars.length)] + '\n';
+        }
+        col.textContent = text;
+        bg.appendChild(col);
+    }
+}
+
+/* ============================================
+   Chase Animation (SVG Silhouettes)
+   ============================================ */
+function createChaseAnimation() {
+    const container = document.getElementById('chase-container');
+    container.innerHTML = '';
+
+    const playerColors = ['#ff3296', '#00dcff', '#ffdc00'];
+    const containerW = container.offsetWidth || 380;
+
+    const playerSVG = (color) => `
+        <svg viewBox="0 0 28 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="14" cy="6" r="5" fill="${color}" opacity="0.9"/>
+            <rect x="10" y="12" width="8" height="16" rx="2" fill="${color}" opacity="0.8"/>
+            <line x1="10" y1="18" x2="4" y2="28" stroke="${color}" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+            <line x1="18" y1="18" x2="24" y2="28" stroke="${color}" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+            <line x1="11" y1="28" x2="7" y2="44" stroke="${color}" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+            <line x1="17" y1="28" x2="21" y2="44" stroke="${color}" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+        </svg>`;
+
+    const oniSVG = `
+        <svg viewBox="0 0 36 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="18" cy="8" r="7" fill="#1a1a2e" stroke="#330000" stroke-width="1"/>
+            <circle cx="14" cy="7" r="2" fill="#ff0000" opacity="0.9">
+                <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1.5s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="22" cy="7" r="2" fill="#ff0000" opacity="0.9">
+                <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1.5s" repeatCount="indefinite"/>
+            </circle>
+            <rect x="12" y="16" width="12" height="20" rx="2" fill="#1a1a2e" stroke="#330000" stroke-width="0.5"/>
+            <line x1="12" y1="22" x2="4" y2="34" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round"/>
+            <line x1="24" y1="22" x2="32" y2="34" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round"/>
+            <line x1="15" y1="36" x2="10" y2="52" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round"/>
+            <line x1="21" y1="36" x2="26" y2="52" stroke="#1a1a2e" stroke-width="3" stroke-linecap="round"/>
+        </svg>`;
+
+    const players = [];
+    playerColors.forEach((color, i) => {
+        const el = document.createElement('div');
+        el.className = 'chase-char';
+        el.innerHTML = playerSVG(color);
+        el.style.left = (80 + i * 50) + 'px';
+        container.appendChild(el);
+        players.push({
+            el, x: 80 + i * 50, speed: 1.1,
+            stumbling: false, stumbleTimer: 0, cooldown: 0,
+            baseY: 0, rotation: 0
+        });
+    });
+
+    const oniEl = document.createElement('div');
+    oniEl.className = 'chase-char chase-oni';
+    oniEl.innerHTML = oniSVG;
+    oniEl.style.left = '20px';
+    container.appendChild(oniEl);
+
+    let oniX = 20;
+    let oniSpeed = 0.9;
+    let oniScale = 1.0;
+    let nextStumbleTime = 600 + Math.random() * 300;
+    let frameCount = 0;
+
+    function animateChase() {
+        frameCount++;
+
+        // Stumble logic
+        if (frameCount > nextStumbleTime) {
+            const available = players.filter(p => !p.stumbling && p.cooldown <= 0);
+            if (available.length > 0) {
+                const victim = available[Math.floor(Math.random() * available.length)];
+                victim.stumbling = true;
+                victim.stumbleTimer = 72;
+                oniSpeed = 1.8;
+                oniScale = 1.1;
+                nextStumbleTime = frameCount + 600 + Math.random() * 300;
+            }
+        }
+
+        // Update players
+        players.forEach(p => {
+            if (p.cooldown > 0) p.cooldown--;
+
+            if (p.stumbling) {
+                p.stumbleTimer--;
+                p.x += 0.15;
+                p.rotation = Math.sin(p.stumbleTimer * 0.15) * 25;
+                p.baseY = Math.abs(Math.sin(p.stumbleTimer * 0.1)) * 8;
+                if (p.stumbleTimer <= 0) {
+                    p.stumbling = false;
+                    p.rotation = 0;
+                    p.baseY = 0;
+                    p.cooldown = 360 + Math.floor(Math.random() * 60);
+                    oniSpeed = 0.9;
+                    oniScale = 1.0;
+                }
+            } else {
+                p.x += p.speed + Math.sin(frameCount * 0.05 + players.indexOf(p)) * 0.1;
+            }
+
+            if (p.x > containerW + 30) p.x = -30;
+            p.el.style.left = p.x + 'px';
+            p.el.style.transform = `rotate(${p.rotation}deg) translateY(${-p.baseY}px)`;
+        });
+
+        // Update oni
+        oniX += oniSpeed;
+        if (oniX > containerW + 40) oniX = -40;
+        oniEl.style.left = oniX + 'px';
+        oniEl.style.transform = `scale(${oniScale})`;
+
+        requestAnimationFrame(animateChase);
+    }
+    requestAnimationFrame(animateChase);
+}
+
+/* ============================================
+   Catchcopy (Splash)
+   ============================================ */
+function initCatchcopy() {
+    const catchcopy = document.getElementById('catchcopy');
+    if (!catchcopy) return;
+    let dismissed = false;
+
+    function dismissCatchcopy() {
+        if (dismissed) return;
+        dismissed = true;
+        catchcopy.style.opacity = '0';
+        setTimeout(() => {
+            catchcopy.style.display = 'none';
+            showScreen('title-screen');
+            createChaseAnimation();
+        }, 800);
+    }
+
+    catchcopy.addEventListener('click', dismissCatchcopy);
+    catchcopy.addEventListener('touchstart', dismissCatchcopy, { passive: true });
+
+    setTimeout(dismissCatchcopy, 2500);
+}
+
+/* ============================================
+   Button Event Handlers
+   ============================================ */
+function initButtons() {
+    document.getElementById('btn-rules').addEventListener('click', () => {
+        showModal('rule-modal');
+    });
+    document.getElementById('btn-ranking').addEventListener('click', () => {
+        showModal('ranking-modal');
+    });
+
+    // Ranking tabs
+    document.querySelectorAll('.ranking-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.ranking-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+        });
+    });
+
+    // Language toggle
+    document.getElementById('lang-ja').addEventListener('click', () => {
+        GameState.language = 'ja';
+        document.getElementById('lang-ja').classList.add('active');
+        document.getElementById('lang-en').classList.remove('active');
+        updateLanguage();
+    });
+    document.getElementById('lang-en').addEventListener('click', () => {
+        GameState.language = 'en';
+        document.getElementById('lang-en').classList.add('active');
+        document.getElementById('lang-ja').classList.remove('active');
+        updateLanguage();
+    });
+
+    // BGM toggle
+    document.getElementById('bgm-toggle').addEventListener('click', () => {
+        GameState.bgmEnabled = !GameState.bgmEnabled;
+        const btn = document.getElementById('bgm-toggle');
+        if (GameState.bgmEnabled) {
+            btn.className = 'bgm-btn bgm-on';
+            btn.innerHTML = '&#128266; BGM';
+        } else {
+            btn.className = 'bgm-btn bgm-off';
+            btn.innerHTML = '&#128263; BGM';
+        }
+    });
+
+    // Close modals on overlay click
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.classList.remove('active');
+            }
+        });
+    });
+}
+
+/* ============================================
+   i18n (Language)
+   ============================================ */
+const i18n = {
+    ja: {
+        register: '登録してゲームを始める',
+        guest: '▶ 登録しないでゲームを始める',
+        multi: 'マルチプレイ（最大4人）',
+        scoreAttack: '🏆 スコアアタック',
+        rules: 'ルール説明を見る',
+        ranking: 'ランキングを見る',
+        placeholder: '名前を入力...',
+        catchcopy: '捕まるな！何があっても逃げ切れ！',
+        ruleTitle: 'RULE',
+        rankingTitle: 'RANKING',
+        tabStory: 'ストーリー',
+        tabScore: 'スコアアタック',
+        tabMulti: 'マルチ個人戦',
+        tabCoop: '協力',
+        noData: 'データなし',
+    },
+    en: {
+        register: 'Register & Start Game',
+        guest: '▶ Play as Guest',
+        multi: 'Multiplayer (Max 4)',
+        scoreAttack: '🏆 Score Attack',
+        rules: 'How to Play',
+        ranking: 'Rankings',
+        placeholder: 'Enter name...',
+        catchcopy: "Don't get caught! Escape no matter what!",
+        ruleTitle: 'RULE',
+        rankingTitle: 'RANKING',
+        tabStory: 'Story',
+        tabScore: 'Score Attack',
+        tabMulti: 'FFA',
+        tabCoop: 'Co-op',
+        noData: 'No data',
+    }
+};
+
+function updateLanguage() {
+    const lang = i18n[GameState.language];
+    document.getElementById('btn-register').textContent = lang.register;
+    document.getElementById('btn-guest').innerHTML = lang.guest;
+    document.getElementById('btn-multi').textContent = lang.multi;
+    document.getElementById('btn-score').textContent = lang.scoreAttack;
+    document.getElementById('btn-rules').textContent = lang.rules;
+    document.getElementById('btn-ranking').textContent = lang.ranking;
+    document.getElementById('username-input').placeholder = lang.placeholder;
+
+    // Modal titles
+    document.querySelector('#rule-modal .modal-title').textContent = lang.ruleTitle;
+    document.querySelector('#ranking-modal .modal-title').textContent = lang.rankingTitle;
+
+    // Ranking tabs
+    const tabs = document.querySelectorAll('.ranking-tab');
+    if (tabs[0]) tabs[0].textContent = lang.tabStory;
+    if (tabs[1]) tabs[1].textContent = lang.tabScore;
+    if (tabs[2]) tabs[2].textContent = lang.tabMulti;
+    if (tabs[3]) tabs[3].textContent = lang.tabCoop;
+}
+
+/* ============================================
+   Window Resize Handler
+   ============================================ */
+let resizeTimeout;
+window.addEventListener('resize', () => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+        createMatrixBg();
+    }, 300);
+});
+
+/* ============================================
+   Initialize
+   ============================================ */
+window.addEventListener('DOMContentLoaded', () => {
+    createMatrixBg();
+    initCatchcopy();
+    initButtons();
+});
+</script>
+</body>
+</html>
