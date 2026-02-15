@@ -1325,6 +1325,146 @@ body {
     opacity: 0;
     transition: opacity 0.15s ease;
 }
+
+/* ============================================
+   Phase 8: Touch Controls (Mobile)
+   ============================================ */
+#touch-controls {
+    display: none;
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 24;
+    pointer-events: none;
+}
+#touch-controls.active {
+    display: block;
+}
+#joystick-zone {
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 50%; height: 60%;
+    pointer-events: auto;
+    touch-action: none;
+}
+#joystick-base {
+    position: absolute;
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 255, 65, 0.3);
+    background: rgba(0, 20, 10, 0.3);
+    display: none;
+}
+#joystick-base.active {
+    display: block;
+    border-color: rgba(0, 255, 65, 0.6);
+    background: rgba(0, 20, 10, 0.5);
+}
+#joystick-stick {
+    position: absolute;
+    width: 50px; height: 50px;
+    border-radius: 50%;
+    background: rgba(0, 255, 65, 0.5);
+    border: 1px solid rgba(0, 255, 65, 0.8);
+    transform: translate(-50%, -50%);
+}
+#look-zone {
+    position: absolute;
+    right: 0; top: 0;
+    width: 50%; height: 100%;
+    pointer-events: auto;
+    touch-action: none;
+}
+#sprint-btn {
+    position: absolute;
+    right: 20px; bottom: 30px;
+    width: 70px; height: 70px;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 255, 65, 0.4);
+    background: rgba(0, 20, 10, 0.4);
+    color: var(--neon-green);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    text-shadow: 0 0 6px var(--neon-green-glow);
+}
+#sprint-btn.active {
+    border-color: rgba(0, 255, 65, 0.8);
+    background: rgba(0, 255, 65, 0.15);
+    box-shadow: 0 0 12px var(--neon-green-glow);
+}
+#sprint-btn.exhausted {
+    border-color: rgba(255, 51, 102, 0.5);
+    color: var(--neon-red);
+}
+#mobile-actions {
+    position: absolute;
+    right: 20px; bottom: 120px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: auto;
+}
+.mobile-action-btn {
+    width: 50px; height: 50px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 255, 65, 0.3);
+    background: rgba(0, 20, 10, 0.4);
+    color: var(--neon-green);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    user-select: none;
+}
+
+/* ============================================
+   Phase 8: Responsive Media Queries
+   ============================================ */
+@media (max-width: 768px) {
+    #title-logo h1 { font-size: 48px; letter-spacing: 8px; }
+    .ui-panel { max-width: 95%; padding: 16px; }
+    #hud-timer { font-size: 18px; top: 44px; right: 12px; }
+    #hud-stage-label { font-size: 12px; top: 12px; left: 12px; }
+    #hud-floor-label { font-size: 14px; top: 28px; left: 12px; }
+    #hud-stamina { width: 150px; bottom: 14px; }
+    #minimap-container { width: 100px; height: 100px; bottom: 140px; left: 12px; }
+    #minimap-canvas { width: 100px; height: 100px; }
+    #navigator-bar { font-size: 11px; bottom: 160px; padding: 6px 12px; }
+    #hud-status { font-size: 10px; top: 44px; left: 12px; }
+    #hud-objective { font-size: 10px; top: 58px; left: 12px; }
+    #hud-enemy-dist { font-size: 11px; top: 12px; right: 12px; }
+    #hud-bpm { font-size: 10px; top: 28px; right: 12px; }
+    #crosshair { display: none; }
+    #result-title { font-size: 36px; letter-spacing: 4px; }
+    #result-info { font-size: 13px; }
+    #result-buttons { max-width: 90%; }
+    .lobby-room-id { font-size: 18px; }
+    .player-slot { padding: 8px 10px; font-size: 12px; }
+    .modal-box { max-width: 95%; padding: 16px; }
+    .modal-title { font-size: 16px; }
+    .stage-list { max-width: 95%; }
+    .stage-btn { padding: 10px 12px; font-size: 12px; }
+}
+@media (max-width: 480px) {
+    #title-logo h1 { font-size: 38px; letter-spacing: 6px; }
+    #chase-container { width: 90%; }
+    .ui-panel { max-width: 100%; padding: 12px; }
+    .btn { font-size: 12px; padding: 10px; }
+    #sprint-btn { width: 60px; height: 60px; right: 12px; bottom: 20px; font-size: 9px; }
+    .mobile-action-btn { width: 40px; height: 40px; font-size: 8px; }
+    #minimap-container { width: 80px; height: 80px; bottom: 130px; }
+}
+@media (max-width: 360px) {
+    #title-logo h1 { font-size: 32px; letter-spacing: 4px; }
+    #hud-timer { font-size: 16px; }
+}
 </style>
 </head>
 <body>
@@ -1443,6 +1583,17 @@ body {
             <div id="quick-chat-keys"></div>
             <div id="spectator-badge"></div>
             <div id="navigator-bar"></div>
+        </div>
+        <!-- Phase 8: Touch Controls (Mobile) -->
+        <div id="touch-controls">
+            <div id="joystick-zone">
+                <div id="joystick-base">
+                    <div id="joystick-stick"></div>
+                </div>
+            </div>
+            <div id="look-zone"></div>
+            <div id="sprint-btn">SPRINT</div>
+            <div id="mobile-actions"></div>
         </div>
     </div>
 
@@ -1618,6 +1769,7 @@ const GameState = {
     username: '',
     isGuest: false,
     deviceId: null,
+    isMobile: false,
     hiddenStageUnlocked: false,
     storyClearedStage5: false,
     currentStage: 1,
@@ -3171,8 +3323,14 @@ function launchMultiGame(config) {
     GameState.sprint = false;
     headBobTimer = 0;
 
-    initPointerLock();
-    initKeyInput();
+    GameState.isMobile = isMobile();
+    if (GameState.isMobile) {
+        initMobileControls();
+        initKeyInput();
+    } else {
+        initPointerLock();
+        initKeyInput();
+    }
 
     // Spawn remote player models
     spawnRemotePlayers();
@@ -3276,9 +3434,20 @@ function launchMultiGame(config) {
         startTimer(config.time);
     }
 
-    // Pointer lock hint
+    // Pointer lock hint (desktop only)
     var hint = document.getElementById('pointer-lock-hint');
-    if (hint) hint.classList.add('visible');
+    if (hint) {
+        if (GameState.isMobile) {
+            hint.classList.remove('visible');
+        } else {
+            hint.classList.add('visible');
+        }
+    }
+
+    // Mobile coop actions
+    if (GameState.isMobile && GameState.multiMode === 'coop') {
+        showMobileCoopActions();
+    }
 
     GameState.gameActive = true;
     clock.start();
@@ -5675,6 +5844,282 @@ function initKeyInput() {
     });
 }
 
+/* ============================================
+   Phase 8: Mobile Support
+   ============================================ */
+function isMobile() {
+    return /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+           || ('ontouchstart' in window);
+}
+
+/* --- Virtual Joystick --- */
+const VirtualJoystick = {
+    active: false,
+    touchId: null,
+    baseEl: null,
+    stickEl: null,
+    centerX: 0,
+    centerY: 0,
+    maxRadius: 50,
+    dx: 0,
+    dy: 0,
+
+    init() {
+        this.baseEl = document.getElementById('joystick-base');
+        this.stickEl = document.getElementById('joystick-stick');
+        const zone = document.getElementById('joystick-zone');
+        if (!zone) return;
+
+        zone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (this.active) return;
+            const touch = e.changedTouches[0];
+            this.touchId = touch.identifier;
+            this.active = true;
+            this.centerX = touch.clientX;
+            this.centerY = touch.clientY;
+            this.baseEl.style.left = (touch.clientX - 60) + 'px';
+            this.baseEl.style.top = (touch.clientY - 60) + 'px';
+            this.baseEl.classList.add('active');
+            this.stickEl.style.left = '60px';
+            this.stickEl.style.top = '60px';
+        }, { passive: false });
+
+        zone.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (!this.active) return;
+            let touch = null;
+            for (let i = 0; i < e.touches.length; i++) {
+                if (e.touches[i].identifier === this.touchId) {
+                    touch = e.touches[i];
+                    break;
+                }
+            }
+            if (!touch) return;
+            let dx = touch.clientX - this.centerX;
+            let dy = touch.clientY - this.centerY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > this.maxRadius) {
+                dx = dx / dist * this.maxRadius;
+                dy = dy / dist * this.maxRadius;
+            }
+            this.stickEl.style.left = (60 + dx) + 'px';
+            this.stickEl.style.top = (60 + dy) + 'px';
+            this.dx = dx / this.maxRadius;
+            this.dy = -dy / this.maxRadius;
+        }, { passive: false });
+
+        zone.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            let found = false;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === this.touchId) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return;
+            this.active = false;
+            this.touchId = null;
+            this.dx = 0;
+            this.dy = 0;
+            this.baseEl.classList.remove('active');
+        }, { passive: false });
+
+        zone.addEventListener('touchcancel', (e) => {
+            this.active = false;
+            this.touchId = null;
+            this.dx = 0;
+            this.dy = 0;
+            this.baseEl.classList.remove('active');
+        }, { passive: false });
+    },
+
+    applyToGameState() {
+        if (!this.active) {
+            GameState.moveForward = false;
+            GameState.moveBackward = false;
+            GameState.turnLeft = false;
+            GameState.turnRight = false;
+            return;
+        }
+        GameState.moveForward = this.dy > 0.2;
+        GameState.moveBackward = this.dy < -0.2;
+        GameState.turnLeft = this.dx < -0.3;
+        GameState.turnRight = this.dx > 0.3;
+    },
+
+    reset() {
+        this.active = false;
+        this.touchId = null;
+        this.dx = 0;
+        this.dy = 0;
+        if (this.baseEl) this.baseEl.classList.remove('active');
+    }
+};
+
+/* --- Touch Look Controls --- */
+const TouchLook = {
+    active: false,
+    touchId: null,
+    lastX: 0,
+    lastY: 0,
+    sensitivity: 0.003,
+
+    init() {
+        const zone = document.getElementById('look-zone');
+        if (!zone) return;
+
+        zone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (this.active) return;
+            const touch = e.changedTouches[0];
+            this.touchId = touch.identifier;
+            this.active = true;
+            this.lastX = touch.clientX;
+            this.lastY = touch.clientY;
+        }, { passive: false });
+
+        zone.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (!this.active) return;
+            let touch = null;
+            for (let i = 0; i < e.touches.length; i++) {
+                if (e.touches[i].identifier === this.touchId) {
+                    touch = e.touches[i];
+                    break;
+                }
+            }
+            if (!touch) return;
+            const dx = touch.clientX - this.lastX;
+            const dy = touch.clientY - this.lastY;
+            this.lastX = touch.clientX;
+            this.lastY = touch.clientY;
+
+            if (camera) {
+                camera.rotation.order = 'YXZ';
+                camera.rotation.y -= dx * this.sensitivity;
+                camera.rotation.x -= dy * this.sensitivity;
+                camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+                GameState.playerRotationY = camera.rotation.y;
+            }
+        }, { passive: false });
+
+        zone.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === this.touchId) {
+                    this.active = false;
+                    this.touchId = null;
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        zone.addEventListener('touchcancel', (e) => {
+            this.active = false;
+            this.touchId = null;
+        }, { passive: false });
+    }
+};
+
+/* --- Sprint Button Touch --- */
+function initSprintButton() {
+    const btn = document.getElementById('sprint-btn');
+    if (!btn) return;
+    btn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        GameState.sprint = true;
+        btn.classList.add('active');
+    }, { passive: false });
+    btn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        GameState.sprint = false;
+        btn.classList.remove('active');
+    }, { passive: false });
+    btn.addEventListener('touchcancel', (e) => {
+        GameState.sprint = false;
+        btn.classList.remove('active');
+    }, { passive: false });
+}
+
+/* --- Update Sprint Button Visual --- */
+function updateSprintButtonVisual() {
+    const btn = document.getElementById('sprint-btn');
+    if (!btn) return;
+    if (GameState.stamina <= 0) {
+        btn.classList.add('exhausted');
+    } else {
+        btn.classList.remove('exhausted');
+    }
+}
+
+/* --- Mobile Coop Action Buttons --- */
+function showMobileCoopActions() {
+    const container = document.getElementById('mobile-actions');
+    if (!container) return;
+    const QUICK_MSGS = GameState.language === 'ja'
+        ? ['こっち!', '危険!', '出口!', '逃げろ!']
+        : ['Here!', 'Danger!', 'Exit!', 'Run!'];
+    container.innerHTML = '';
+    QUICK_MSGS.forEach((msg, i) => {
+        const btn = document.createElement('div');
+        btn.className = 'mobile-action-btn';
+        btn.textContent = msg;
+        btn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            sendQuickChat(i);
+        }, { passive: false });
+        container.appendChild(btn);
+    });
+    const pinBtn = document.createElement('div');
+    pinBtn.className = 'mobile-action-btn';
+    pinBtn.textContent = 'PIN';
+    pinBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        placePinMarker();
+    }, { passive: false });
+    container.appendChild(pinBtn);
+}
+
+/* --- Initialize Mobile Controls --- */
+function initMobileControls() {
+    const tc = document.getElementById('touch-controls');
+    if (!tc) return;
+    tc.classList.add('active');
+    VirtualJoystick.init();
+    TouchLook.init();
+    initSprintButton();
+
+    // Show coop actions if in coop mode
+    if (GameState.multiMode === 'coop' && GameState.gameMode && GameState.gameMode.startsWith('multi_')) {
+        showMobileCoopActions();
+    }
+}
+
+/* --- Cleanup Mobile Controls --- */
+function cleanupMobileControls() {
+    const tc = document.getElementById('touch-controls');
+    if (tc) tc.classList.remove('active');
+    VirtualJoystick.reset();
+    const actions = document.getElementById('mobile-actions');
+    if (actions) actions.innerHTML = '';
+}
+
+/* --- Prevent Scroll/Zoom on Mobile --- */
+document.addEventListener('touchmove', (e) => {
+    if (GameState.gameActive) e.preventDefault();
+}, { passive: false });
+
+let _lastTapTime = 0;
+document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - _lastTapTime < 300 && GameState.gameActive) {
+        e.preventDefault();
+    }
+    _lastTapTime = now;
+}, { passive: false });
+
 /* --- Wall Collision --- */
 function checkWallCollision(newX, newZ, grid_unused) {
     // Use current floor's grid if multi-floor is available
@@ -7183,6 +7628,12 @@ function gameLoop() {
         return;
     }
 
+    // Phase 8: Apply virtual joystick on mobile
+    if (GameState.isMobile) {
+        VirtualJoystick.applyToGameState();
+        updateSprintButtonVisual();
+    }
+
     // Step 1-2: Movement + stamina
     updatePlayerMovement(delta);
     updateHeadBob(delta);
@@ -7491,8 +7942,14 @@ function startGame(stageId) {
     headBobTimer = 0;
 
     // Setup controls
-    initPointerLock();
-    initKeyInput();
+    GameState.isMobile = isMobile();
+    if (GameState.isMobile) {
+        initMobileControls();
+        initKeyInput();
+    } else {
+        initPointerLock();
+        initKeyInput();
+    }
 
     // Start timer
     if (timeLimit > 0) {
@@ -7501,9 +7958,15 @@ function startGame(stageId) {
         document.getElementById('hud-timer').textContent = '--:--';
     }
 
-    // Show pointer lock hint
+    // Show pointer lock hint (desktop only)
     const hint = document.getElementById('pointer-lock-hint');
-    if (hint) hint.classList.add('visible');
+    if (hint) {
+        if (GameState.isMobile) {
+            hint.classList.remove('visible');
+        } else {
+            hint.classList.add('visible');
+        }
+    }
 
     // Phase 7: Initialize sound & effects
     prevMovementState = 'idle';
@@ -7539,6 +8002,9 @@ function cleanupGame() {
     if (document.pointerLockElement) {
         document.exitPointerLock();
     }
+
+    // Phase 8: Cleanup mobile controls
+    cleanupMobileControls();
 
     // Dispose Three.js
     wallMeshes.forEach(m => {
@@ -7664,6 +8130,7 @@ window.addEventListener('resize', () => {
    ============================================ */
 window.addEventListener('DOMContentLoaded', () => {
     GameState.deviceId = getDeviceId();
+    GameState.isMobile = isMobile();
     initFirebase();
     createMatrixBg();
     initCatchcopy();
