@@ -611,6 +611,15 @@ body {
     text-shadow: 0 0 8px var(--neon-green-glow);
     letter-spacing: 2px;
 }
+#hud-floor-label {
+    position: absolute;
+    top: 36px; left: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 18px;
+    color: var(--neon-green);
+    text-shadow: 0 0 10px var(--neon-green-glow);
+    letter-spacing: 2px;
+}
 #crosshair {
     position: absolute;
     top: 50%; left: 50%;
@@ -1056,6 +1065,7 @@ body {
         <div id="game-canvas-container"></div>
         <div id="game-hud">
             <div id="hud-stage-label"></div>
+            <div id="hud-floor-label">1F</div>
             <div id="hud-timer">00:00</div>
             <div id="crosshair"></div>
             <div id="hud-stamina"><div id="hud-stamina-bar"></div></div>
@@ -1238,8 +1248,12 @@ const GameState = {
     playerRotationY: 0,
     playerPosition: { x: 0, y: 1.7, z: 0 },
     playerCurrentFloor: 0,
+    onStairs: false,
     alive: true,
     mazeGrid: null,
+    mazeFloors: [],
+    stairsData: [],
+    stairMeshes: [],
     mazeCols: 0,
     mazeRows: 0,
     animationId: null,
@@ -2230,8 +2244,207 @@ function generateMaze(cols, rows) {
     return grid;
 }
 
-/* --- 3D Mesh Construction --- */
-function buildMaze3D(grid, cols, rows, stageId) {
+/* --- Multi-Floor Maze Generation --- */
+function generateMultiFloorMaze(cols, rows, numFloors, numStairs, stageId) {
+    const floors = [];
+    for (let f = 0; f < numFloors; f++) {
+        floors.push(generateMaze(cols, rows));
+    }
+    const stairs = numFloors > 1 ? placeStairs(floors, cols, rows, numStairs) : [];
+    return { floors, stairs };
+}
+
+function placeStairs(floors, cols, rows, numStairs) {
+    const stairs = [];
+    const directions = ['north', 'south', 'east', 'west'];
+
+    for (let i = 0; i < numStairs; i++) {
+        const fromFloor = Math.floor(Math.random() * (floors.length - 1));
+        const toFloor = fromFloor + 1;
+
+        let cell = null;
+        let attempts = 0;
+
+        while (!cell && attempts < 1000) {
+            attempts++;
+            const x = Math.floor(Math.random() * cols);
+            const z = Math.floor(Math.random() * rows);
+
+            // Must not be boundary
+            if (x === 0 || z === 0 || x >= cols - 1 || z >= rows - 1) continue;
+
+            // Not a dead end on either floor
+            if (isDeadEnd(floors[fromFloor], x, z) || isDeadEnd(floors[toFloor], x, z)) continue;
+
+            // Not already a stair
+            if (floors[fromFloor][z][x].isStairs) continue;
+
+            // Minimum 3-cell distance from other stairs
+            let tooClose = false;
+            for (const s of stairs) {
+                const dx = Math.abs(s.x - x);
+                const dz = Math.abs(s.z - z);
+                if (dx + dz < 3) { tooClose = true; break; }
+            }
+            if (tooClose) continue;
+
+            cell = { x, z };
+        }
+
+        if (!cell) continue;
+
+        const dir = directions[Math.floor(Math.random() * directions.length)];
+
+        // Mark stair cells on both floors
+        floors[fromFloor][cell.z][cell.x].isStairs = true;
+        floors[fromFloor][cell.z][cell.x].connectsTo = { floor: toFloor, x: cell.x, z: cell.z };
+        floors[fromFloor][cell.z][cell.x].stairDirection = dir;
+
+        floors[toFloor][cell.z][cell.x].isStairs = true;
+        floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
+        floors[toFloor][cell.z][cell.x].stairDirection = dir;
+
+        // Remove all walls around stair cells on both floors for accessibility
+        removeWallsAroundCell(floors[fromFloor], cols, rows, cell.x, cell.z);
+        removeWallsAroundCell(floors[toFloor], cols, rows, cell.x, cell.z);
+
+        stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
+    }
+    return stairs;
+}
+
+function isDeadEnd(grid, x, z) {
+    const cell = grid[z][x];
+    let openings = 0;
+    if (!cell.top) openings++;
+    if (!cell.bottom) openings++;
+    if (!cell.left) openings++;
+    if (!cell.right) openings++;
+    return openings <= 1;
+}
+
+function removeWallsAroundCell(grid, cols, rows, x, z) {
+    const cell = grid[z][x];
+    if (z > 0) { cell.top = false; grid[z - 1][x].bottom = false; }
+    if (z < rows - 1) { cell.bottom = false; grid[z + 1][x].top = false; }
+    if (x > 0) { cell.left = false; grid[z][x - 1].right = false; }
+    if (x < cols - 1) { cell.right = false; grid[z][x + 1].left = false; }
+}
+
+/* --- Stair 3D Mesh Creation --- */
+function createStairs(cellX, cellZ, fromFloor, toFloor, direction, stageId) {
+    const group = new THREE.Group();
+    const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
+    const x = cellX * CL;
+    const z = cellZ * CL;
+    const yBase = fromFloor * FLOOR_H;
+
+    // Ramp body (slope)
+    const rampGeo = new THREE.BoxGeometry(CL, 0.15, CL * 1.42);
+    const rampMat = new THREE.MeshStandardMaterial({
+        color: colors.baseColor,
+        roughness: 0.6, metalness: 0.3,
+        emissive: colors.emissive,
+        emissiveIntensity: 0.08
+    });
+    const ramp = new THREE.Mesh(rampGeo, rampMat);
+    ramp.rotation.x = -Math.atan2(FLOOR_H, CL);
+    ramp.position.set(x + CL / 2, yBase + FLOOR_H / 2, z + CL / 2);
+
+    // Rotate based on direction
+    if (direction === 'east') ramp.rotation.y = Math.PI / 2;
+    else if (direction === 'west') ramp.rotation.y = -Math.PI / 2;
+    else if (direction === 'south') ramp.rotation.y = Math.PI;
+    // 'north' is default (no rotation)
+
+    group.add(ramp);
+
+    // Handrails (both sides, neon lines)
+    const railMat = new THREE.MeshBasicMaterial({
+        color: colors.emissive,
+        transparent: true, opacity: 0.3
+    });
+
+    // Left handrail
+    const railL = new THREE.Mesh(
+        new THREE.BoxGeometry(0.05, 1.0, CL * 1.42), railMat
+    );
+    railL.rotation.x = ramp.rotation.x;
+    railL.rotation.y = ramp.rotation.y;
+    railL.position.set(x + 0.1, yBase + FLOOR_H / 2 + 0.5, z + CL / 2);
+    group.add(railL);
+
+    // Right handrail
+    const railR = new THREE.Mesh(
+        new THREE.BoxGeometry(0.05, 1.0, CL * 1.42), railMat.clone()
+    );
+    railR.rotation.x = ramp.rotation.x;
+    railR.rotation.y = ramp.rotation.y;
+    railR.position.set(x + CL - 0.1, yBase + FLOOR_H / 2 + 0.5, z + CL / 2);
+    group.add(railR);
+
+    // Arrow marker light
+    const arrowLight = new THREE.PointLight(0x00ff41, 1.5, 6);
+    arrowLight.position.set(x + CL / 2, yBase + 0.5, z + CL / 2);
+    group.add(arrowLight);
+
+    return group;
+}
+
+/* --- Floor Label Update --- */
+function updateFloorLabel() {
+    const el = document.getElementById('hud-floor-label');
+    if (el) {
+        el.textContent = (GameState.playerCurrentFloor + 1) + 'F';
+    }
+}
+
+/* --- Player Y Position (Stairs) --- */
+function getStairProgress(pos, direction) {
+    const localX = ((pos.x % CL) + CL) % CL / CL;
+    const localZ = ((pos.z % CL) + CL) % CL / CL;
+    switch (direction) {
+        case 'north': return 1 - localZ;
+        case 'south': return localZ;
+        case 'east': return localX;
+        case 'west': return 1 - localX;
+        default: return 0;
+    }
+}
+
+function updatePlayerY() {
+    const floors = GameState.mazeFloors;
+    const currentFloor = GameState.playerCurrentFloor;
+    if (!floors || !floors[currentFloor]) return;
+
+    const cellX = Math.floor(camera.position.x / CL);
+    const cellZ = Math.floor(camera.position.z / CL);
+
+    if (cellX < 0 || cellX >= GameState.mazeCols || cellZ < 0 || cellZ >= GameState.mazeRows) return;
+
+    const cell = floors[currentFloor][cellZ][cellX];
+
+    if (cell && cell.isStairs && cell.connectsTo) {
+        const progress = getStairProgress(camera.position, cell.stairDirection);
+        const fromY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
+        const toY = cell.connectsTo.floor * FLOOR_H + PLAYER_HEIGHT;
+        camera.position.y = fromY + (toY - fromY) * Math.min(progress, 1.0);
+
+        // Floor switch when reaching the end
+        if (progress >= 1.0) {
+            GameState.playerCurrentFloor = cell.connectsTo.floor;
+            updateFloorLabel();
+        }
+
+        GameState.onStairs = true;
+    } else {
+        camera.position.y = currentFloor * FLOOR_H + PLAYER_HEIGHT;
+        GameState.onStairs = false;
+    }
+}
+
+/* --- 3D Mesh Construction (Multi-Floor) --- */
+function buildMaze3D(floors, cols, rows, stageId) {
     const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
     const theme = STAGE_THEMES[stageId] || STAGE_THEMES[1];
 
@@ -2245,6 +2458,19 @@ function buildMaze3D(grid, cols, rows, stageId) {
         }
     });
     wallMeshes = [];
+
+    // Clear stair meshes
+    GameState.stairMeshes.forEach(m => {
+        scene.remove(m);
+        m.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) child.material.forEach(mat => mat.dispose());
+                else if (child.material.dispose) child.material.dispose();
+            }
+        });
+    });
+    GameState.stairMeshes = [];
 
     // Wall material
     const wallMat = new THREE.MeshStandardMaterial({
@@ -2262,107 +2488,134 @@ function buildMaze3D(grid, cols, rows, stageId) {
         opacity: 0.25,
     });
 
-    // Floor
-    const floorGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
-    const floorMat = new THREE.MeshStandardMaterial({
-        color: 0x050a06,
-        emissive: colors.emissive,
-        emissiveIntensity: 0.02,
-        roughness: 0.95,
-        metalness: 0.1,
-    });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.set(cols * CL / 2, 0, rows * CL / 2);
-    floor.receiveShadow = true;
-    scene.add(floor);
-    wallMeshes.push(floor);
+    // If floors is a single grid (backward compat), wrap it
+    const floorArray = Array.isArray(floors[0]) && !Array.isArray(floors[0][0]) ? [floors] : floors;
+    const numFloors = floorArray.length;
 
-    // Floor grid lines
-    const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.08 });
-    for (let i = 0; i <= cols; i++) {
-        const lineGeo = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(i * CL, 0.01, 0),
-            new THREE.Vector3(i * CL, 0.01, rows * CL)
-        ]);
-        const line = new THREE.Line(lineGeo, gridLineMat);
-        scene.add(line);
-        wallMeshes.push(line);
-    }
-    for (let j = 0; j <= rows; j++) {
-        const lineGeo = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 0.01, j * CL),
-            new THREE.Vector3(cols * CL, 0.01, j * CL)
-        ]);
-        const line = new THREE.Line(lineGeo, gridLineMat);
-        scene.add(line);
-        wallMeshes.push(line);
-    }
+    for (let f = 0; f < numFloors; f++) {
+        const grid = floorArray[f];
+        const yOffset = f * FLOOR_H;
 
-    // Ceiling (indoor stages only)
-    if (!theme.outdoor) {
-        const ceilGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
-        const ceilMat = new THREE.MeshStandardMaterial({
-            color: 0x030503,
+        // Floor plane
+        const floorGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
+        const floorMat = new THREE.MeshStandardMaterial({
+            color: 0x050a06,
             emissive: colors.emissive,
-            emissiveIntensity: 0.01,
+            emissiveIntensity: 0.02,
             roughness: 0.95,
             metalness: 0.1,
-            side: THREE.BackSide,
         });
-        const ceil = new THREE.Mesh(ceilGeo, ceilMat);
-        ceil.rotation.x = -Math.PI / 2;
-        ceil.position.set(cols * CL / 2, WH, rows * CL / 2);
-        scene.add(ceil);
-        wallMeshes.push(ceil);
-    }
+        const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+        floorMesh.rotation.x = -Math.PI / 2;
+        floorMesh.position.set(cols * CL / 2, yOffset, rows * CL / 2);
+        floorMesh.receiveShadow = true;
+        scene.add(floorMesh);
+        wallMeshes.push(floorMesh);
 
-    // Helper to create a wall segment
-    function addWall(x, z, w, h, d) {
-        const geo = new THREE.BoxGeometry(w, h, d);
-        const mesh = new THREE.Mesh(geo, wallMat.clone());
-        mesh.position.set(x, h / 2, z);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        scene.add(mesh);
-        wallMeshes.push(mesh);
+        // Floor grid lines
+        const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.08 });
+        for (let i = 0; i <= cols; i++) {
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(i * CL, yOffset + 0.01, 0),
+                new THREE.Vector3(i * CL, yOffset + 0.01, rows * CL)
+            ]);
+            const line = new THREE.Line(lineGeo, gridLineMat);
+            scene.add(line);
+            wallMeshes.push(line);
+        }
+        for (let j = 0; j <= rows; j++) {
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, yOffset + 0.01, j * CL),
+                new THREE.Vector3(cols * CL, yOffset + 0.01, j * CL)
+            ]);
+            const line = new THREE.Line(lineGeo, gridLineMat);
+            scene.add(line);
+            wallMeshes.push(line);
+        }
 
-        // Edge wireframe
-        const edges = new THREE.EdgesGeometry(geo);
-        const wireframe = new THREE.LineSegments(edges, wireMat);
-        wireframe.position.copy(mesh.position);
-        scene.add(wireframe);
-        wallMeshes.push(wireframe);
-    }
+        // Ceiling (indoor stages only) - skip tiles above stair cells
+        if (!theme.outdoor) {
+            const ceilMat = new THREE.MeshStandardMaterial({
+                color: 0x030503,
+                emissive: colors.emissive,
+                emissiveIntensity: 0.01,
+                roughness: 0.95,
+                metalness: 0.1,
+                side: THREE.BackSide,
+            });
 
-    // Build walls from grid
-    for (let y = 0; y < rows; y++) {
+            for (let cy = 0; cy < rows; cy++) {
+                for (let cx = 0; cx < cols; cx++) {
+                    // Skip ceiling tile if this cell has stairs going up
+                    if (grid[cy][cx].isStairs && grid[cy][cx].connectsTo && grid[cy][cx].connectsTo.floor > f) continue;
+
+                    const tileGeo = new THREE.PlaneGeometry(CL, CL);
+                    const tile = new THREE.Mesh(tileGeo, ceilMat);
+                    tile.rotation.x = -Math.PI / 2;
+                    tile.position.set(cx * CL + CL / 2, yOffset + WH, cy * CL + CL / 2);
+                    scene.add(tile);
+                    wallMeshes.push(tile);
+                }
+            }
+        }
+
+        // Helper to create a wall segment at a given y offset
+        function addWall(x, z, w, h, d, yOff) {
+            const geo = new THREE.BoxGeometry(w, h, d);
+            const mesh = new THREE.Mesh(geo, wallMat.clone());
+            mesh.position.set(x, yOff + h / 2, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            scene.add(mesh);
+            wallMeshes.push(mesh);
+
+            // Edge wireframe
+            const edges = new THREE.EdgesGeometry(geo);
+            const wireframe = new THREE.LineSegments(edges, wireMat);
+            wireframe.position.copy(mesh.position);
+            scene.add(wireframe);
+            wallMeshes.push(wireframe);
+        }
+
+        // Build walls from grid
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const cell = grid[y][x];
+                const cx = x * CL;
+                const cz = y * CL;
+
+                // Top wall (north)
+                if (cell.top) {
+                    addWall(cx + CL / 2, cz, CL + WALL_THICK, WH, WALL_THICK, yOffset);
+                }
+                // Left wall (west)
+                if (cell.left) {
+                    addWall(cx, cz + CL / 2, WALL_THICK, WH, CL + WALL_THICK, yOffset);
+                }
+            }
+        }
+        // Right boundary walls
+        for (let y = 0; y < rows; y++) {
+            if (grid[y][cols - 1].right) {
+                addWall(cols * CL, y * CL + CL / 2, WALL_THICK, WH, CL + WALL_THICK, yOffset);
+            }
+        }
+        // Bottom boundary walls
         for (let x = 0; x < cols; x++) {
-            const cell = grid[y][x];
-            const cx = x * CL;
-            const cz = y * CL;
+            if (grid[rows - 1][x].bottom) {
+                addWall(x * CL + CL / 2, rows * CL, CL + WALL_THICK, WH, WALL_THICK, yOffset);
+            }
+        }
+    }
 
-            // Top wall (north)
-            if (cell.top) {
-                addWall(cx + CL / 2, cz, CL + WALL_THICK, WH, WALL_THICK);
-            }
-            // Left wall (west)
-            if (cell.left) {
-                addWall(cx, cz + CL / 2, WALL_THICK, WH, CL + WALL_THICK);
-            }
-        }
-    }
-    // Right boundary walls
-    for (let y = 0; y < rows; y++) {
-        if (grid[y][cols - 1].right) {
-            addWall(cols * CL, y * CL + CL / 2, WALL_THICK, WH, CL + WALL_THICK);
-        }
-    }
-    // Bottom boundary walls
-    for (let x = 0; x < cols; x++) {
-        if (grid[rows - 1][x].bottom) {
-            addWall(x * CL + CL / 2, rows * CL, CL + WALL_THICK, WH, WALL_THICK);
-        }
+    // Create stair 3D meshes
+    if (GameState.stairsData && GameState.stairsData.length > 0) {
+        GameState.stairsData.forEach(s => {
+            const stairGroup = createStairs(s.x, s.z, s.fromFloor, s.toFloor, s.direction, stageId);
+            scene.add(stairGroup);
+            wallMeshes.push(stairGroup);
+            GameState.stairMeshes.push(stairGroup);
+        });
     }
 }
 
@@ -2442,38 +2695,44 @@ function setupLighting(stageId) {
     // Fog
     scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity);
 
-    // Point lights scattered in passages
-    const grid = GameState.mazeGrid;
+    // Point lights scattered in passages (across all floors)
     const cols = GameState.mazeCols;
     const rows = GameState.mazeRows;
-    if (!grid) return;
+    const floors = GameState.mazeFloors;
+    const numFloors = floors ? floors.length : 1;
 
-    const openCells = [];
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            openCells.push({ x, y });
+    for (let f = 0; f < numFloors; f++) {
+        const grid = floors ? floors[f] : GameState.mazeGrid;
+        if (!grid) continue;
+        const yOffset = f * FLOOR_H;
+
+        const openCells = [];
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                openCells.push({ x, y });
+            }
         }
-    }
 
-    // Shuffle and pick pointLightCount cells
-    for (let i = openCells.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [openCells[i], openCells[j]] = [openCells[j], openCells[i]];
-    }
+        // Shuffle and pick pointLightCount cells per floor
+        for (let i = openCells.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [openCells[i], openCells[j]] = [openCells[j], openCells[i]];
+        }
 
-    const count = Math.min(theme.pointLightCount, openCells.length);
-    for (let i = 0; i < count; i++) {
-        const cell = openCells[i];
-        const color = theme.pointLightColors[i % theme.pointLightColors.length];
-        const pl = new THREE.PointLight(color, 0.8, 12, 2);
-        pl.position.set(cell.x * CL + CL / 2, WH * 0.8, cell.y * CL + CL / 2);
-        scene.add(pl);
-        pointLights.push({
-            light: pl,
-            baseIntensity: 0.6 + Math.random() * 0.4,
-            flickerSpeed: 1.5 + Math.random() * 2,
-            flickerPhase: Math.random() * Math.PI * 2,
-        });
+        const count = Math.min(theme.pointLightCount, openCells.length);
+        for (let i = 0; i < count; i++) {
+            const cell = openCells[i];
+            const color = theme.pointLightColors[i % theme.pointLightColors.length];
+            const pl = new THREE.PointLight(color, 0.8, 12, 2);
+            pl.position.set(cell.x * CL + CL / 2, yOffset + WH * 0.8, cell.y * CL + CL / 2);
+            scene.add(pl);
+            pointLights.push({
+                light: pl,
+                baseIntensity: 0.6 + Math.random() * 0.4,
+                flickerSpeed: 1.5 + Math.random() * 2,
+                flickerPhase: Math.random() * Math.PI * 2,
+            });
+        }
     }
 }
 
@@ -2532,7 +2791,12 @@ function initKeyInput() {
 }
 
 /* --- Wall Collision --- */
-function checkWallCollision(newX, newZ, grid) {
+function checkWallCollision(newX, newZ, grid_unused) {
+    // Use current floor's grid if multi-floor is available
+    const grid = (GameState.mazeFloors && GameState.mazeFloors[GameState.playerCurrentFloor])
+        ? GameState.mazeFloors[GameState.playerCurrentFloor]
+        : GameState.mazeGrid;
+    if (!grid) return { x: newX, z: newZ };
     const cols = GameState.mazeCols;
     const rows = GameState.mazeRows;
     const r = PLAYER_RADIUS;
@@ -2618,6 +2882,9 @@ function updatePlayerMovement(delta) {
         GameState.stamina = Math.min(100, GameState.stamina + 12 * delta);
     }
 
+    // Slow down on stairs
+    if (GameState.onStairs) speed *= 0.8;
+
     // Direction
     const dir = new THREE.Vector3();
     if (GameState.moveForward) dir.z -= 1;
@@ -2644,16 +2911,36 @@ function updatePlayerMovement(delta) {
     // Update stamina HUD
     const bar = document.getElementById('hud-stamina-bar');
     if (bar) bar.style.width = GameState.stamina + '%';
+
+    // Update Y position for multi-floor stairs
+    if (GameState.mazeFloors && GameState.mazeFloors.length > 1) {
+        updatePlayerY();
+    }
 }
 
 /* --- Head Bob --- */
 function updateHeadBob(delta) {
     const isMoving = GameState.moveForward || GameState.moveBackward;
+    const baseHeight = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
+
+    // Skip head bob if on stairs (updatePlayerY handles Y)
+    if (GameState.onStairs) {
+        // Sprint FOV effect only
+        if (GameState.sprint && GameState.stamina > 0) {
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 70, delta * 4);
+        } else {
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 60, delta * 4);
+        }
+        camera.updateProjectionMatrix();
+        headBobTimer = 0;
+        return;
+    }
+
     if (isMoving && GameState.alive) {
         const bobSpeed = GameState.sprint && GameState.stamina > 0 ? 14 : 10;
         const bobAmount = 0.06;
         headBobTimer += delta * bobSpeed;
-        camera.position.y = PLAYER_HEIGHT + Math.sin(headBobTimer) * bobAmount;
+        camera.position.y = baseHeight + Math.sin(headBobTimer) * bobAmount;
 
         // Sprint FOV effect
         if (GameState.sprint && GameState.stamina > 0) {
@@ -2663,7 +2950,7 @@ function updateHeadBob(delta) {
         }
         camera.updateProjectionMatrix();
     } else {
-        camera.position.y = THREE.MathUtils.lerp(camera.position.y, PLAYER_HEIGHT, delta * 5);
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, baseHeight, delta * 5);
         camera.fov = THREE.MathUtils.lerp(camera.fov, 60, delta * 4);
         camera.updateProjectionMatrix();
         headBobTimer = 0;
@@ -2725,6 +3012,8 @@ function gameLoop() {
     GameState.animationId = requestAnimationFrame(gameLoop);
 }
 
+/* Note: updateFloorLabel is called from updatePlayerY when floor changes */
+
 /* --- Start Game --- */
 function startGame(stageId) {
     // Determine maze size
@@ -2747,6 +3036,25 @@ function startGame(stageId) {
 
     GameState.mazeCols = cols;
     GameState.mazeRows = rows;
+
+    // Determine number of floors and stairs based on stage
+    let numFloors = 1;
+    let numStairs = 0;
+    if (stageId === 'scoreAttack') {
+        numFloors = 1; numStairs = 0;
+    } else if (stageId === 'hidden') {
+        numFloors = 3; numStairs = 4 + Math.floor(Math.random() * 3); // 4-6
+    } else if (stageId === 1) {
+        numFloors = 1; numStairs = 0;
+    } else if (stageId === 2) {
+        numFloors = 1; numStairs = 0;
+    } else if (stageId === 3) {
+        numFloors = 2; numStairs = 2 + Math.floor(Math.random() * 2); // 2-3
+    } else if (stageId === 4) {
+        numFloors = 2; numStairs = 3 + Math.floor(Math.random() * 2); // 3-4
+    } else if (stageId === 5) {
+        numFloors = 3; numStairs = 4 + Math.floor(Math.random() * 3); // 4-6
+    }
 
     // Hide title screen overlays
     document.getElementById('matrix-bg').style.display = 'none';
@@ -2772,11 +3080,23 @@ function startGame(stageId) {
     // Initialize 3D
     initThreeJS();
 
-    // Generate maze
-    GameState.mazeGrid = generateMaze(cols, rows);
+    // Generate multi-floor maze
+    const mazeResult = generateMultiFloorMaze(cols, rows, numFloors, numStairs, stageId);
+    GameState.mazeFloors = mazeResult.floors;
+    GameState.stairsData = mazeResult.stairs;
+    GameState.mazeGrid = mazeResult.floors[0]; // backward compat for other systems
+    GameState.playerCurrentFloor = 0;
+    GameState.onStairs = false;
 
-    // Build 3D maze
-    buildMaze3D(GameState.mazeGrid, cols, rows, stageId);
+    // Show/hide floor label
+    const floorLabel = document.getElementById('hud-floor-label');
+    if (floorLabel) {
+        floorLabel.style.display = numFloors > 1 ? 'block' : 'none';
+        floorLabel.textContent = '1F';
+    }
+
+    // Build 3D maze (pass floors array)
+    buildMaze3D(GameState.mazeFloors, cols, rows, stageId);
 
     // Setup lighting
     setupLighting(stageId);
@@ -2844,6 +3164,23 @@ function cleanupGame() {
         if (pl.light.parent) pl.light.parent.remove(pl.light);
     });
     pointLights = [];
+
+    // Clean up stair meshes
+    GameState.stairMeshes.forEach(m => {
+        if (m.parent) m.parent.remove(m);
+        m.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) child.material.forEach(mat => mat.dispose());
+                else if (child.material.dispose) child.material.dispose();
+            }
+        });
+    });
+    GameState.stairMeshes = [];
+    GameState.mazeFloors = [];
+    GameState.stairsData = [];
+    GameState.playerCurrentFloor = 0;
+    GameState.onStairs = false;
 
     if (renderer) {
         renderer.dispose();
