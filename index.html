@@ -7913,7 +7913,7 @@ function initThreeJS() {
     scene.add(camera);
 
     // Flashlight
-    flashlight = new THREE.SpotLight(0x00ff88, 3, 30, 0.6, 0.3, 2);
+    flashlight = new THREE.SpotLight(0x00ff88, 3, 50, 0.6, 0.3, 1.5);
     flashlight.castShadow = true;
     flashlight.shadow.mapSize.width = 512;
     flashlight.shadow.mapSize.height = 512;
@@ -7949,21 +7949,21 @@ function setupLighting(stageId) {
     pointLights = [];
 
     // Ambient light
-    const ambient = new THREE.AmbientLight(colors.emissive, 0.08);
+    const ambient = new THREE.AmbientLight(colors.emissive, 0.18);
     scene.add(ambient);
     wallMeshes.push(ambient);
 
     // Hemisphere light
     const hemi = new THREE.HemisphereLight(
-        theme.outdoor ? 0x111122 : 0x060810,
-        0x020204,
-        0.15
+        theme.outdoor ? 0x222233 : 0x101820,
+        0x060608,
+        0.3
     );
     scene.add(hemi);
     wallMeshes.push(hemi);
 
-    // Fog
-    scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity);
+    // Fog removed — was causing dark/black fog obscuring the view
+    scene.fog = null;
 
     // Point lights scattered in passages (across all floors)
     const cols = GameState.mazeCols;
@@ -7993,7 +7993,7 @@ function setupLighting(stageId) {
         for (let i = 0; i < count; i++) {
             const cell = openCells[i];
             const color = theme.pointLightColors[i % theme.pointLightColors.length];
-            const pl = new THREE.PointLight(color, 0.5, 8, 2);
+            const pl = new THREE.PointLight(color, 0.8, 14, 1.5);
             pl.position.set(cell.x * CL + CL / 2, yOffset + WH * 0.8, cell.y * CL + CL / 2);
             scene.add(pl);
             pointLights.push({
@@ -9690,47 +9690,8 @@ function checkPeriodicHints() {
 let dustParticles = [];
 
 function createDustParticles(stageId, numFloors) {
+    // Dust particles disabled — they created fog-like green blobs on screen
     removeDustParticles();
-    if (!scene) return;
-
-    const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
-    const particleColor = colors.emissive;
-    const particlesPerFloor = 200;
-
-    for (let f = 0; f < numFloors; f++) {
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particlesPerFloor * 3);
-        const velocities = [];
-        const mazeW = GameState.mazeCols * CL;
-        const mazeD = GameState.mazeRows * CL;
-        const yBase = f * FLOOR_H;
-
-        for (let i = 0; i < particlesPerFloor; i++) {
-            positions[i * 3] = Math.random() * mazeW;
-            positions[i * 3 + 1] = yBase + 0.5 + Math.random() * (WH - 1);
-            positions[i * 3 + 2] = Math.random() * mazeD;
-            velocities.push({
-                vx: (Math.random() - 0.5) * 0.2,
-                vz: (Math.random() - 0.5) * 0.2,
-                phase: Math.random() * Math.PI * 2,
-                speed: 0.3 + Math.random() * 0.4
-            });
-        }
-
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const material = new THREE.PointsMaterial({
-            color: particleColor,
-            size: 0.06,
-            transparent: true,
-            opacity: 0.4,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending,
-        });
-
-        const points = new THREE.Points(geometry, material);
-        scene.add(points);
-        dustParticles.push({ points, geometry, velocities, floor: f, yBase });
-    }
 }
 
 function updateDustParticles(delta) {
