@@ -6087,7 +6087,8 @@ function createOniModel() {
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b1a1a, roughness: 0.7, metalness: 0.1,
-        emissive: 0x1a0505, emissiveIntensity: 0.06
+        emissive: 0x1a0505, emissiveIntensity: 0.06,
+        side: THREE.FrontSide
     });
 
     // === HEAD ===
@@ -6468,8 +6469,8 @@ function loadOniGLB(group, charId, stageId) {
         glbModel.position.y = -box.min.y * scale;
         glbModel.position.z = -center.z * scale;
 
-        // Strip embedded lights from GLB; hide BLEND (fog/aura) materials;
-        // adjust opaque materials for maze visibility
+        // Strip embedded lights from GLB; hide fog/aura meshes;
+        // adjust opaque body materials for maze visibility
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -6479,11 +6480,21 @@ function loadOniGLB(group, charId, stageId) {
                 child.frustumCulled = false;
                 if (child.material) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
+                    // Check if ALL materials on this mesh are transparent (fog/aura mesh)
+                    var allTransparent = mats.every(function(m) {
+                        return m.transparent || m.alphaTest > 0;
+                    });
+                    if (allTransparent) {
+                        // Hide the entire MESH so nothing renders
+                        child.visible = false;
+                        return;
+                    }
+                    // For mixed meshes: hide only the transparent sub-materials
                     mats.forEach(function(m) {
-                        // Hide transparent/BLEND materials (fog, aura, particle effects)
-                        // These cause large black or red shapes around the character
-                        if (m.transparent) {
-                            m.visible = false;
+                        if (m.transparent || m.alphaTest > 0) {
+                            m.opacity = 0;
+                            m.depthWrite = false;
+                            m.colorWrite = false;
                             return;
                         }
                         if (m.emissive) {
@@ -6493,7 +6504,7 @@ function loadOniGLB(group, charId, stageId) {
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
                         m.depthWrite = true;
-                        m.side = THREE.DoubleSide;
+                        m.side = THREE.FrontSide;
                     });
                 }
             }
