@@ -5656,13 +5656,13 @@ const ONI_CONFIG = {
     lungeSpeedMul: 2.0,      // Speed multiplier during lunge
     lungeRecalcInterval: 0.15, // Faster path recalc when lunging
     eyeLightColor: 0xff0000,
-    eyeLightIntensity: 1.2,
-    eyeLightDistance: 6,
+    eyeLightIntensity: 0.8,
+    eyeLightDistance: 4,
     bodyLightColor: 0xff1010,
-    bodyLightIntensity: 0.6,
-    bodyLightDistance: 5,
-    emissiveColor: 0xcc2222,
-    emissiveIntensity: 0.8,
+    bodyLightIntensity: 0.4,
+    bodyLightDistance: 3,
+    emissiveColor: 0x881111,
+    emissiveIntensity: 0.3,
 };
 
 /* --- Three.js Globals --- */
@@ -5953,7 +5953,7 @@ function createOniModel() {
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
         color: 0xcc1818, roughness: 0.38, metalness: 0.05,
-        emissive: 0xcc2222, emissiveIntensity: 0.8
+        emissive: 0x881111, emissiveIntensity: 0.3
     });
 
     // === HEAD ===
@@ -6217,20 +6217,12 @@ function createOniModel() {
     buildLeg(-1);
     buildLeg(1);
 
-    // === Internal Lights ===
-    const innerLight = new THREE.PointLight(0xff2020, 1.5, 4);
+    // === Internal Lights (minimal – just enough to self-illuminate the model) ===
+    const innerLight = new THREE.PointLight(0xff2020, 0.5, 2.5);
     innerLight.position.set(0, 1.1, 0);
     human.add(innerLight);
 
-    const headLight = new THREE.PointLight(0xff2020, 3, 18);
-    headLight.position.set(0, 2.5, 0);
-    human.add(headLight);
-
-    const bodyLight = new THREE.PointLight(0xff1010, 2, 12);
-    bodyLight.position.set(0, 1.2, 0.3);
-    human.add(bodyLight);
-
-    const faceLight = new THREE.PointLight(0xff2020, 1.5, 8);
+    const faceLight = new THREE.PointLight(0xff2020, 0.4, 2);
     faceLight.position.set(0, 1.63, 0.3);
     human.add(faceLight);
 
@@ -6243,16 +6235,12 @@ function createOniModel() {
 
 /* --- C2: Add ONI Lights --- */
 function addOniLights(oniGroup, stageId) {
-    const eyeR = new THREE.PointLight(0xff0000, 1.2, 6);
+    const eyeR = new THREE.PointLight(0xff0000, 0.8, 4);
     eyeR.position.set(0.12, 1.65, 0.15);
     oniGroup.add(eyeR);
-    const eyeL = new THREE.PointLight(0xff0000, 1.2, 6);
+    const eyeL = new THREE.PointLight(0xff0000, 0.8, 4);
     eyeL.position.set(-0.12, 1.65, 0.15);
     oniGroup.add(eyeL);
-    const bodyColor = (stageId === 5) ? 0xff4400 : 0xff1010;
-    const bodyLight = new THREE.PointLight(bodyColor, 0.6, 5);
-    bodyLight.position.set(0, 1.1, 0);
-    oniGroup.add(bodyLight);
 }
 
 /* --- C3: BFS Pathfinding --- */
@@ -6347,7 +6335,8 @@ function loadOniGLB(group, charId, stageId) {
         glbModel.position.y = -box.min.y * scale;
         glbModel.position.z = -center.z * scale;
 
-        // Apply strong emissive so oni is clearly visible in dark maze
+        // Apply subtle emissive tint so oni silhouette is visible in dark maze
+        // Keep it low to preserve model detail and avoid red smoke effect
         glbModel.traverse(function(child) {
             if (child.isMesh) {
                 child.frustumCulled = false;
@@ -6355,8 +6344,8 @@ function loadOniGLB(group, charId, stageId) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
                     mats.forEach(function(m) {
                         if (m.emissive) {
-                            m.emissive.setHex(0xcc2222);
-                            m.emissiveIntensity = 1.0;
+                            m.emissive.setHex(0x881111);
+                            m.emissiveIntensity = 0.35;
                         }
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
@@ -6682,7 +6671,7 @@ function spawnOnis(stageId) {
         // Add scene-level light immediately (don't wait for GLB load)
         // This ensures the oni is illuminated even with fallback model
         if (!model.userData.sceneLight) {
-            var earlyLight = new THREE.PointLight(0xff3322, 1.5, 5);
+            var earlyLight = new THREE.PointLight(0xff3322, 0.6, 3);
             earlyLight.position.set(worldX, worldY + 1.0, worldZ);
             scene.add(earlyLight);
             model.userData.sceneLight = earlyLight;
@@ -6801,7 +6790,7 @@ function updateOniAI(delta) {
         // Intensify eye lights when lunging
         oni.group.children.forEach(function(child) {
             if (child.isLight && child.position.y > 1.5) {
-                child.intensity = isLunging ? 2.5 + Math.sin(clock.elapsedTime * 8) * 0.8 : 1.2;
+                child.intensity = isLunging ? 1.5 + Math.sin(clock.elapsedTime * 8) * 0.5 : 0.8;
             }
         });
 
