@@ -1617,13 +1617,12 @@ body {
     text-align: center;
     position: relative;
 }
-.char-card:hover {
-    border-color: var(--neon-green);
+.char-card:hover:not(.selected) {
+    border-color: rgba(0, 170, 42, 0.6);
 }
 .char-card.selected {
-    border-color: var(--neon-green);
-    box-shadow: 0 0 14px var(--neon-green-glow), inset 0 0 10px rgba(0, 255, 65, 0.06);
-    background: rgba(0, 255, 65, 0.08);
+    border: 2px solid var(--neon-green);
+    box-shadow: 0 0 16px var(--neon-green-glow), 0 0 40px rgba(0, 255, 65, 0.15);
 }
 .char-card.taken {
     opacity: 0.4;
@@ -1658,8 +1657,7 @@ body {
     display: block;
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    object-position: top center;
+    object-fit: contain;
 }
 .char-preview-fallback {
     width: 100%;
@@ -2338,6 +2336,7 @@ function createCharCard(char) {
 
 function selectCharacter(char) {
     GameState.selectedCharacter = char;
+    SoundManager.playSE('charSelect');
 
     document.querySelectorAll('.char-card').forEach(function(c) { c.classList.remove('selected'); });
     var card = document.querySelector('.char-card[data-char-id="' + char.id + '"]');
@@ -2463,6 +2462,7 @@ function showSoloCharSelect(stageId) {
 
 function selectSoloCharacter(char) {
     GameState.selectedCharacter = char;
+    SoundManager.playSE('charSelect');
 
     var grid = document.getElementById('solo-char-grid');
     grid.querySelectorAll('.char-card').forEach(function(c) { c.classList.remove('selected'); });
@@ -7391,6 +7391,26 @@ const SE_DEFS = {
         gain.connect(ctx.destination);
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.03);
+    },
+
+    charSelect: function(ctx) {
+        // Rising two-tone confirmation sound
+        var osc1 = ctx.createOscillator();
+        var osc2 = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc1.type = 'sine';
+        osc2.type = 'sine';
+        osc1.frequency.value = 600;
+        osc2.frequency.value = 900;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+        osc1.start(ctx.currentTime);
+        osc1.stop(ctx.currentTime + 0.1);
+        osc2.start(ctx.currentTime + 0.08);
+        osc2.stop(ctx.currentTime + 0.2);
     },
 
     click: function(ctx) {
