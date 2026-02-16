@@ -1689,11 +1689,36 @@ body {
         );
     box-shadow: inset 0 0 20px rgba(0, 255, 65, 0.08);
 }
+.char-preview.char-preview-dark {
+    background:
+        radial-gradient(ellipse at 50% 60%,
+            rgba(0, 90, 40, 0.95) 0%,
+            rgba(0, 55, 25, 0.8) 50%,
+            rgba(0, 30, 12, 0.9) 100%
+        ),
+        repeating-linear-gradient(
+            90deg,
+            rgba(0, 255, 65, 0.06) 0px,
+            transparent 1px,
+            transparent 20px
+        ),
+        linear-gradient(180deg,
+            #002a10 0%,
+            #002010 50%,
+            #002a12 100%
+        );
+    box-shadow: inset 0 0 30px rgba(0, 255, 65, 0.15);
+}
 .char-preview-img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: contain;
+}
+.char-preview-dark .char-preview-img {
+    transform: scale(1.2);
+    transform-origin: center 60%;
+    filter: brightness(1.15);
 }
 .char-preview-fallback {
     width: 100%;
@@ -2272,11 +2297,18 @@ const STAGE_ONI_ASSIGNMENTS = {
 /* ============================================
    Character Preview System
    ============================================ */
+const DARK_CHARACTERS = ['CH18'];
+
 const CharacterPreview = {
     init() {},
 
     createPreview(charId, containerEl, glbPath) {
         containerEl.innerHTML = '';
+        if (DARK_CHARACTERS.indexOf(charId) !== -1) {
+            containerEl.classList.add('char-preview-dark');
+        } else {
+            containerEl.classList.remove('char-preview-dark');
+        }
         var img = document.createElement('img');
         img.src = 'Character_images/' + charId + '.png';
         img.className = 'char-preview-img';
