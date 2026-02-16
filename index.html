@@ -1549,6 +1549,26 @@ body {
     border-color: rgba(255, 51, 102, 0.5);
     color: var(--neon-red);
 }
+#mobile-pause-btn {
+    position: absolute;
+    right: 20px; top: 20px;
+    width: 44px; height: 44px;
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    background: rgba(0, 0, 0, 0.4);
+    color: rgba(255, 255, 255, 0.7);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 16px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    z-index: 30;
+    letter-spacing: 2px;
+}
 #mobile-actions {
     position: absolute;
     right: 20px; bottom: 120px;
@@ -2005,6 +2025,7 @@ body {
             </div>
             <div id="look-zone"></div>
             <div id="sprint-btn">SPRINT</div>
+            <div id="mobile-pause-btn">| |</div>
             <div id="mobile-actions"></div>
         </div>
     </div>
@@ -2675,6 +2696,15 @@ function resumeGame() {
 
     GameState.gameActive = true;
     clock.getDelta(); // Discard accumulated delta to avoid time jump
+
+    // Re-acquire pointer lock on desktop (solo mode)
+    if (!GameState.isMobile && !isMultiplayerMode()) {
+        var container = document.getElementById('game-canvas-container');
+        if (container) {
+            try { container.requestPointerLock(); } catch (e) { /* ignore */ }
+        }
+    }
+
     gameLoop();
 }
 
@@ -7182,7 +7212,13 @@ function initPointerLock() {
     document.addEventListener('pointerlockchange', () => {
         isPointerLocked = document.pointerLockElement === container;
         if (hint) {
-            hint.classList.toggle('visible', !isPointerLocked && GameState.gameActive);
+            hint.classList.toggle('visible', !isPointerLocked && GameState.gameActive && !gamePaused);
+        }
+        // Solo mode: pause when pointer lock is lost (ESC pressed or click outside)
+        if (!isPointerLocked && GameState.gameActive && !gamePaused && !GameState.captureInProgress) {
+            if (!isMultiplayerMode()) {
+                pauseGame();
+            }
         }
     });
 
@@ -7203,6 +7239,18 @@ function initPointerLock() {
 function initKeyInput() {
     document.addEventListener('keydown', (e) => {
         if (!GameState.gameActive) return;
+        // ESC key: pause solo game (multiplayer does not pause)
+        if (e.code === 'Escape') {
+            if (!isMultiplayerMode() && !GameState.captureInProgress) {
+                if (gamePaused) {
+                    resumeGame();
+                } else {
+                    pauseGame();
+                }
+            }
+            return;
+        }
+        if (gamePaused) return;
         switch (e.code) {
             case 'KeyW': case 'ArrowUp': GameState.moveForward = true; break;
             case 'KeyS': case 'ArrowDown': GameState.moveBackward = true; break;
@@ -7483,11 +7531,34 @@ function initMobileControls() {
     VirtualJoystick.init();
     TouchLook.init();
     initSprintButton();
+    initMobilePauseButton();
 
     // Show coop actions if in coop mode
     if (GameState.multiMode === 'coop' && GameState.gameMode && GameState.gameMode.startsWith('multi_')) {
         showMobileCoopActions();
     }
+}
+
+/* --- Mobile Pause Button (Solo only) --- */
+function initMobilePauseButton() {
+    var btn = document.getElementById('mobile-pause-btn');
+    if (!btn) return;
+    // Hide in multiplayer mode
+    if (isMultiplayerMode()) {
+        btn.style.display = 'none';
+        return;
+    }
+    btn.style.display = 'flex';
+    btn.addEventListener('touchstart', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (GameState.captureInProgress) return;
+        if (gamePaused) {
+            resumeGame();
+        } else {
+            pauseGame();
+        }
+    }, { passive: false });
 }
 
 /* --- Cleanup Mobile Controls --- */
@@ -7696,7 +7767,7 @@ function startTimer(seconds) {
     updateTimerDisplay();
     if (GameState.timerInterval) clearInterval(GameState.timerInterval);
     GameState.timerInterval = setInterval(() => {
-        if (!GameState.gameActive) {
+        if (!GameState.gameActive || gamePaused) {
             clearInterval(GameState.timerInterval);
             return;
         }
@@ -9019,7 +9090,7 @@ function updateFloorVisibility() {
 
 /* --- Game Loop --- */
 function gameLoop() {
-    if (!GameState.gameActive) return;
+    if (!GameState.gameActive || gamePaused) return;
     const delta = Math.min(clock.getDelta(), 0.1);
 
     var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
