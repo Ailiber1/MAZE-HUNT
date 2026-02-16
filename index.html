@@ -2109,7 +2109,7 @@ body {
                 <button id="lang-ja" class="lang-btn active">日本語</button>
                 <button id="lang-en" class="lang-btn">English</button>
                 <span class="footer-divider">|</span>
-                <button id="bgm-toggle" class="bgm-btn bgm-off">&#128263; BGM</button>
+                <button id="bgm-toggle" class="bgm-btn bgm-on">&#128266; BGM</button>
             </div>
         </div>
     </div>
@@ -2179,7 +2179,7 @@ body {
             <div id="hud-timer">00:00</div>
             <div id="crosshair"></div>
             <div id="hud-stamina"><div id="hud-stamina-bar"></div></div>
-            <div id="pointer-lock-hint">CLICK TO PLAY</div>
+            <div id="pointer-lock-hint" style="display:none;"></div>
             <div id="hud-status"></div>
             <div id="hud-objective"></div>
             <div id="hud-enemy-dist"></div>
@@ -2398,7 +2398,7 @@ const GameState = {
     gameMode: 'story',
     gameActive: false,
     language: 'ja',
-    bgmEnabled: false,
+    bgmEnabled: true,
     username: '',
     isGuest: false,
     isRegistered: false,
@@ -3206,6 +3206,7 @@ function initCatchcopy() {
             catchcopy.style.display = 'none';
             showScreen('title-screen');
             createChaseAnimation();
+            if (SoundManager.bgmEnabled) SoundManager.playBGM('op');
         }, 800);
     }
 
@@ -4631,13 +4632,7 @@ function launchMultiGame(config) {
                 var worldZ = spawnZ * CL + CL / 2;
                 model.position.set(worldX, floor * FLOOR_H, worldZ);
                 scene.add(model);
-                // Add scene-level light immediately for coop oni
-                if (!model.userData.sceneLight) {
-                    var coopOniLight = new THREE.PointLight(0xff3322, 0.4, 2.5);
-                    coopOniLight.position.set(worldX, floor * FLOOR_H + 1.0, worldZ);
-                    scene.add(coopOniLight);
-                    model.userData.sceneLight = coopOniLight;
-                }
+                // No scene-level light — oni uses emissive self-glow
                 GameState.onis.push({
                     group: model,
                     position: { x: worldX, y: floor * FLOOR_H, z: worldZ },
@@ -5663,13 +5658,10 @@ const ONI_CONFIG = {
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
     // Light config
     eyeLightColor: 0xff0000,
-    eyeLightIntensity: 0.25,
-    eyeLightDistance: 1.8,
-    bodyLightColor: 0xff1010,
-    bodyLightIntensity: 0.15,
-    bodyLightDistance: 1.2,
-    emissiveColor: 0x551111,
-    emissiveIntensity: 0.15,
+    eyeLightIntensity: 0.1,
+    eyeLightDistance: 0.8,
+    emissiveColor: 0xaa2222,
+    emissiveIntensity: 0.8,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6043,7 +6035,7 @@ function createOniModel() {
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
         color: 0xcc1818, roughness: 0.38, metalness: 0.05,
-        emissive: 0x551111, emissiveIntensity: 0.15
+        emissive: 0xaa2222, emissiveIntensity: 0.8
     });
 
     // === HEAD ===
@@ -6307,14 +6299,8 @@ function createOniModel() {
     buildLeg(-1);
     buildLeg(1);
 
-    // === Internal Lights (minimal – just enough to self-illuminate the model) ===
-    const innerLight = new THREE.PointLight(0xff2020, 0.15, 1.2);
-    innerLight.position.set(0, 1.1, 0);
-    human.add(innerLight);
-
-    const faceLight = new THREE.PointLight(0xff2020, 0.12, 0.8);
-    faceLight.position.set(0, 1.63, 0.3);
-    human.add(faceLight);
+    // No internal PointLights — oni uses emissive self-glow to be visible
+    // PointLights were removed because they cast red onto maze walls (smoke effect)
 
     // === userData refs ===
     human.userData.headGroup = headG;
@@ -6325,10 +6311,10 @@ function createOniModel() {
 
 /* --- C2: Add ONI Lights --- */
 function addOniLights(oniGroup, stageId) {
-    const eyeR = new THREE.PointLight(0xff0000, 0.25, 1.8);
+    const eyeR = new THREE.PointLight(0xff0000, 0.1, 0.8);
     eyeR.position.set(0.12, 1.65, 0.15);
     oniGroup.add(eyeR);
-    const eyeL = new THREE.PointLight(0xff0000, 0.25, 1.8);
+    const eyeL = new THREE.PointLight(0xff0000, 0.1, 0.8);
     eyeL.position.set(-0.12, 1.65, 0.15);
     oniGroup.add(eyeL);
 }
@@ -6434,8 +6420,8 @@ function loadOniGLB(group, charId, stageId) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
                     mats.forEach(function(m) {
                         if (m.emissive) {
-                            m.emissive.setHex(0x551111);
-                            m.emissiveIntensity = 0.15;
+                            m.emissive.setHex(0xaa2222);
+                            m.emissiveIntensity = 0.8;
                         }
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
@@ -6480,16 +6466,11 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.currentAction = action;
         }
 
-        // Update scene-level light (already created in spawnOnis, or create if missing)
+        // Remove scene-level light (causes red smoke on walls)
+        // Oni visibility is now handled by emissive materials (self-glow)
         if (group.userData.sceneLight) {
-            group.userData.sceneLight.intensity = 0.4;
-            group.userData.sceneLight.distance = 2.5;
-        } else {
-            var oniLight = new THREE.PointLight(0xff3322, 0.4, 2.5);
-            oniLight.position.copy(group.position);
-            oniLight.position.y += 1.0;
-            scene.add(oniLight);
-            group.userData.sceneLight = oniLight;
+            scene.remove(group.userData.sceneLight);
+            group.userData.sceneLight = null;
         }
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] GLB load failed for', charId, ':', err);
@@ -6765,14 +6746,8 @@ function spawnOnis(stageId) {
         model.position.set(worldX, worldY, worldZ);
         scene.add(model);
 
-        // Add scene-level light immediately (don't wait for GLB load)
-        // This ensures the oni is illuminated even with fallback model
-        if (!model.userData.sceneLight) {
-            var earlyLight = new THREE.PointLight(0xff3322, 0.4, 2.5);
-            earlyLight.position.set(worldX, worldY + 1.0, worldZ);
-            scene.add(earlyLight);
-            model.userData.sceneLight = earlyLight;
-        }
+        // No scene-level light — oni visibility uses emissive self-glow
+        // Scene lights cause red smoke on surrounding walls
 
         GameState.onis.push({
             group: model,
@@ -6991,17 +6966,17 @@ function updateOniAI(delta) {
             oni.group.userData.chestMesh.scale.y = 1.0 + Math.sin(clock.elapsedTime * breathRate) * breathAmp;
         }
 
-        // ─── Eye light intensity ───
+        // ─── Eye light intensity (very subtle, only eyes) ───
         oni.group.children.forEach(function(child) {
             if (child.isLight && child.position.y > 1.5) {
                 if (isLunging) {
-                    child.intensity = 0.5 + Math.sin(clock.elapsedTime * 8) * 0.2;
+                    child.intensity = 0.2 + Math.sin(clock.elapsedTime * 8) * 0.1;
                 } else if (oni.aiState === 'chase') {
-                    child.intensity = 0.35;
+                    child.intensity = 0.15;
                 } else if (oni.aiState === 'alert') {
-                    child.intensity = 0.2;
+                    child.intensity = 0.08;
                 } else {
-                    child.intensity = 0.08; // dim eyes while patrolling
+                    child.intensity = 0.03; // barely visible eyes while patrolling
                 }
             }
         });
@@ -7009,13 +6984,6 @@ function updateOniAI(delta) {
         // ─── Animation mixer ───
         if (oni.group.userData.mixer) {
             oni.group.userData.mixer.update(delta);
-        }
-
-        // ─── Scene light follows oni ───
-        if (oni.group.userData.sceneLight) {
-            oni.group.userData.sceneLight.position.set(
-                oni.position.x, oni.position.y + 1.0, oni.position.z
-            );
         }
     });
 }
@@ -8595,7 +8563,7 @@ function updateTimerDisplay() {
 /* --- 7.1 SoundManager --- */
 const SoundManager = {
     bgm: null,
-    bgmEnabled: false,
+    bgmEnabled: true,
     seEnabled: true,
     audioCtx: null,
 
