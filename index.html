@@ -1652,24 +1652,23 @@ body {
     position: relative;
     overflow: hidden;
     background:
+        radial-gradient(ellipse at 50% 50%,
+            rgba(0, 20, 8, 0.9) 0%,
+            rgba(0, 40, 15, 0.7) 60%,
+            rgba(0, 60, 20, 0.5) 100%
+        ),
         repeating-linear-gradient(
             90deg,
-            rgba(0, 255, 65, 0.06) 0px,
-            transparent 1px,
-            transparent 18px
-        ),
-        repeating-linear-gradient(
-            0deg,
             rgba(0, 255, 65, 0.04) 0px,
             transparent 1px,
-            transparent 14px
+            transparent 20px
         ),
         linear-gradient(180deg,
-            #003010 0%,
-            #002008 40%,
-            #001a0a 70%,
-            #002510 100%
+            #001a08 0%,
+            #001206 50%,
+            #001a0a 100%
         );
+    box-shadow: inset 0 0 20px rgba(0, 255, 65, 0.08);
 }
 .char-preview-img {
     display: block;
