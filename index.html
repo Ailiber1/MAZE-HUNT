@@ -6468,9 +6468,7 @@ function loadOniGLB(group, charId, stageId) {
         glbModel.position.y = -box.min.y * scale;
         glbModel.position.z = -center.z * scale;
 
-        // Apply subtle emissive tint so oni silhouette is visible in dark maze
-        // Strip any embedded lights and transparent aura/fog meshes from GLB
-        var meshesToRemove = [];
+        // Strip embedded lights from GLB; adjust materials for maze visibility
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -6480,15 +6478,6 @@ function loadOniGLB(group, charId, stageId) {
                 child.frustumCulled = false;
                 if (child.material) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    // Check if any material was originally transparent (aura/fog mesh)
-                    var isAuraMesh = mats.some(function(m) {
-                        return m.transparent || m.opacity < 0.9;
-                    });
-                    if (isAuraMesh) {
-                        // Remove fog/aura/particle meshes entirely
-                        meshesToRemove.push(child);
-                        return;
-                    }
                     mats.forEach(function(m) {
                         if (m.emissive) {
                             m.emissive.setHex(0x1a0505);
@@ -6500,15 +6489,6 @@ function loadOniGLB(group, charId, stageId) {
                         m.side = THREE.DoubleSide;
                     });
                 }
-            }
-        });
-        // Remove aura/fog meshes after traversal
-        meshesToRemove.forEach(function(mesh) {
-            if (mesh.parent) mesh.parent.remove(mesh);
-            if (mesh.geometry) mesh.geometry.dispose();
-            if (mesh.material) {
-                var mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-                mats.forEach(function(m) { m.dispose(); });
             }
         });
 
