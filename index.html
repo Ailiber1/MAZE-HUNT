@@ -3444,9 +3444,9 @@ function joinRoom() {
     if (!GameState.username || GameState.isGuest || !GameState.isRegistered) {
         hideModal('lobby-modal');
         showScreen('title-screen');
-        var errorEl = document.getElementById('username-error');
-        if (errorEl) {
-            errorEl.textContent = GameState.language === 'ja'
+        var regErrorEl = document.getElementById('username-error');
+        if (regErrorEl) {
+            regErrorEl.textContent = GameState.language === 'ja'
                 ? 'マルチプレイにはユーザー名の登録が必要です'
                 : 'Username registration is required for Multiplayer';
         }
