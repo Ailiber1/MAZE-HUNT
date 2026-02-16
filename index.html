@@ -2216,12 +2216,11 @@ const CharacterPreview = {
         const pScene = new THREE.Scene();
         pScene.background = new THREE.Color(0x0a0a0a);
 
-        const pCamera = new THREE.PerspectiveCamera(22, width / height, 0.1, 100);
+        const pCamera = new THREE.PerspectiveCamera(24, width / height, 0.1, 100);
 
         const pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         pRenderer.setSize(width, height);
         pRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        pRenderer.outputEncoding = THREE.sRGBEncoding;
         containerEl.appendChild(pRenderer.domElement);
 
         var ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
@@ -2242,7 +2241,6 @@ const CharacterPreview = {
             var box = new THREE.Box3().setFromObject(model);
             var fullSize = box.getSize(new THREE.Vector3());
             var center = box.getCenter(new THREE.Vector3());
-            var fullHeight = fullSize.y;
 
             var maxDim = Math.max(fullSize.x, fullSize.y, fullSize.z);
             var scale = 2.0 / maxDim;
@@ -2254,14 +2252,26 @@ const CharacterPreview = {
 
             pScene.add(model);
 
-            var scaledHeight = fullHeight * scale;
-            var headY = scaledHeight * 0.82;
-            pCamera.position.set(0, headY, 1.2);
-            pCamera.lookAt(0, headY - 0.05, 0);
+            // Camera targets upper body / face area
+            var scaledHeight = fullSize.y * scale;
+            var headY = scaledHeight * 0.78;
+            pCamera.position.set(0, headY, 1.4);
+            pCamera.lookAt(0, headY - 0.08, 0);
 
-            pRenderer.render(pScene, pCamera);
+            var preview = { scene: pScene, camera: pCamera, renderer: pRenderer, model: model, animId: null, frameCount: 0 };
+            this.previews[charId] = preview;
 
-            this.previews[charId] = { scene: pScene, camera: pCamera, renderer: pRenderer, model: model, animId: null };
+            // Render loop: keep rendering for a few frames to ensure textures load, then stop
+            var renderLoop = () => {
+                preview.frameCount++;
+                pRenderer.render(pScene, pCamera);
+                if (preview.frameCount < 30) {
+                    preview.animId = requestAnimationFrame(renderLoop);
+                } else {
+                    preview.animId = null;
+                }
+            };
+            renderLoop();
         }, undefined, (err) => {
             console.warn('Failed to load character:', charId, err);
         });
