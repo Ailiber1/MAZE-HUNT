@@ -1651,10 +1651,11 @@ body {
     position: relative;
     overflow: hidden;
 }
-.char-preview canvas {
+.char-preview-img {
     display: block;
     width: 100%;
     height: 100%;
+    object-fit: contain;
 }
 .char-name {
     font-size: 10px;
@@ -2199,47 +2200,53 @@ const STAGE_ONI_ASSIGNMENTS = {
    Character Preview System
    ============================================ */
 const CharacterPreview = {
-    previews: {},
+    imageCache: {},
     loader: null,
+    renderer: null,
 
     init() {
         if (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined') {
             this.loader = new THREE.GLTFLoader();
+            this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+            this.renderer.setSize(256, 320);
+            this.renderer.setPixelRatio(1);
         }
     },
 
     createPreview(charId, containerEl, glbPath) {
-        if (!this.loader) return;
+        if (!this.loader || !this.renderer) return;
 
-        var rect = containerEl.getBoundingClientRect();
-        var width = Math.round(rect.width) || 120;
-        var height = Math.round(rect.height) || 140;
+        // Use cached image if available
+        if (this.imageCache[charId]) {
+            var img = document.createElement('img');
+            img.src = this.imageCache[charId];
+            img.className = 'char-preview-img';
+            img.alt = charId;
+            containerEl.innerHTML = '';
+            containerEl.appendChild(img);
+            return;
+        }
 
-        var pScene = new THREE.Scene();
-        pScene.background = new THREE.Color(0x080808);
+        var renderer = this.renderer;
+        var scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a0a);
 
-        var pCamera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
-        pCamera.position.set(0, 1.0, 3.5);
-        pCamera.lookAt(0, 0.9, 0);
+        var camera = new THREE.PerspectiveCamera(20, 256 / 320, 0.1, 100);
 
-        var pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        pRenderer.setSize(width, height);
-        pRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        containerEl.appendChild(pRenderer.domElement);
-
-        var ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
-        pScene.add(ambientLight);
+        var ambientLight = new THREE.AmbientLight(0xffffff, 2.5);
+        scene.add(ambientLight);
         var dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
         dirLight.position.set(0, 2, 3);
-        pScene.add(dirLight);
+        scene.add(dirLight);
         var fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
         fillLight.position.set(-2, 1, 1);
-        pScene.add(fillLight);
+        scene.add(fillLight);
         var rimLight = new THREE.DirectionalLight(0x00ff41, 0.3);
         rimLight.position.set(1, 1, -1);
-        pScene.add(rimLight);
+        scene.add(rimLight);
 
-        this.loader.load(glbPath, (gltf) => {
+        var self = this;
+        this.loader.load(glbPath, function(gltf) {
             var model = gltf.scene;
 
             var box = new THREE.Box3().setFromObject(model);
@@ -2254,48 +2261,45 @@ const CharacterPreview = {
             model.position.y = -box.min.y * scale;
             model.position.z = -center.z * scale;
 
-            pScene.add(model);
+            scene.add(model);
 
-            var preview = { scene: pScene, camera: pCamera, renderer: pRenderer, model: model, animId: null };
-            this.previews[charId] = preview;
+            // Camera targets the face: top 20% of scaled model
+            var scaledHeight = size.y * scale;
+            var faceY = scaledHeight * 0.85;
+            camera.position.set(0, faceY, 0.8);
+            camera.lookAt(0, faceY - 0.02, 0);
 
-            var animate = () => {
-                preview.animId = requestAnimationFrame(animate);
-                model.rotation.y += 0.01;
-                pRenderer.render(pScene, pCamera);
-            };
-            animate();
-        }, undefined, (err) => {
+            renderer.render(scene, camera);
+            var dataUrl = renderer.domElement.toDataURL('image/png');
+
+            self.imageCache[charId] = dataUrl;
+
+            // Dispose model
+            model.traverse(function(child) {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) child.material.forEach(function(m) { m.dispose(); });
+                    else if (child.material.dispose) child.material.dispose();
+                }
+            });
+
+            var img = document.createElement('img');
+            img.src = dataUrl;
+            img.className = 'char-preview-img';
+            img.alt = charId;
+            containerEl.innerHTML = '';
+            containerEl.appendChild(img);
+        }, undefined, function(err) {
             console.warn('Failed to load character:', charId, err);
         });
     },
 
     stopPreview(charId) {
-        var preview = this.previews[charId];
-        if (preview) {
-            if (preview.animId) cancelAnimationFrame(preview.animId);
-            if (preview.renderer) {
-                preview.renderer.dispose();
-                preview.renderer.domElement.remove();
-            }
-            if (preview.model) {
-                preview.model.traverse(function(child) {
-                    if (child.geometry) child.geometry.dispose();
-                    if (child.material) {
-                        if (Array.isArray(child.material)) child.material.forEach(function(m) { m.dispose(); });
-                        else if (child.material.dispose) child.material.dispose();
-                    }
-                });
-            }
-            delete this.previews[charId];
-        }
+        // No-op: images don't need cleanup
     },
 
     stopAll() {
-        var keys = Object.keys(this.previews);
-        for (var i = 0; i < keys.length; i++) {
-            this.stopPreview(keys[i]);
-        }
+        // No-op: images don't need cleanup
     }
 };
 
@@ -2385,14 +2389,8 @@ function createCharCard(char) {
         selectCharacter(char);
     });
 
-    requestAnimationFrame(function() {
-        requestAnimationFrame(function() {
-            var previewEl = document.getElementById('char-preview-' + char.id);
-            if (previewEl) {
-                CharacterPreview.createPreview(char.id, previewEl, char.file);
-            }
-        });
-    });
+    var previewEl = preview;
+    CharacterPreview.createPreview(char.id, previewEl, char.file);
 
     return card;
 }
@@ -2508,20 +2506,14 @@ function showSoloCharSelect(stageId) {
         });
 
         grid.appendChild(card);
+
+        var previewEl = document.getElementById('solo-preview-' + char.id);
+        if (previewEl) {
+            CharacterPreview.createPreview(char.id, previewEl, char.file);
+        }
     });
 
     screen.classList.add('active');
-
-    requestAnimationFrame(function() {
-        requestAnimationFrame(function() {
-            CHARACTER_LIST.runners.forEach(function(char) {
-                var previewEl = document.getElementById('solo-preview-' + char.id);
-                if (previewEl) {
-                    CharacterPreview.createPreview(char.id, previewEl, char.file);
-                }
-            });
-        });
-    });
 }
 
 function selectSoloCharacter(char) {
