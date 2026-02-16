@@ -5888,15 +5888,18 @@ function placeStairs(floors, cols, rows, numStairs) {
         if (!cell) continue;
 
         const dir = directions[Math.floor(Math.random() * directions.length)];
+        const oppositeDir = { north: 'south', south: 'north', east: 'west', west: 'east' }[dir];
 
         // Mark stair cells on both floors
+        // fromFloor (lower): progress 0→1 goes UP (direction = dir)
+        // toFloor (upper): progress 0→1 goes DOWN (direction = opposite)
         floors[fromFloor][cell.z][cell.x].isStairs = true;
         floors[fromFloor][cell.z][cell.x].connectsTo = { floor: toFloor, x: cell.x, z: cell.z };
         floors[fromFloor][cell.z][cell.x].stairDirection = dir;
 
         floors[toFloor][cell.z][cell.x].isStairs = true;
         floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
-        floors[toFloor][cell.z][cell.x].stairDirection = dir;
+        floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
         // Remove all walls around stair cells on both floors for accessibility
         removeWallsAroundCell(floors[fromFloor], cols, rows, cell.x, cell.z);
@@ -6006,6 +6009,8 @@ function getStairProgress(pos, direction) {
     }
 }
 
+var _stairTransitionCooldown = 0;
+
 function updatePlayerY() {
     const floors = GameState.mazeFloors;
     const currentFloor = GameState.playerCurrentFloor;
@@ -6018,15 +6023,20 @@ function updatePlayerY() {
 
     const cell = floors[currentFloor][cellZ][cellX];
 
+    // Cooldown prevents ping-pong oscillation between floors
+    if (_stairTransitionCooldown > 0) _stairTransitionCooldown--;
+
     if (cell && cell.isStairs && cell.connectsTo) {
         const progress = getStairProgress(camera.position, cell.stairDirection);
+        const clampedProgress = Math.max(0, Math.min(progress, 1.0));
         const fromY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
         const toY = cell.connectsTo.floor * FLOOR_H + PLAYER_HEIGHT;
-        camera.position.y = fromY + (toY - fromY) * Math.min(progress, 1.0);
+        camera.position.y = fromY + (toY - fromY) * clampedProgress;
 
-        // Floor switch when reaching the end
-        if (progress >= 1.0) {
+        // Floor switch when reaching the end (with debounce)
+        if (progress >= 0.95 && _stairTransitionCooldown <= 0) {
             GameState.playerCurrentFloor = cell.connectsTo.floor;
+            _stairTransitionCooldown = 30; // ~0.5s at 60fps
             updateFloorLabel();
         }
 
@@ -7028,13 +7038,16 @@ function updateOniY(oni) {
 
     if (cell && cell.isStairs && cell.connectsTo) {
         const progress = getStairProgress(oni.position, cell.stairDirection);
+        const clampedProgress = Math.max(0, Math.min(progress, 1.0));
         const fromY = oni.currentFloor * FLOOR_H;
         const toY = cell.connectsTo.floor * FLOOR_H;
-        oni.position.y = fromY + (toY - fromY) * Math.min(progress, 1.0);
+        oni.position.y = fromY + (toY - fromY) * clampedProgress;
         oni.onStairs = true;
 
-        if (progress >= 1.0) {
+        if (progress >= 0.95 && !oni._stairCooldown) {
             oni.currentFloor = cell.connectsTo.floor;
+            oni._stairCooldown = true;
+            setTimeout(function() { oni._stairCooldown = false; }, 500);
         }
     } else {
         oni.position.y = oni.currentFloor * FLOOR_H;
@@ -9199,11 +9212,12 @@ const AMBIENT_CONFIGS = {
     },
     4: { // Edo Village
         layers: [
-            { type: 'drone', waveform: 'sine', freq: 3800, volume: 0.015, label: 'cricket' },
+            { type: 'drone', waveform: 'sine', freq: 65, volume: 0.012, label: 'night wind' },
         ],
         events: [
             { type: 'chime', freq: 2000, waveform: 'sine', duration: 0.5, volume: 0.04, interval: [8000, 18000] },
             { type: 'howl', freq: 150, waveform: 'sine', duration: 0.6, volume: 0.04, interval: [20000, 40000] },
+            { type: 'cricket', freq: 4200, waveform: 'sine', duration: 0.08, volume: 0.02, interval: [2000, 5000] },
         ]
     },
     5: { // Data Center
