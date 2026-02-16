@@ -4924,9 +4924,23 @@ function checkRoomURL() {
     const params = new URLSearchParams(window.location.search);
     const roomId = params.get('room');
     if (roomId && roomId.length === 6) {
-        document.getElementById('room-id-input').value = roomId.toUpperCase();
-        GameState.multiMode = 'freeForAll';
-        joinRoom();
+        // Store room ID for later use after registration
+        GameState.pendingRoomId = roomId.toUpperCase();
+        // If already registered, join directly
+        if (GameState.username && !GameState.isGuest && GameState.isRegistered) {
+            document.getElementById('room-id-input').value = roomId.toUpperCase();
+            GameState.multiMode = 'freeForAll';
+            joinRoom();
+        } else {
+            // Show title screen with prompt - user must register first
+            showScreen('title-screen');
+            var errorEl = document.getElementById('username-error');
+            if (errorEl) {
+                errorEl.textContent = GameState.language === 'ja'
+                    ? 'ルームに参加するにはユーザー名を登録してください'
+                    : 'Please register a username to join the room';
+            }
+        }
     }
 }
 
@@ -4938,8 +4952,16 @@ function initButtons() {
     document.getElementById('btn-register').addEventListener('click', async () => {
         const ok = await registerUser();
         if (ok) {
-            showScreen('story-screen');
-            buildStageList();
+            // If user came via room link, auto-join after registration
+            if (GameState.pendingRoomId) {
+                document.getElementById('room-id-input').value = GameState.pendingRoomId;
+                GameState.pendingRoomId = null;
+                GameState.multiMode = 'freeForAll';
+                joinRoom();
+            } else {
+                showScreen('story-screen');
+                buildStageList();
+            }
         }
     });
 
@@ -5079,13 +5101,15 @@ function initButtons() {
 
     // Join room
     document.getElementById('btn-join-room').addEventListener('click', () => {
-        if (!GameState.username || GameState.isGuest) {
+        if (!GameState.username || GameState.isGuest || !GameState.isRegistered) {
             hideModal('lobby-modal');
+            showScreen('title-screen');
             const errorEl = document.getElementById('username-error');
             errorEl.textContent = GameState.language === 'ja' ? 'マルチプレイにはユーザー名の登録が必要です' : 'Username registration is required for Multiplayer';
             const input = document.getElementById('username-input');
             input.classList.add('error-shake');
             setTimeout(() => input.classList.remove('error-shake'), 400);
+            SoundManager.playSE('error');
             return;
         }
         joinRoom();
