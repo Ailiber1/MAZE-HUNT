@@ -2263,6 +2263,9 @@ const GameState = {
 
     // Character Selection
     selectedCharacter: null,
+
+    // Preloaded player character GLB for capture animation
+    playerGLBModel: null,
 };
 
 /* ============================================
@@ -4293,6 +4296,9 @@ function launchMultiGame(config) {
     GameState.nearestOniDistance = Infinity;
     GameState.currentBPM = 72;
 
+    // Preload player character GLB for capture drag animation
+    preloadPlayerGLB();
+
     // Player start position (offset by playerIndex)
     var startX = CL * 1.5 + GameState.playerIndex * 2;
     var startZ = CL * 1.5;
@@ -5884,6 +5890,177 @@ function loadOniGLB(group, charId, stageId) {
     });
 }
 
+/* --- C4a: Preload player character GLB for capture animation --- */
+function preloadPlayerGLB() {
+    GameState.playerGLBModel = null;
+    var charData = GameState.selectedCharacter;
+    if (!charData || !charData.file) return;
+    var loader = new THREE.GLTFLoader();
+    loader.load(charData.file, function(gltf) {
+        var model = gltf.scene;
+        var box = new THREE.Box3().setFromObject(model);
+        var size = box.getSize(new THREE.Vector3());
+        var center = box.getCenter(new THREE.Vector3());
+        var maxDim = Math.max(size.x, size.y, size.z);
+        var scale = 1.7 / maxDim;
+        model.scale.setScalar(scale);
+        model.position.x = -center.x * scale;
+        model.position.y = -box.min.y * scale;
+        model.position.z = -center.z * scale;
+        GameState.playerGLBModel = model;
+    }, undefined, function(err) {
+        console.error('[MAZE-HUNT] Player GLB preload failed:', err);
+    });
+}
+
+/* --- C4b: Capture drag animation — oni drags player character away --- */
+function playCapturedDragAnimation(oni, capturePos) {
+    // Create a container for the player character
+    var playerGroup = new THREE.Group();
+    playerGroup.position.set(capturePos.x, capturePos.y, capturePos.z);
+
+    if (GameState.playerGLBModel) {
+        // Use preloaded GLB model
+        var playerModel = GameState.playerGLBModel.clone();
+        playerGroup.add(playerModel);
+    } else {
+        // Fallback: simple humanoid silhouette
+        var fallbackMat = new THREE.MeshStandardMaterial({
+            color: 0x2244aa, roughness: 0.5, emissive: 0x111133, emissiveIntensity: 0.2
+        });
+        var body = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 1.0, 12), fallbackMat);
+        body.position.y = 0.5;
+        playerGroup.add(body);
+        var head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), fallbackMat);
+        head.position.y = 1.15;
+        playerGroup.add(head);
+        // Arms
+        for (var s = -1; s <= 1; s += 2) {
+            var arm = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), fallbackMat);
+            arm.position.set(s * 0.25, 0.65, 0);
+            arm.rotation.z = s * 0.3;
+            playerGroup.add(arm);
+        }
+        // Legs
+        for (var s2 = -1; s2 <= 1; s2 += 2) {
+            var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 8), fallbackMat);
+            leg.position.set(s2 * 0.1, 0.0, 0);
+            playerGroup.add(leg);
+        }
+    }
+
+    // Lay the player on the ground (face down, being dragged by arm)
+    playerGroup.rotation.x = Math.PI / 2;
+    playerGroup.position.y = capturePos.y + 0.15; // Slightly above ground
+    scene.add(playerGroup);
+
+    // Determine drag direction: oni drags player AWAY from player's original position
+    var dragDir = new THREE.Vector3(
+        oni.position.x - capturePos.x, 0, oni.position.z - capturePos.z
+    );
+    if (dragDir.length() < 0.01) {
+        dragDir.set(0, 0, 1); // Default direction if oni is right on top
+    }
+    dragDir.normalize();
+
+    // Add a dim spotlight following the drag scene
+    var dragLight = new THREE.PointLight(0xff2020, 3, 15);
+    dragLight.position.set(capturePos.x, capturePos.y + 2.5, capturePos.z);
+    scene.add(dragLight);
+
+    // Animation state
+    var dragStart = performance.now();
+    var dragDuration = 3.0; // seconds
+    var dragDistance = 8.0; // total distance to drag
+    var oniStartPos = new THREE.Vector3(oni.group.position.x, oni.group.position.y, oni.group.position.z);
+    var playerStartPos = new THREE.Vector3(capturePos.x, capturePos.y + 0.15, capturePos.z);
+
+    // Camera: pull back to third-person view
+    var camStartPos = camera.position.clone();
+    var camSideOffset = new THREE.Vector3(-dragDir.z, 0, dragDir.x).multiplyScalar(2.5);
+    var camTargetPos = new THREE.Vector3(
+        capturePos.x + camSideOffset.x - dragDir.x * 1.0,
+        capturePos.y + 2.8,
+        capturePos.z + camSideOffset.z - dragDir.z * 1.0
+    );
+
+    // Restore FOV for third-person view
+    camera.fov = 55;
+    camera.updateProjectionMatrix();
+
+    function animateDrag() {
+        var elapsed = (performance.now() - dragStart) / 1000;
+        var t = Math.min(elapsed / dragDuration, 1.0);
+
+        // Ease: slow start, accelerate (quad in)
+        var eased = t * t;
+
+        // Camera transition to third-person (quick in first 0.5s)
+        var camT = Math.min(elapsed / 0.6, 1.0);
+        var camEased = 1 - Math.pow(1 - camT, 3);
+        camera.position.lerpVectors(camStartPos, camTargetPos, camEased);
+
+        // Move the camera tracking point forward with the drag
+        var dragOffset = dragDir.clone().multiplyScalar(eased * dragDistance * 0.5);
+        camera.position.x += dragOffset.x * camEased;
+        camera.position.z += dragOffset.z * camEased;
+
+        // Oni position: moves forward along drag direction
+        var oniOffset = dragDir.clone().multiplyScalar(eased * dragDistance);
+        oni.group.position.set(
+            oniStartPos.x + oniOffset.x,
+            oniStartPos.y,
+            oniStartPos.z + oniOffset.z
+        );
+        // Oni faces the drag direction
+        oni.group.rotation.y = Math.atan2(dragDir.x, dragDir.z);
+        oni.group.rotation.x = 0;
+
+        // Player character trails behind oni (1.2m behind, dragged on ground)
+        var trailOffset = dragDir.clone().multiplyScalar(-1.2);
+        playerGroup.position.set(
+            oni.group.position.x + trailOffset.x,
+            playerStartPos.y,
+            oni.group.position.z + trailOffset.z
+        );
+
+        // Player struggles: slight rotation wobble
+        playerGroup.rotation.z = Math.sin(elapsed * 6) * 0.15;
+        playerGroup.rotation.y = Math.sin(elapsed * 3) * 0.1;
+
+        // Light follows the scene
+        dragLight.position.set(
+            oni.group.position.x, oni.group.position.y + 2.5, oni.group.position.z
+        );
+
+        // Camera looks at midpoint between oni and player
+        var lookX = (oni.group.position.x + playerGroup.position.x) / 2;
+        var lookZ = (oni.group.position.z + playerGroup.position.z) / 2;
+        camera.lookAt(lookX, capturePos.y + 0.5, lookZ);
+
+        if (renderer && scene && camera) renderer.render(scene, camera);
+
+        if (t < 1.0) {
+            requestAnimationFrame(animateDrag);
+        } else {
+            // Cleanup drag scene objects
+            scene.remove(playerGroup);
+            scene.remove(dragLight);
+            // Dispose player group geometry
+            playerGroup.traverse(function(c) {
+                if (c.isMesh) {
+                    if (c.geometry) c.geometry.dispose();
+                    if (c.material) {
+                        if (Array.isArray(c.material)) c.material.forEach(function(m) { m.dispose(); });
+                        else c.material.dispose();
+                    }
+                }
+            });
+        }
+    }
+    animateDrag();
+}
+
 /* --- C4: Spawn ONIs --- */
 function spawnOnis(stageId) {
     GameState.onis = [];
@@ -6246,7 +6423,6 @@ function onPlayerCaught(oni) {
 
     // Phase 7: Capture impact SE + game over SE
     SoundManager.playSE('captureImpact');
-    setTimeout(() => SoundManager.playSE('gameOver'), 1500);
 
     // Phase 1: Red flash + camera shake
     const frame = document.getElementById('danger-frame');
@@ -6258,7 +6434,12 @@ function onPlayerCaught(oni) {
     GameState.moveBackward = false;
     GameState.sprint = false;
 
-    // Save original camera position for shake effect
+    // Save capture position for drag animation
+    var capturePos = {
+        x: camera.position.x,
+        y: oni.position.y,
+        z: camera.position.z
+    };
     var origCamPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
 
     // Phase 1.5: Camera shake (immediate impact feel)
@@ -6278,75 +6459,70 @@ function onPlayerCaught(oni) {
     }
     cameraShake();
 
-    // Phase 2: Oni lunges at camera + forced look (after 0.3s)
+    // Phase 2: Oni lunges at camera (0.3s - 1.2s)
     setTimeout(() => {
-        const captureAnim = { startTime: performance.now(), oni: oni };
-        // Position oni to rush from its current position to right in front of camera
         var oniStartPos = oni.group.position.clone();
-
-        function animateCapture() {
-            const elapsed = (performance.now() - captureAnim.startTime) / 1000;
-            const t = Math.min(elapsed / 1.2, 1);
-            // Fast initial rush, then slow approach (ease-out cubic)
-            const eased = 1 - Math.pow(1 - t, 3);
-
+        var lungeStart = performance.now();
+        function animateLunge() {
+            var elapsed = (performance.now() - lungeStart) / 1000;
+            var t = Math.min(elapsed / 0.8, 1);
+            var eased = 1 - Math.pow(1 - t, 3);
             // Look at oni
-            const lookTarget = new THREE.Vector3(
+            camera.lookAt(new THREE.Vector3(
                 oni.group.position.x, camera.position.y - 0.1, oni.group.position.z
-            );
-            camera.lookAt(lookTarget);
-
-            // Narrow FOV for claustrophobic effect
+            ));
+            // Narrow FOV
             camera.fov = THREE.MathUtils.lerp(60, 35, eased);
             camera.updateProjectionMatrix();
-
-            // Rush oni to right in front of camera (0.3m away)
+            // Rush oni to camera
             var dir = new THREE.Vector3(
-                origCamPos.x - oniStartPos.x,
-                0,
-                origCamPos.z - oniStartPos.z
+                origCamPos.x - oniStartPos.x, 0, origCamPos.z - oniStartPos.z
             ).normalize();
             var finalPos = new THREE.Vector3(
-                origCamPos.x - dir.x * 0.3,
-                oni.position.y,
-                origCamPos.z - dir.z * 0.3
+                origCamPos.x - dir.x * 0.3, oni.position.y, origCamPos.z - dir.z * 0.3
             );
             oni.group.position.lerpVectors(oniStartPos, finalPos, eased);
-
-            // Slight upward lean for intimidation
             oni.group.rotation.x = -0.15 * eased;
-
             if (renderer && scene && camera) renderer.render(scene, camera);
-            if (t < 1) requestAnimationFrame(animateCapture);
+            if (t < 1) requestAnimationFrame(animateLunge);
         }
-        animateCapture();
+        animateLunge();
     }, 300);
 
-    // Phase 3: Vignette (after 1.8s)
+    // Phase 3: Drag animation — oni drags player character away (after 1.5s)
     setTimeout(() => {
-        document.getElementById('capture-vignette').style.opacity = '0.9';
-    }, 1800);
+        SoundManager.playSE('gameOver');
+        document.getElementById('capture-vignette').style.opacity = '0.5';
+        // Transition oni back to capture position for drag start
+        oni.group.position.set(capturePos.x, capturePos.y, capturePos.z);
+        oni.group.rotation.x = 0;
+        playCapturedDragAnimation(oni, capturePos);
+    }, 1500);
 
-    // Phase 4: Show GAME OVER text (after 3s)
+    // Phase 4: Show GAME OVER text (after 3.5s, during drag)
     setTimeout(() => {
+        document.getElementById('capture-vignette').style.opacity = '0.85';
         const lang = HUD_TEXT[GameState.language];
         var text = document.getElementById('caught-text');
         text.textContent = lang.caught_big;
         text.classList.add('visible');
-    }, 3000);
+    }, 3500);
 
-    // Show result screen (after 5s)
+    // Phase 5: Show result screen (after 5.5s)
     setTimeout(() => {
         document.getElementById('caught-text').classList.remove('visible');
         document.getElementById('capture-vignette').style.opacity = '0';
         document.getElementById('danger-frame').style.display = 'none';
+        // Reset camera FOV
+        camera.fov = 60;
+        camera.updateProjectionMatrix();
 
         if (GameState.gameMode === 'scoreAttack') {
             showScoreResult();
         } else {
             showGameOverResult('caught');
         }
-    }, 5000);
+    }, 5500);
 }
 
 /* ============================================
@@ -9154,6 +9330,9 @@ function startGame(stageId) {
     // Spawn ONI enemies
     spawnOnis(stageId);
 
+    // Preload player character GLB for capture drag animation
+    preloadPlayerGLB();
+
     // Place EXIT (story mode)
     if (stageId !== 'scoreAttack') {
         const exitInfo = placeExit(cols, rows, stageId, GameState.mazeFloors.length);
@@ -9321,6 +9500,20 @@ function cleanupGame() {
         if (oni.group.parent) oni.group.parent.remove(oni.group);
     });
     GameState.onis = [];
+
+    // Clean up preloaded player GLB
+    if (GameState.playerGLBModel) {
+        GameState.playerGLBModel.traverse(function(c) {
+            if (c.isMesh) {
+                if (c.geometry) c.geometry.dispose();
+                if (c.material) {
+                    if (Array.isArray(c.material)) c.material.forEach(function(m) { m.dispose(); });
+                    else if (c.material.dispose) c.material.dispose();
+                }
+            }
+        });
+        GameState.playerGLBModel = null;
+    }
 
     // Clean up remote players
     cleanupRemotePlayers();
