@@ -1654,39 +1654,30 @@ body {
     background:
         repeating-linear-gradient(
             90deg,
-            rgba(0, 255, 65, 0.03) 0px,
+            rgba(0, 255, 65, 0.06) 0px,
             transparent 1px,
             transparent 18px
         ),
         repeating-linear-gradient(
             0deg,
-            rgba(0, 255, 65, 0.02) 0px,
+            rgba(0, 255, 65, 0.04) 0px,
             transparent 1px,
             transparent 14px
         ),
         linear-gradient(180deg,
-            #001a08 0%,
-            #00100a 40%,
-            #000e06 70%,
-            #001208 100%
+            #003010 0%,
+            #002008 40%,
+            #001a0a 70%,
+            #002510 100%
         );
 }
-.char-preview-rain {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    pointer-events: none;
-}
 .char-preview-img {
-    position: relative;
     display: block;
     width: 100%;
     height: 100%;
     object-fit: contain;
-    z-index: 1;
 }
 .char-preview-fallback {
-    position: relative;
     width: 100%;
     height: 100%;
     display: flex;
@@ -1696,7 +1687,6 @@ body {
     font-size: 48px;
     color: var(--neon-green-dim);
     background: rgba(0, 20, 10, 0.8);
-    z-index: 1;
 }
 .char-name {
     font-size: 10px;
@@ -2265,97 +2255,26 @@ const STAGE_ONI_ASSIGNMENTS = {
    Character Preview System
    ============================================ */
 const CharacterPreview = {
-    _cardRainCanvases: [],
-    _cardRainId: null,
-
     init() {},
 
     createPreview(charId, containerEl, glbPath) {
         containerEl.innerHTML = '';
-
-        // Mini matrix rain canvas behind the character image
-        var canvas = document.createElement('canvas');
-        canvas.className = 'char-preview-rain';
-        canvas.width = 140;
-        canvas.height = 180;
-        containerEl.appendChild(canvas);
-
         var img = document.createElement('img');
         img.src = 'Character_images/' + charId + '.png';
         img.className = 'char-preview-img';
         img.alt = charId;
         img.onerror = function() {
-            containerEl.removeChild(img);
+            containerEl.innerHTML = '';
             var fallback = document.createElement('div');
             fallback.className = 'char-preview-fallback';
             fallback.textContent = charId.charAt(0).toUpperCase();
             containerEl.appendChild(fallback);
         };
         containerEl.appendChild(img);
-
-        // Track canvas for shared animation loop
-        var fontSize = 10;
-        var cols = Math.floor(canvas.width / fontSize);
-        var drops = [];
-        for (var i = 0; i < cols; i++) {
-            drops[i] = Math.random() * -20;
-        }
-        this._cardRainCanvases.push({ canvas: canvas, drops: drops, cols: cols, fontSize: fontSize });
-
-        // Start shared animation if not already running
-        if (!this._cardRainId) {
-            this._startCardRain();
-        }
-    },
-
-    _startCardRain() {
-        var self = this;
-        var chars = 'アイウエオカキクケコ0123456789';
-
-        function tick() {
-            for (var c = 0; c < self._cardRainCanvases.length; c++) {
-                var item = self._cardRainCanvases[c];
-                var cvs = item.canvas;
-                var ctx = cvs.getContext('2d');
-                var fs = item.fontSize;
-
-                ctx.fillStyle = 'rgba(0, 8, 2, 0.08)';
-                ctx.fillRect(0, 0, cvs.width, cvs.height);
-
-                ctx.font = fs + 'px monospace';
-
-                for (var i = 0; i < item.cols; i++) {
-                    var ch = chars[Math.floor(Math.random() * chars.length)];
-                    var x = i * fs;
-                    var y = item.drops[i] * fs;
-
-                    var alpha = 0.3 + Math.random() * 0.4;
-                    ctx.fillStyle = 'rgba(0, 255, 65, ' + alpha + ')';
-                    ctx.shadowColor = 'rgba(0, 255, 65, 0.5)';
-                    ctx.shadowBlur = 4;
-                    ctx.fillText(ch, x, y);
-                    ctx.shadowBlur = 0;
-
-                    if (y > cvs.height && Math.random() > 0.97) {
-                        item.drops[i] = 0;
-                    }
-                    item.drops[i] += 0.5;
-                }
-            }
-            self._cardRainId = requestAnimationFrame(tick);
-        }
-        tick();
     },
 
     stopPreview(charId) {},
-
-    stopAll() {
-        if (this._cardRainId) {
-            cancelAnimationFrame(this._cardRainId);
-            this._cardRainId = null;
-        }
-        this._cardRainCanvases = [];
-    }
+    stopAll() {}
 };
 
 /* ============================================
