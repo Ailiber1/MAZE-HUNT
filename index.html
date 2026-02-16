@@ -2262,7 +2262,7 @@ body {
      Layer 200: Catchcopy (Splash)
      ============================================ -->
 <div id="catchcopy">
-    <div id="catchcopy-text">捕まるな！何があっても逃げ切れ！</div>
+    <div id="catchcopy-text">アシオトヲ、タテルナ</div>
 </div>
 
 <!-- ============================================
@@ -5418,7 +5418,7 @@ const i18n = {
         rules: 'ルール説明を見る',
         ranking: 'ランキングを見る',
         placeholder: '名前を入力...',
-        catchcopy: '捕まるな！何があっても逃げ切れ！',
+        catchcopy: 'アシオトヲ、タテルナ',
         ruleTitle: 'RULE',
         rankingTitle: 'RANKING',
         tabStory: 'ストーリー',
@@ -5451,7 +5451,7 @@ const i18n = {
         rules: 'How to Play',
         ranking: 'Rankings',
         placeholder: 'Enter name...',
-        catchcopy: "Don't get caught! Escape no matter what!",
+        catchcopy: "Don't Make A Sound",
         ruleTitle: 'RULE',
         rankingTitle: 'RANKING',
         tabStory: 'Story',
@@ -5651,10 +5651,19 @@ const ONI_CONFIG = {
     baseSpeed: 3.2,
     stairSpeedMul: 0.7,
     pathRecalcInterval: 0.5,
+    patrolRecalcInterval: 1.5,
     catchDistance: 1.2,
-    lungeDistance: 5.0,       // Distance at which oni begins to lunge
-    lungeSpeedMul: 2.0,      // Speed multiplier during lunge
-    lungeRecalcInterval: 0.15, // Faster path recalc when lunging
+    lungeDistance: 5.0,
+    lungeSpeedMul: 2.0,
+    lungeRecalcInterval: 0.15,
+    // Detection (base values, scaled by detectionMul per stage)
+    walkSoundRange: 12,       // world units (~3 cells) – hearing range for walking
+    sprintSoundRange: 28,     // world units (~7 cells) – hearing range for sprinting
+    sightRange: 40,           // world units (~10 cells) – visual range (wall-blocked)
+    alertDuration: 4.0,       // seconds before oni loses interest
+    patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
+    patrolSpeedMul: 0.6,     // speed multiplier while patrolling
+    // Light config
     eyeLightColor: 0xff0000,
     eyeLightIntensity: 0.8,
     eyeLightDistance: 4,
@@ -5664,6 +5673,89 @@ const ONI_CONFIG = {
     emissiveColor: 0x881111,
     emissiveIntensity: 0.3,
 };
+
+// Detection range multiplier per stage (higher difficulty = farther detection)
+const ONI_DETECTION_MULS = {
+    1: 1.0, 2: 1.3, 3: 1.6, 4: 2.0, 5: 2.5,
+    hidden: 3.0, scoreAttack: 1.3
+};
+
+/* --- Line-of-Sight through maze grid (DDA ray traversal) --- */
+function hasLineOfSight(grid, fromX, fromZ, toX, toZ) {
+    const rows = grid.length;
+    const cols = grid[0].length;
+    let cellX = Math.floor(fromX / CL);
+    let cellZ = Math.floor(fromZ / CL);
+    const endCX = Math.floor(toX / CL);
+    const endCZ = Math.floor(toZ / CL);
+    if (cellX === endCX && cellZ === endCZ) return true;
+    if (cellX < 0 || cellX >= cols || cellZ < 0 || cellZ >= rows) return false;
+    if (endCX < 0 || endCX >= cols || endCZ < 0 || endCZ >= rows) return false;
+
+    const dx = toX - fromX;
+    const dz = toZ - fromZ;
+    if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return true;
+
+    const stepX = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+    const stepZ = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
+    const tDeltaX = stepX !== 0 ? Math.abs(CL / dx) : Infinity;
+    const tDeltaZ = stepZ !== 0 ? Math.abs(CL / dz) : Infinity;
+
+    let tMaxX, tMaxZ;
+    if (stepX > 0) tMaxX = ((cellX + 1) * CL - fromX) / dx;
+    else if (stepX < 0) tMaxX = (cellX * CL - fromX) / dx;
+    else tMaxX = Infinity;
+    if (stepZ > 0) tMaxZ = ((cellZ + 1) * CL - fromZ) / dz;
+    else if (stepZ < 0) tMaxZ = (cellZ * CL - fromZ) / dz;
+    else tMaxZ = Infinity;
+
+    const maxIter = Math.abs(endCX - cellX) + Math.abs(endCZ - cellZ) + 4;
+    for (let i = 0; i < maxIter; i++) {
+        if (cellX === endCX && cellZ === endCZ) return true;
+        if (tMaxX < tMaxZ) {
+            const prevX = cellX;
+            cellX += stepX;
+            if (cellX < 0 || cellX >= cols) return false;
+            if (prevX >= 0 && prevX < cols && cellZ >= 0 && cellZ < rows) {
+                const cell = grid[cellZ][prevX];
+                if (stepX > 0 && cell.right) return false;
+                if (stepX < 0 && cell.left) return false;
+            }
+            tMaxX += tDeltaX;
+        } else {
+            const prevZ = cellZ;
+            cellZ += stepZ;
+            if (cellZ < 0 || cellZ >= rows) return false;
+            if (cellX >= 0 && cellX < cols && prevZ >= 0 && prevZ < rows) {
+                const cell = grid[prevZ][cellX];
+                if (stepZ > 0 && cell.bottom) return false;
+                if (stepZ < 0 && cell.top) return false;
+            }
+            tMaxZ += tDeltaZ;
+        }
+    }
+    return cellX === endCX && cellZ === endCZ;
+}
+
+/* --- Random patrol target for oni --- */
+function getRandomPatrolTarget(oni, floors) {
+    const grid = floors[oni.currentFloor];
+    if (!grid) return null;
+    const rows = grid.length;
+    const cols = grid[0].length;
+    // Pick a random cell at least 3 cells away from current position
+    for (let attempt = 0; attempt < 10; attempt++) {
+        const tx = Math.floor(Math.random() * cols);
+        const tz = Math.floor(Math.random() * rows);
+        const dx = tx - oni.cellX;
+        const dz = tz - oni.cellZ;
+        if (Math.abs(dx) + Math.abs(dz) >= 3) {
+            return { x: tx, z: tz, floor: oni.currentFloor };
+        }
+    }
+    // Fallback: just pick any random cell
+    return { x: Math.floor(Math.random() * cols), z: Math.floor(Math.random() * rows), floor: oni.currentFloor };
+}
 
 /* --- Three.js Globals --- */
 let renderer, scene, camera, flashlight, clock;
@@ -6633,6 +6725,13 @@ function spawnOnis(stageId) {
     }
     GameState.oniSpeedMultiplier = speedMul;
 
+    // Detection range multiplier for this stage
+    const detectionMul = ONI_DETECTION_MULS[stageId] || 1.0;
+
+    // Sync player speed: normal walk = oni speed, sprint > oni
+    GameState.moveSpeed = ONI_CONFIG.baseSpeed * speedMul;
+    GameState.sprintSpeed = GameState.moveSpeed * 2.2;
+
     const cols = GameState.mazeCols;
     const rows = GameState.mazeRows;
     const numFloors = GameState.mazeFloors.length;
@@ -6687,6 +6786,13 @@ function spawnOnis(stageId) {
             pathTimer: 0,
             speed: ONI_CONFIG.baseSpeed * speedMul,
             onStairs: false,
+            // AI state machine
+            aiState: 'patrol',          // 'patrol', 'alert', 'chase'
+            lastKnownPos: null,         // {x, z} last detected player position
+            alertTimer: 0,              // time since last detection
+            patrolTarget: null,         // {x, z, floor} current wander destination
+            patrolPauseTimer: 0,        // pause at destination before moving again
+            detectionMul: detectionMul, // stage-based detection range multiplier
         });
     }
 }
@@ -6700,39 +6806,137 @@ function updateOniAI(delta) {
     const playerCellX = Math.floor(camera.position.x / CL);
     const playerCellZ = Math.floor(camera.position.z / CL);
     const playerFloor = GameState.playerCurrentFloor;
+    const isPlayerMoving = GameState.moveForward || GameState.moveBackward;
+    const isPlayerSprinting = GameState.sprint && GameState.stamina > 0 && isPlayerMoving;
 
     GameState.onis.forEach(oni => {
-        // Calculate direct distance to player (for lunge detection)
         const dxToPlayer = camera.position.x - oni.position.x;
         const dzToPlayer = camera.position.z - oni.position.z;
         const distToPlayer = Math.sqrt(dxToPlayer * dxToPlayer + dzToPlayer * dzToPlayer);
         const sameFloor = oni.currentFloor === playerFloor;
-        const isLunging = sameFloor && distToPlayer < ONI_CONFIG.lungeDistance;
+        const detMul = oni.detectionMul || 1.0;
 
-        // Path recalculation timer (faster when lunging)
-        oni.pathTimer -= delta;
-        var recalcInterval = isLunging ? ONI_CONFIG.lungeRecalcInterval : ONI_CONFIG.pathRecalcInterval;
-        if (oni.pathTimer <= 0) {
-            oni.pathTimer = recalcInterval;
-            const start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
-            const goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
-            oni.path = bfsPathfind3D(floors, start, goal);
+        // ─── Detection ───
+        let canDetect = false;
+        let detectionPos = null;
+        let inSight = false;
+
+        // Sound detection: player must be moving and on same floor
+        if (sameFloor && isPlayerMoving) {
+            const soundRange = isPlayerSprinting
+                ? ONI_CONFIG.sprintSoundRange * detMul
+                : ONI_CONFIG.walkSoundRange * detMul;
+            if (distToPlayer < soundRange) {
+                canDetect = true;
+                // Sprint gives precise location; walk gives approximate
+                const inaccuracy = isPlayerSprinting ? 0.5 : CL * 1.5;
+                detectionPos = {
+                    x: camera.position.x + (Math.random() - 0.5) * inaccuracy,
+                    z: camera.position.z + (Math.random() - 0.5) * inaccuracy
+                };
+            }
         }
 
-        // Calculate speed (with lunge boost)
+        // Sight detection: wall-blocked line of sight
+        if (sameFloor && distToPlayer < ONI_CONFIG.sightRange * detMul) {
+            const grid = floors[oni.currentFloor];
+            if (grid && hasLineOfSight(grid, oni.position.x, oni.position.z,
+                                        camera.position.x, camera.position.z)) {
+                canDetect = true;
+                inSight = true;
+                detectionPos = { x: camera.position.x, z: camera.position.z };
+            }
+        }
+
+        // ─── State transitions ───
+        if (canDetect) {
+            oni.lastKnownPos = detectionPos;
+            oni.alertTimer = 0;
+            if (inSight || distToPlayer < ONI_CONFIG.lungeDistance) {
+                oni.aiState = 'chase';
+            } else if (oni.aiState === 'patrol') {
+                oni.aiState = 'alert';
+            }
+        } else {
+            oni.alertTimer += delta;
+            if (oni.aiState === 'chase' && oni.alertTimer > ONI_CONFIG.alertDuration * 0.6) {
+                oni.aiState = 'alert';
+            }
+            if (oni.aiState === 'alert' && oni.alertTimer > ONI_CONFIG.alertDuration) {
+                oni.aiState = 'patrol';
+                oni.lastKnownPos = null;
+                oni.patrolTarget = null;
+                oni.path = [];
+            }
+        }
+
+        // ─── Lunge (only in chase + close) ───
+        const isLunging = oni.aiState === 'chase' && sameFloor && distToPlayer < ONI_CONFIG.lungeDistance;
+
+        // ─── Speed ───
         let speed = oni.speed;
         if (oni.onStairs) speed *= ONI_CONFIG.stairSpeedMul;
+        if (oni.aiState === 'patrol') speed *= ONI_CONFIG.patrolSpeedMul;
         if (isLunging) {
             var lungeT = 1.0 - (distToPlayer / ONI_CONFIG.lungeDistance);
             speed *= (1.0 + lungeT * (ONI_CONFIG.lungeSpeedMul - 1.0));
         }
 
-        // Follow BFS path OR chase player directly when path is empty
+        // ─── Pathfinding per state ───
+        oni.pathTimer -= delta;
+
+        if (oni.aiState === 'chase') {
+            // Chase: BFS directly to player position
+            var recalcInterval = isLunging ? ONI_CONFIG.lungeRecalcInterval : ONI_CONFIG.pathRecalcInterval;
+            if (oni.pathTimer <= 0) {
+                oni.pathTimer = recalcInterval;
+                var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
+                var goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
+                oni.path = bfsPathfind3D(floors, start, goal);
+            }
+        } else if (oni.aiState === 'alert' && oni.lastKnownPos) {
+            // Alert: BFS to last known player position
+            if (oni.pathTimer <= 0) {
+                oni.pathTimer = ONI_CONFIG.pathRecalcInterval;
+                var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
+                var tCX = Math.max(0, Math.min(GameState.mazeCols - 1, Math.floor(oni.lastKnownPos.x / CL)));
+                var tCZ = Math.max(0, Math.min(GameState.mazeRows - 1, Math.floor(oni.lastKnownPos.z / CL)));
+                var goal = { x: tCX, z: tCZ, floor: oni.currentFloor };
+                oni.path = bfsPathfind3D(floors, start, goal);
+            }
+            // If reached last known position, clear it
+            if (oni.lastKnownPos) {
+                var dxT = oni.lastKnownPos.x - oni.position.x;
+                var dzT = oni.lastKnownPos.z - oni.position.z;
+                if (Math.sqrt(dxT * dxT + dzT * dzT) < CL) {
+                    oni.lastKnownPos = null;
+                    oni.path = [];
+                }
+            }
+        } else {
+            // Patrol: wander to random cells
+            if (oni.patrolPauseTimer > 0) {
+                oni.patrolPauseTimer -= delta;
+            } else if (!oni.patrolTarget || oni.path.length === 0) {
+                oni.patrolTarget = getRandomPatrolTarget(oni, floors);
+                if (oni.patrolTarget) {
+                    var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
+                    oni.path = bfsPathfind3D(floors, start, oni.patrolTarget);
+                    oni.pathTimer = ONI_CONFIG.patrolRecalcInterval;
+                }
+            }
+            // Reached patrol target?
+            if (oni.patrolTarget && oni.path.length === 0) {
+                oni.patrolPauseTimer = ONI_CONFIG.patrolPauseDuration;
+                oni.patrolTarget = null;
+            }
+        }
+
+        // ─── Movement along path ───
         if (oni.path.length > 0) {
             const target = oni.path[0];
             const targetX = target.x * CL + CL / 2;
             const targetZ = target.z * CL + CL / 2;
-
             const dx = targetX - oni.position.x;
             const dz = targetZ - oni.position.z;
             const dist = Math.sqrt(dx * dx + dz * dz);
@@ -6745,61 +6949,71 @@ function updateOniAI(delta) {
                 }
                 oni.path.shift();
             } else {
-                const moveX = (dx / dist) * speed * delta;
-                const moveZ = (dz / dist) * speed * delta;
-                oni.position.x += moveX;
-                oni.position.z += moveZ;
+                oni.position.x += (dx / dist) * speed * delta;
+                oni.position.z += (dz / dist) * speed * delta;
             }
-        } else if (sameFloor && distToPlayer > ONI_CONFIG.catchDistance * 0.5) {
-            // Path is empty but player is on the same floor — move directly toward player
+        } else if (oni.aiState === 'chase' && sameFloor && distToPlayer > ONI_CONFIG.catchDistance * 0.5) {
+            // Path exhausted in chase — beeline toward player
             oni.position.x += (dxToPlayer / distToPlayer) * speed * delta;
             oni.position.z += (dzToPlayer / distToPlayer) * speed * delta;
         }
 
-        // Update cell from position
+        // ─── Cell / position updates ───
         oni.cellX = Math.max(0, Math.min(GameState.mazeCols - 1, Math.floor(oni.position.x / CL)));
         oni.cellZ = Math.max(0, Math.min(GameState.mazeRows - 1, Math.floor(oni.position.z / CL)));
-
-        // Update Y (stairs)
         updateOniY(oni);
-
-        // Update group position
         oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
 
-        // Face toward player
-        oni.group.rotation.y = Math.atan2(
-            camera.position.x - oni.position.x,
-            camera.position.z - oni.position.z
-        );
+        // ─── Facing direction ───
+        if (oni.aiState === 'chase' || oni.aiState === 'alert') {
+            // Face toward player (chase) or last known position (alert)
+            var faceX = oni.aiState === 'chase' ? camera.position.x : (oni.lastKnownPos ? oni.lastKnownPos.x : camera.position.x);
+            var faceZ = oni.aiState === 'chase' ? camera.position.z : (oni.lastKnownPos ? oni.lastKnownPos.z : camera.position.z);
+            oni.group.rotation.y = Math.atan2(faceX - oni.position.x, faceZ - oni.position.z);
+        } else if (oni.path.length > 0) {
+            // Face direction of movement during patrol
+            var nextTarget = oni.path[0];
+            var ntX = nextTarget.x * CL + CL / 2;
+            var ntZ = nextTarget.z * CL + CL / 2;
+            oni.group.rotation.y = Math.atan2(ntX - oni.position.x, ntZ - oni.position.z);
+        }
 
-        // Lunge posture: lean forward when charging at player
+        // ─── Lunge posture ───
         if (isLunging) {
             var leanT = 1.0 - (distToPlayer / ONI_CONFIG.lungeDistance);
-            oni.group.rotation.x = leanT * 0.2; // Lean forward up to ~12 degrees
+            oni.group.rotation.x = leanT * 0.2;
         } else {
             oni.group.rotation.x = 0;
         }
 
-        // Breathing animation (faster when lunging)
+        // ─── Breathing animation ───
         if (oni.group.userData.chestMesh) {
-            var breathRate = isLunging ? 4.0 : 1.5;
+            var breathRate = isLunging ? 4.0 : (oni.aiState === 'chase' ? 2.5 : 1.5);
             var breathAmp = isLunging ? 0.03 : 0.015;
             oni.group.userData.chestMesh.scale.y = 1.0 + Math.sin(clock.elapsedTime * breathRate) * breathAmp;
         }
 
-        // Intensify eye lights when lunging
+        // ─── Eye light intensity ───
         oni.group.children.forEach(function(child) {
             if (child.isLight && child.position.y > 1.5) {
-                child.intensity = isLunging ? 1.5 + Math.sin(clock.elapsedTime * 8) * 0.5 : 0.8;
+                if (isLunging) {
+                    child.intensity = 1.5 + Math.sin(clock.elapsedTime * 8) * 0.5;
+                } else if (oni.aiState === 'chase') {
+                    child.intensity = 1.0;
+                } else if (oni.aiState === 'alert') {
+                    child.intensity = 0.6;
+                } else {
+                    child.intensity = 0.3; // dim eyes while patrolling
+                }
             }
         });
 
-        // Update animation mixer (GLB skeletal animation)
+        // ─── Animation mixer ───
         if (oni.group.userData.mixer) {
             oni.group.userData.mixer.update(delta);
         }
 
-        // Update scene-level illumination light to follow oni position
+        // ─── Scene light follows oni ───
         if (oni.group.userData.sceneLight) {
             oni.group.userData.sceneLight.position.set(
                 oni.position.x, oni.position.y + 1.0, oni.position.z
