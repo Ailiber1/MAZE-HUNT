@@ -862,10 +862,10 @@ body {
 .player-slot {
     display: flex;
     align-items: center;
-    padding: 6px 10px;
+    padding: 8px 12px;
     border: 1px solid rgba(0, 170, 42, 0.2);
-    font-size: 12px;
-    gap: 6px;
+    font-size: 15px;
+    gap: 8px;
 }
 .player-slot .player-badge {
     width: 8px;
@@ -900,7 +900,12 @@ body {
 }
 .lobby-bottom-btns .btn-thin {
     flex: 0 0 auto;
-    min-width: 100px;
+    min-width: 80px;
+}
+#btn-leave-lobby {
+    padding: 8px 12px;
+    font-size: 12px;
+    min-width: auto;
 }
 #lobby-screen .char-preview {
     height: 130px;
@@ -1748,7 +1753,7 @@ body {
         grid-template-columns: 1fr 1fr;
     }
     .lobby-room-id { font-size: 18px; }
-    .player-slot { padding: 5px 8px; font-size: 11px; }
+    .player-slot { padding: 6px 10px; font-size: 13px; }
     #lobby-screen .char-preview { height: 110px; }
     #lobby-screen .char-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
     .lobby-bottom-btns { max-width: 340px; }
@@ -5635,13 +5640,13 @@ const ONI_CONFIG = {
     lungeSpeedMul: 2.0,      // Speed multiplier during lunge
     lungeRecalcInterval: 0.15, // Faster path recalc when lunging
     eyeLightColor: 0xff0000,
-    eyeLightIntensity: 3.0,
-    eyeLightDistance: 12,
+    eyeLightIntensity: 1.2,
+    eyeLightDistance: 6,
     bodyLightColor: 0xff1010,
-    bodyLightIntensity: 1.5,
-    bodyLightDistance: 8,
+    bodyLightIntensity: 0.6,
+    bodyLightDistance: 5,
     emissiveColor: 0xcc2222,
-    emissiveIntensity: 1.5,
+    emissiveIntensity: 0.8,
 };
 
 /* --- Three.js Globals --- */
@@ -5932,7 +5937,7 @@ function createOniModel() {
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
         color: 0xcc1818, roughness: 0.38, metalness: 0.05,
-        emissive: 0xcc2222, emissiveIntensity: 1.5
+        emissive: 0xcc2222, emissiveIntensity: 0.8
     });
 
     // === HEAD ===
@@ -6222,14 +6227,14 @@ function createOniModel() {
 
 /* --- C2: Add ONI Lights --- */
 function addOniLights(oniGroup, stageId) {
-    const eyeR = new THREE.PointLight(0xff0000, 3.0, 12);
+    const eyeR = new THREE.PointLight(0xff0000, 1.2, 6);
     eyeR.position.set(0.12, 1.65, 0.15);
     oniGroup.add(eyeR);
-    const eyeL = new THREE.PointLight(0xff0000, 3.0, 12);
+    const eyeL = new THREE.PointLight(0xff0000, 1.2, 6);
     eyeL.position.set(-0.12, 1.65, 0.15);
     oniGroup.add(eyeL);
     const bodyColor = (stageId === 5) ? 0xff4400 : 0xff1010;
-    const bodyLight = new THREE.PointLight(bodyColor, 1.5, 8);
+    const bodyLight = new THREE.PointLight(bodyColor, 0.6, 5);
     bodyLight.position.set(0, 1.1, 0);
     oniGroup.add(bodyLight);
 }
@@ -6335,7 +6340,7 @@ function loadOniGLB(group, charId, stageId) {
                     mats.forEach(function(m) {
                         if (m.emissive) {
                             m.emissive.setHex(0xcc2222);
-                            m.emissiveIntensity = 2.2;
+                            m.emissiveIntensity = 1.0;
                         }
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
@@ -6661,7 +6666,7 @@ function spawnOnis(stageId) {
         // Add scene-level light immediately (don't wait for GLB load)
         // This ensures the oni is illuminated even with fallback model
         if (!model.userData.sceneLight) {
-            var earlyLight = new THREE.PointLight(0xff3322, 4.0, 8);
+            var earlyLight = new THREE.PointLight(0xff3322, 1.5, 5);
             earlyLight.position.set(worldX, worldY + 1.0, worldZ);
             scene.add(earlyLight);
             model.userData.sceneLight = earlyLight;
@@ -6780,7 +6785,7 @@ function updateOniAI(delta) {
         // Intensify eye lights when lunging
         oni.group.children.forEach(function(child) {
             if (child.isLight && child.position.y > 1.5) {
-                child.intensity = isLunging ? 6.0 + Math.sin(clock.elapsedTime * 8) * 2.0 : 3.0;
+                child.intensity = isLunging ? 2.5 + Math.sin(clock.elapsedTime * 8) * 0.8 : 1.2;
             }
         });
 
