@@ -867,6 +867,60 @@ body {
 /* ============================================
    Team Assignment (Team Battle Lobby)
    ============================================ */
+#role-select-section {
+    display: none;
+    width: 100%;
+    max-width: 380px;
+    margin-top: 12px;
+}
+#role-select-section.active { display: block; }
+.role-select-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--text-dim);
+    text-align: center;
+    margin-bottom: 10px;
+    letter-spacing: 2px;
+}
+.role-select-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+.role-btn {
+    flex: 1;
+    max-width: 170px;
+    padding: 14px 10px;
+    border: 2px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.5);
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s;
+    font-family: 'Share Tech Mono', monospace;
+}
+.role-btn .role-icon { font-size: 28px; display: block; margin-bottom: 4px; }
+.role-btn .role-name { font-size: 15px; font-weight: bold; display: block; letter-spacing: 2px; }
+.role-btn .role-desc { font-size: 10px; display: block; margin-top: 2px; }
+.role-btn-runner {
+    color: #00ccff;
+}
+.role-btn-runner.active, .role-btn-runner:hover {
+    border-color: #00ccff;
+    background: rgba(0, 200, 255, 0.1);
+    box-shadow: 0 0 12px rgba(0, 200, 255, 0.3);
+}
+.role-btn-oni {
+    color: #ff3366;
+}
+.role-btn-oni.active, .role-btn-oni:hover {
+    border-color: #ff3366;
+    background: rgba(255, 51, 102, 0.1);
+    box-shadow: 0 0 12px rgba(255, 51, 102, 0.3);
+}
+.role-btn:not(.active) {
+    opacity: 0.5;
+}
 #team-assignment {
     display: none;
     width: 100%;
@@ -1978,12 +2032,27 @@ body {
         <div id="lobby-player-list"></div>
         <div id="team-assignment">
             <div class="team-section team-oni">
-                <div class="team-section-title">ONI TEAM</div>
+                <div class="team-section-title" id="team-oni-title">HUNTER TEAM</div>
                 <div id="team-oni-players"></div>
             </div>
             <div class="team-section team-runner">
-                <div class="team-section-title">RUNNER TEAM</div>
+                <div class="team-section-title" id="team-runner-title">RUNNER TEAM</div>
                 <div id="team-runner-players"></div>
+            </div>
+        </div>
+        <div id="role-select-section">
+            <div class="role-select-label">CHOOSE YOUR ROLE</div>
+            <div class="role-select-buttons">
+                <button class="role-btn role-btn-runner active" data-role="runner">
+                    <span class="role-icon">🏃</span>
+                    <span class="role-name">RUNNER</span>
+                    <span class="role-desc">逃走者</span>
+                </button>
+                <button class="role-btn role-btn-oni" data-role="oni">
+                    <span class="role-icon">👹</span>
+                    <span class="role-name">HUNTER</span>
+                    <span class="role-desc">ハンター</span>
+                </button>
             </div>
         </div>
         <div id="char-select-section">
@@ -2226,6 +2295,8 @@ const GameState = {
     bgmEnabled: false,
     username: '',
     isGuest: false,
+    isRegistered: false,
+    selectedRole: 'runner',
     deviceId: null,
     isMobile: false,
     hiddenStageUnlocked: false,
@@ -2399,13 +2470,15 @@ function buildCharacterGrid(mode) {
 }
 
 function buildTeamBattleCharGrid(grid) {
-    var isOniTeam = GameState.teamAssignment &&
-        GameState.teamAssignment[GameState.playerIndex] === 'oni';
+    // Use selectedRole (from role buttons) or fallback to teamAssignment
+    var isOniTeam = GameState.selectedRole === 'oni' ||
+        (!GameState.selectedRole && GameState.teamAssignment &&
+         GameState.teamAssignment[GameState.playerIndex] === 'oni');
 
     var chars = isOniTeam ? CHARACTER_LIST.enemies : CHARACTER_LIST.runners;
     var label = isOniTeam
-        ? (GameState.language === 'ja' ? '鬼キャラクター' : 'ONI Characters')
-        : (GameState.language === 'ja' ? '逃走キャラクター' : 'Runner Characters');
+        ? (GameState.language === 'ja' ? 'ハンターキャラクター' : 'HUNTER Characters')
+        : (GameState.language === 'ja' ? 'ランナーキャラクター' : 'RUNNER Characters');
 
     var teamLabel = document.createElement('div');
     teamLabel.className = 'char-team-label ' + (isOniTeam ? 'oni-label' : 'runner-label');
@@ -3058,7 +3131,7 @@ async function registerUser() {
         return false;
     }
 
-    // Firebase duplicate check
+    // Firebase duplicate check & registration
     if (firebaseReady) {
         try {
             const snap = await database.ref('users/' + name).once('value');
@@ -3090,9 +3163,15 @@ async function registerUser() {
                     }
                 });
             }
+            GameState.isRegistered = true;
         } catch (e) {
             console.warn('Firebase user check failed:', e);
+            errorEl.textContent = GameState.language === 'ja' ? 'サーバーに接続できません。再度お試しください' : 'Cannot connect to server. Please try again.';
+            return false;
         }
+    } else {
+        // No Firebase: allow solo/guest play but NOT multiplayer
+        GameState.isRegistered = false;
     }
 
     errorEl.textContent = '';
@@ -3259,8 +3338,8 @@ function generateRoomId() {
 }
 
 function joinRoom() {
-    // Require registered username (not guest) for multiplayer
-    if (!GameState.username || GameState.isGuest) {
+    // Require Firebase-registered username (not guest) for multiplayer
+    if (!GameState.username || GameState.isGuest || !GameState.isRegistered) {
         hideModal('lobby-modal');
         showScreen('title-screen');
         var errorEl = document.getElementById('username-error');
@@ -3291,6 +3370,7 @@ function joinRoom() {
     hideModal('lobby-modal');
     showScreen('lobby-screen');
     updateLobbyDisplay();
+    updateRoleSelectVisibility();
     buildCharacterGrid(GameState.multiMode);
 
     if (firebaseReady) {
@@ -3310,7 +3390,8 @@ function joinRoom() {
                         0: {
                             username: GameState.username || 'PLAYER 1',
                             deviceId: GameState.deviceId,
-                            alive: true
+                            alive: true,
+                            selectedRole: GameState.selectedRole || 'runner'
                         }
                     }
                 });
@@ -3329,7 +3410,8 @@ function joinRoom() {
                 roomRef.child('players/' + playerCount).set({
                     username: GameState.username || ('PLAYER ' + (playerCount + 1)),
                     deviceId: GameState.deviceId,
-                    alive: true
+                    alive: true,
+                    selectedRole: GameState.selectedRole || 'runner'
                 });
             }
             updateLobbyDisplay();
@@ -4052,16 +4134,35 @@ function initTeamAssignment() {
     }
     document.getElementById('team-assignment').classList.add('active');
 
-    // Default: first half oni, second half runner
+    // Use each player's self-selected role from lobby, fallback to default split
     var playerKeys = Object.keys(GameState.players);
     playerKeys.forEach(function(idx, i) {
         var pi = parseInt(idx);
-        if (i < Math.ceil(playerKeys.length / 2)) {
-            GameState.teamAssignment[pi] = 'oni';
-        } else {
-            GameState.teamAssignment[pi] = 'runner';
+        var p = GameState.players[pi];
+        if (p && p.selectedRole) {
+            GameState.teamAssignment[pi] = p.selectedRole;
+        } else if (!GameState.teamAssignment[pi]) {
+            // Fallback: first half oni, second half runner
+            if (i < Math.ceil(playerKeys.length / 2)) {
+                GameState.teamAssignment[pi] = 'oni';
+            } else {
+                GameState.teamAssignment[pi] = 'runner';
+            }
         }
     });
+
+    // Validate: at least 1 player on each team. If all same role, force last player to other team.
+    var oniCount = 0, runnerCount = 0;
+    playerKeys.forEach(function(idx) {
+        if (GameState.teamAssignment[parseInt(idx)] === 'oni') oniCount++;
+        else runnerCount++;
+    });
+    if (oniCount === 0 && playerKeys.length > 1) {
+        GameState.teamAssignment[parseInt(playerKeys[0])] = 'oni';
+    } else if (runnerCount === 0 && playerKeys.length > 1) {
+        GameState.teamAssignment[parseInt(playerKeys[playerKeys.length - 1])] = 'runner';
+    }
+
     renderTeamAssignment();
 }
 
@@ -4070,6 +4171,12 @@ function renderTeamAssignment() {
     var runnerDiv = document.getElementById('team-runner-players');
     oniDiv.innerHTML = '';
     runnerDiv.innerHTML = '';
+
+    // Update team section titles for language
+    var oniTitle = document.getElementById('team-oni-title');
+    var runnerTitle = document.getElementById('team-runner-title');
+    if (oniTitle) oniTitle.textContent = GameState.language === 'ja' ? 'ハンターチーム' : 'HUNTER TEAM';
+    if (runnerTitle) runnerTitle.textContent = GameState.language === 'ja' ? 'ランナーチーム' : 'RUNNER TEAM';
 
     Object.keys(GameState.players).forEach(function(idx) {
         var pi = parseInt(idx);
@@ -4588,10 +4695,11 @@ function showMultiStageResult() {
         });
         infoEl.innerHTML = '<div id="multi-result-table">' + resultRows + '</div>';
     } else if (GameState.multiMode === 'teamBattle') {
-        var roundWinner = GameState.teamScores.oni > GameState.teamScores.runner ? 'ONI' : 'RUNNER';
+        var hunterLabel = GameState.language === 'ja' ? 'ハンター' : 'HUNTER';
+        var runnerLabel = GameState.language === 'ja' ? 'ランナー' : 'RUNNER';
         titleEl.textContent = 'STAGE ' + GameState.multiCurrentStage + ' R' + GameState.teamRound;
         titleEl.className = 'escaped';
-        infoEl.innerHTML = 'ONI: ' + GameState.teamScores.oni + ' - RUNNER: ' + GameState.teamScores.runner;
+        infoEl.innerHTML = hunterLabel + ': ' + GameState.teamScores.oni + ' - ' + runnerLabel + ': ' + GameState.teamScores.runner;
     } else if (GameState.multiMode === 'coop') {
         if (GameState.coopRetrying) {
             titleEl.textContent = GameState.language === 'ja' ? '全滅...' : 'WIPED OUT...';
@@ -4648,11 +4756,19 @@ function showMultiResult() {
         });
         infoEl.innerHTML = '<div id="multi-result-table">' + rows + '</div>';
     } else if (GameState.multiMode === 'teamBattle') {
-        var winner = GameState.teamScores.oni > GameState.teamScores.runner ? 'ONI TEAM WINS!' :
-            GameState.teamScores.oni < GameState.teamScores.runner ? 'RUNNER TEAM WINS!' : 'DRAW!';
+        var hLabel = GameState.language === 'ja' ? 'ハンター' : 'HUNTER';
+        var rLabel = GameState.language === 'ja' ? 'ランナー' : 'RUNNER';
+        var winner;
+        if (GameState.teamScores.oni > GameState.teamScores.runner) {
+            winner = GameState.language === 'ja' ? 'ハンターチームの勝利！' : 'HUNTER TEAM WINS!';
+        } else if (GameState.teamScores.oni < GameState.teamScores.runner) {
+            winner = GameState.language === 'ja' ? 'ランナーチームの勝利！' : 'RUNNER TEAM WINS!';
+        } else {
+            winner = GameState.language === 'ja' ? '引き分け！' : 'DRAW!';
+        }
         titleEl.textContent = winner;
         titleEl.className = 'allclear';
-        infoEl.innerHTML = 'ONI: ' + GameState.teamScores.oni + ' - RUNNER: ' + GameState.teamScores.runner;
+        infoEl.innerHTML = hLabel + ': ' + GameState.teamScores.oni + ' - ' + rLabel + ': ' + GameState.teamScores.runner;
     } else if (GameState.multiMode === 'coop') {
         titleEl.textContent = GameState.language === 'ja' ? 'ミッションコンプリート!' : 'MISSION COMPLETE!';
         titleEl.className = 'allclear';
@@ -4743,6 +4859,65 @@ function backToMultiTitle() {
 }
 
 /* ============================================
+   Role Selection (Team Battle)
+   ============================================ */
+function updateRoleSelectVisibility() {
+    var section = document.getElementById('role-select-section');
+    if (!section) return;
+    if (GameState.multiMode === 'teamBattle') {
+        section.classList.add('active');
+        // Update label text
+        var label = section.querySelector('.role-select-label');
+        if (label) {
+            label.textContent = GameState.language === 'ja' ? '役割を選択' : 'CHOOSE YOUR ROLE';
+        }
+        // Update button text for language
+        var runnerName = section.querySelector('.role-btn-runner .role-name');
+        var runnerDesc = section.querySelector('.role-btn-runner .role-desc');
+        var oniName = section.querySelector('.role-btn-oni .role-name');
+        var oniDesc = section.querySelector('.role-btn-oni .role-desc');
+        if (runnerName) runnerName.textContent = 'RUNNER';
+        if (runnerDesc) runnerDesc.textContent = GameState.language === 'ja' ? 'ランナー' : 'Runner';
+        if (oniName) oniName.textContent = 'HUNTER';
+        if (oniDesc) oniDesc.textContent = GameState.language === 'ja' ? 'ハンター' : 'Hunter';
+    } else {
+        section.classList.remove('active');
+    }
+}
+
+function initRoleSelectButtons() {
+    document.querySelectorAll('.role-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var role = btn.dataset.role;
+            // Update UI
+            document.querySelectorAll('.role-btn').forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+
+            // Store role choice locally
+            GameState.selectedRole = role;
+
+            // Update teamAssignment for self
+            GameState.teamAssignment[GameState.playerIndex] = role;
+
+            // Sync to Firebase
+            if (firebaseReady && GameState.roomId) {
+                database.ref('rooms/' + GameState.roomId + '/players/' + GameState.playerIndex + '/selectedRole').set(role);
+            }
+
+            // Reset character selection (role changed = different character pool)
+            GameState.selectedCharacter = null;
+            if (firebaseReady && GameState.roomId) {
+                database.ref('rooms/' + GameState.roomId + '/players/' + GameState.playerIndex + '/character').remove();
+            }
+
+            // Rebuild character grid with appropriate characters for chosen role
+            buildCharacterGrid(GameState.multiMode);
+            renderTeamAssignment();
+        });
+    });
+}
+
+/* ============================================
    URL Auto-Join
    ============================================ */
 function checkRoomURL() {
@@ -4803,8 +4978,18 @@ function initButtons() {
             setTimeout(() => input.classList.remove('error-shake'), 400);
             return;
         }
+        if (!firebaseReady) {
+            const errorEl = document.getElementById('username-error');
+            errorEl.textContent = GameState.language === 'ja' ? 'サーバーに接続できません。再度お試しください' : 'Cannot connect to server. Please try again.';
+            return;
+        }
         const ok = await registerUser();
         if (!ok) return;
+        if (!GameState.isRegistered) {
+            const errorEl = document.getElementById('username-error');
+            errorEl.textContent = GameState.language === 'ja' ? 'ID登録に失敗しました。再度お試しください' : 'Registration failed. Please try again.';
+            return;
+        }
         showModal('lobby-modal');
     });
 
@@ -6589,7 +6774,15 @@ function updateGameHUD() {
 
     // Status
     var statusEl = document.getElementById('hud-status');
-    if (statusEl) statusEl.textContent = GameState.alive ? lang.status_runner : lang.status_caught;
+    if (statusEl) {
+        var isTeamOni = GameState.multiMode === 'teamBattle' &&
+            GameState.teamAssignment[GameState.playerIndex] === 'oni';
+        if (isTeamOni) {
+            statusEl.textContent = GameState.language === 'ja' ? '状態: ハンター' : 'STATUS: HUNTER';
+        } else {
+            statusEl.textContent = GameState.alive ? lang.status_runner : lang.status_caught;
+        }
+    }
 
     // Nearest oni distance + direction
     var minDist = Infinity;
@@ -9677,6 +9870,7 @@ window.addEventListener('DOMContentLoaded', () => {
     createMatrixBg();
     initCatchcopy();
     initButtons();
+    initRoleSelectButtons();
     checkRoomURL();
     // Phase 7: UI sound effects on buttons
     initUISounds();
