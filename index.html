@@ -3357,6 +3357,15 @@ function joinRoom() {
         return;
     }
 
+    // Require Firebase connection
+    if (!firebaseReady) {
+        showNotification(GameState.language === 'ja'
+            ? 'サーバーに接続できません。再度お試しください'
+            : 'Cannot connect to server. Please try again.', true);
+        SoundManager.playSE('error');
+        return;
+    }
+
     const input = document.getElementById('room-id-input');
     let roomId = input.value.trim().toUpperCase();
     if (!roomId) roomId = generateRoomId();
@@ -3365,6 +3374,42 @@ function joinRoom() {
         return;
     }
 
+    // Re-verify registration with Firebase before proceeding
+    database.ref('users/' + GameState.username).once('value').then(function(userSnap) {
+        if (!userSnap.exists()) {
+            // User record does not exist in Firebase
+            GameState.isRegistered = false;
+            showNotification(GameState.language === 'ja'
+                ? 'ユーザー登録が確認できません。再登録してください'
+                : 'User registration not found. Please re-register.', true);
+            showScreen('title-screen');
+            SoundManager.playSE('error');
+            return;
+        }
+        var userData = userSnap.val();
+        if (userData.deviceId !== GameState.deviceId) {
+            // DeviceId mismatch — someone else owns this username
+            GameState.isRegistered = false;
+            showNotification(GameState.language === 'ja'
+                ? 'このユーザー名は別の端末で登録されています'
+                : 'This username is registered on another device.', true);
+            showScreen('title-screen');
+            SoundManager.playSE('error');
+            return;
+        }
+
+        // Identity verified — proceed with room join
+        proceedJoinRoom(roomId);
+    }).catch(function(err) {
+        console.warn('[MAZE-HUNT] User verification failed:', err);
+        showNotification(GameState.language === 'ja'
+            ? 'サーバーに接続できません。再度お試しください'
+            : 'Cannot connect to server. Please try again.', true);
+        SoundManager.playSE('error');
+    });
+}
+
+function proceedJoinRoom(roomId) {
     GameState.roomId = roomId;
     GameState.selectedCharacter = null;
     hideModal('lobby-modal');
@@ -3373,102 +3418,161 @@ function joinRoom() {
     updateRoleSelectVisibility();
     buildCharacterGrid(GameState.multiMode);
 
-    if (firebaseReady) {
-        const roomRef = database.ref('rooms/' + roomId);
-        roomRef.once('value').then(snap => {
-            if (!snap.exists()) {
-                // Create room
-                GameState.isHost = true;
-                GameState.playerIndex = 0;
-                roomRef.set({
-                    status: 'waiting',
-                    gameMode: GameState.multiMode,
-                    currentStage: 1,
-                    maxStages: 5,
-                    host: GameState.deviceId,
-                    players: {
-                        0: {
-                            username: GameState.username || 'PLAYER 1',
-                            deviceId: GameState.deviceId,
-                            alive: true,
-                            selectedRole: GameState.selectedRole || 'runner'
-                        }
+    var roomRef = database.ref('rooms/' + roomId);
+    roomRef.once('value').then(function(snap) {
+        if (!snap.exists()) {
+            // ====== ROOM CREATION (first player) ======
+            GameState.isHost = true;
+            GameState.playerIndex = 0;
+            roomRef.set({
+                status: 'waiting',
+                gameMode: GameState.multiMode,
+                currentStage: 1,
+                maxStages: 5,
+                host: GameState.deviceId,
+                players: {
+                    0: {
+                        username: GameState.username || 'PLAYER 1',
+                        deviceId: GameState.deviceId,
+                        alive: true,
+                        selectedRole: GameState.selectedRole || 'runner'
                     }
-                });
-            } else {
-                // Join existing room
-                const data = snap.val();
-                const playerCount = Object.keys(data.players || {}).length;
-                if (playerCount >= 4) {
-                    showNotification(GameState.language === 'ja' ? 'ルームが満員です' : 'Room is full', true);
-                    showScreen('title-screen');
-                    return;
                 }
-                GameState.isHost = false;
-                GameState.playerIndex = playerCount;
-                GameState.multiMode = data.gameMode;
-                roomRef.child('players/' + playerCount).set({
-                    username: GameState.username || ('PLAYER ' + (playerCount + 1)),
-                    deviceId: GameState.deviceId,
-                    alive: true,
-                    selectedRole: GameState.selectedRole || 'runner'
+            });
+            // Setup lobby disconnect handler
+            roomRef.child('players/0').onDisconnect().remove();
+        } else {
+            // ====== JOIN EXISTING ROOM ======
+            var data = snap.val();
+            var players = data.players || {};
+            var count = Object.keys(players).filter(function(k) { return players[k]; }).length;
+
+            // Stale room cleanup (0 players but room exists)
+            if (count === 0) {
+                roomRef.remove().then(function() { proceedJoinRoom(roomId); });
+                return;
+            }
+
+            // Room full check
+            if (count >= 4) {
+                showNotification(GameState.language === 'ja'
+                    ? 'ルーム「' + roomId + '」は満員です（4/4人）'
+                    : 'Room "' + roomId + '" is full (4/4)', true);
+                showScreen('title-screen');
+                SoundManager.playSE('error');
+                return;
+            }
+
+            // Game already in progress check
+            if (data.status === 'playing') {
+                showNotification(GameState.language === 'ja'
+                    ? 'ルーム「' + roomId + '」はゲーム進行中です。終了後にもう一度お試しください'
+                    : 'Room "' + roomId + '" is in progress. Please try again later.', true);
+                showScreen('title-screen');
+                SoundManager.playSE('error');
+                return;
+            }
+
+            // Duplicate username check
+            var myName = (GameState.username || '').trim();
+            var dupName = Object.values(players).some(function(p) {
+                return p && p.username && p.username.trim() === myName;
+            });
+            if (myName && dupName) {
+                showNotification(GameState.language === 'ja'
+                    ? '「' + myName + '」はルーム内で既に使用中です。別のユーザー名で登録してください'
+                    : '"' + myName + '" is already in this room. Please choose a different name.', true);
+                showScreen('title-screen');
+                SoundManager.playSE('error');
+                return;
+            }
+
+            // Duplicate deviceId check (prevent same device joining twice)
+            var dupDevice = Object.values(players).some(function(p) {
+                return p && p.deviceId === GameState.deviceId;
+            });
+            if (dupDevice) {
+                showNotification(GameState.language === 'ja'
+                    ? 'この端末は既にルームに参加中です'
+                    : 'This device is already in the room.', true);
+                showScreen('title-screen');
+                SoundManager.playSE('error');
+                return;
+            }
+
+            // Find first empty slot (0-3) instead of using count (race condition safe)
+            var emptySlot = -1;
+            for (var i = 0; i < 4; i++) {
+                if (!players[i]) { emptySlot = i; break; }
+            }
+            if (emptySlot === -1) {
+                showNotification(GameState.language === 'ja' ? 'ルームが満員です' : 'Room is full', true);
+                showScreen('title-screen');
+                SoundManager.playSE('error');
+                return;
+            }
+
+            GameState.isHost = false;
+            GameState.playerIndex = emptySlot;
+            GameState.multiMode = data.gameMode;
+            if (data.teamAssignment) GameState.teamAssignment = data.teamAssignment;
+            roomRef.child('players/' + emptySlot).set({
+                username: GameState.username || ('PLAYER ' + (emptySlot + 1)),
+                deviceId: GameState.deviceId,
+                alive: true,
+                selectedRole: GameState.selectedRole || 'runner'
+            });
+            // Setup lobby disconnect handler
+            roomRef.child('players/' + emptySlot).onDisconnect().remove();
+        }
+        updateLobbyDisplay();
+
+        // Listen for player changes
+        roomRef.child('players').on('value', function(pSnap) {
+            GameState.players = pSnap.val() || {};
+            updateLobbyPlayerList();
+            refreshCharacterGrid();
+            if (GameState.multiMode === 'teamBattle') {
+                initTeamAssignment();
+            }
+        });
+
+        // Listen for team assignment changes
+        roomRef.child('teamAssignment').on('value', function(tSnap) {
+            var ta = tSnap.val();
+            if (ta) {
+                GameState.teamAssignment = ta;
+                if (GameState.multiMode === 'teamBattle') {
+                    renderTeamAssignment();
+                    buildCharacterGrid('teamBattle');
+                }
+            }
+        });
+
+        // Listen for game start (non-host players)
+        roomRef.child('status').on('value', function(sSnap) {
+            var status = sSnap.val();
+            if (status === 'playing' && !GameState.isHost && !GameState.gameActive) {
+                // Get game config
+                roomRef.child('gameConfig').once('value').then(function(configSnap) {
+                    var config = configSnap.val();
+                    if (config) {
+                        GameState.multiMode = config.mode;
+                        GameState.multiCurrentStage = config.stage;
+                        GameState.teamAssignment = config.teamAssignment || {};
+                        launchMultiGame(config);
+                    }
                 });
             }
-            updateLobbyDisplay();
-
-            // Listen for player changes
-            roomRef.child('players').on('value', snap => {
-                GameState.players = snap.val() || {};
+            if (status === 'waiting' && GameState.gameActive) {
+                // Host reset game
+                cleanupGame();
+                showScreen('lobby-screen');
+                updateLobbyDisplay();
                 updateLobbyPlayerList();
-                refreshCharacterGrid();
-                if (GameState.multiMode === 'teamBattle') {
-                    initTeamAssignment();
-                }
-            });
-
-            // Listen for team assignment changes
-            roomRef.child('teamAssignment').on('value', snap => {
-                var ta = snap.val();
-                if (ta) {
-                    GameState.teamAssignment = ta;
-                    if (GameState.multiMode === 'teamBattle') {
-                        renderTeamAssignment();
-                        buildCharacterGrid('teamBattle');
-                    }
-                }
-            });
-
-            // Listen for game start (guests)
-            roomRef.child('status').on('value', snap => {
-                var status = snap.val();
-                if (status === 'playing' && !GameState.isHost && !GameState.gameActive) {
-                    // Get game config
-                    roomRef.child('gameConfig').once('value').then(configSnap => {
-                        var config = configSnap.val();
-                        if (config) {
-                            GameState.multiMode = config.mode;
-                            GameState.multiCurrentStage = config.stage;
-                            GameState.teamAssignment = config.teamAssignment || {};
-                            launchMultiGame(config);
-                        }
-                    });
-                }
-                if (status === 'waiting' && GameState.gameActive) {
-                    // Host reset game
-                    cleanupGame();
-                    showScreen('lobby-screen');
-                    updateLobbyDisplay();
-                    updateLobbyPlayerList();
-                }
-            });
+            }
         });
-    } else {
-        // Offline mock
-        GameState.isHost = true;
-        GameState.playerIndex = 0;
-        GameState.players = { 0: { username: GameState.username || 'PLAYER 1' } };
-        updateLobbyPlayerList();
-    }
+    });
 }
 
 function updateLobbyDisplay() {
@@ -5106,6 +5210,14 @@ function initButtons() {
             const input = document.getElementById('username-input');
             input.classList.add('error-shake');
             setTimeout(() => input.classList.remove('error-shake'), 400);
+            SoundManager.playSE('error');
+            return;
+        }
+        if (!firebaseReady) {
+            hideModal('lobby-modal');
+            showNotification(GameState.language === 'ja'
+                ? 'サーバーに接続できません。再度お試しください'
+                : 'Cannot connect to server. Please try again.', true);
             SoundManager.playSE('error');
             return;
         }
