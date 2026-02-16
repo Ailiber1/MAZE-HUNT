@@ -2109,7 +2109,7 @@ body {
                 <button id="lang-ja" class="lang-btn active">日本語</button>
                 <button id="lang-en" class="lang-btn">English</button>
                 <span class="footer-divider">|</span>
-                <button id="bgm-toggle" class="bgm-btn bgm-off">&#128263; BGM</button>
+                <button id="bgm-toggle" class="bgm-btn bgm-on">&#128266; BGM</button>
             </div>
         </div>
     </div>
@@ -2398,7 +2398,7 @@ const GameState = {
     gameMode: 'story',
     gameActive: false,
     language: 'ja',
-    bgmEnabled: false,
+    bgmEnabled: true,
     username: '',
     isGuest: false,
     isRegistered: false,
@@ -3206,6 +3206,7 @@ function initCatchcopy() {
             catchcopy.style.display = 'none';
             showScreen('title-screen');
             createChaseAnimation();
+            if (SoundManager.bgmEnabled) SoundManager.playBGM('op');
         }, 800);
     }
 
@@ -8562,7 +8563,7 @@ function updateTimerDisplay() {
 /* --- 7.1 SoundManager --- */
 const SoundManager = {
     bgm: null,
-    bgmEnabled: false,
+    bgmEnabled: true,
     seEnabled: true,
     audioCtx: null,
 
