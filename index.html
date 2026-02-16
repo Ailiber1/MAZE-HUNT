@@ -6468,7 +6468,8 @@ function loadOniGLB(group, charId, stageId) {
         glbModel.position.y = -box.min.y * scale;
         glbModel.position.z = -center.z * scale;
 
-        // Strip embedded lights from GLB; adjust materials for maze visibility
+        // Strip embedded lights from GLB; hide BLEND (fog/aura) materials;
+        // adjust opaque materials for maze visibility
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -6479,6 +6480,12 @@ function loadOniGLB(group, charId, stageId) {
                 if (child.material) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
                     mats.forEach(function(m) {
+                        // Hide transparent/BLEND materials (fog, aura, particle effects)
+                        // These cause large black or red shapes around the character
+                        if (m.transparent) {
+                            m.visible = false;
+                            return;
+                        }
                         if (m.emissive) {
                             m.emissive.setHex(0x1a0505);
                             m.emissiveIntensity = 0.06;
