@@ -4252,7 +4252,7 @@ function launchMultiGame(config) {
                 var model = createOniModel();
                 addOniLights(model, stageId);
                 var coopCharId = coopOniModelIds[oi % coopOniModelIds.length];
-                loadOniGLB(model, coopCharId);
+                loadOniGLB(model, coopCharId, stageId);
                 var floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor(oi / 2)) : 0;
                 var spawnX = Math.max(1, cols - 2 - (oi % 3));
                 var spawnZ = Math.max(1, rows - 2 - Math.floor(oi / 3));
@@ -5159,6 +5159,9 @@ const ONI_CONFIG = {
     stairSpeedMul: 0.7,
     pathRecalcInterval: 0.5,
     catchDistance: 1.2,
+    lungeDistance: 5.0,       // Distance at which oni begins to lunge
+    lungeSpeedMul: 2.0,      // Speed multiplier during lunge
+    lungeRecalcInterval: 0.15, // Faster path recalc when lunging
     eyeLightColor: 0xff0000,
     eyeLightIntensity: 2.0,
     eyeLightDistance: 8,
@@ -5835,7 +5838,7 @@ function getOniModelsForStage(stageId) {
 }
 
 /* --- C4: Load GLB model into ONI group --- */
-function loadOniGLB(group, charId) {
+function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
     if (!enemy) return;
     var loader = new THREE.GLTFLoader();
@@ -5850,13 +5853,34 @@ function loadOniGLB(group, charId) {
         glbModel.position.x = -center.x * scale;
         glbModel.position.y = -box.min.y * scale;
         glbModel.position.z = -center.z * scale;
-        // Remove placeholder geometry children (keep lights)
+
+        // Apply horror emissive tint to GLB materials
+        glbModel.traverse(function(child) {
+            if (child.isMesh && child.material) {
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(m) {
+                    if (m.emissive) {
+                        m.emissive.setHex(0x220000);
+                        m.emissiveIntensity = 0.15;
+                    }
+                    m.metalness = Math.min(m.metalness || 0, 0.4);
+                    m.roughness = Math.max(m.roughness || 0.5, 0.4);
+                });
+            }
+        });
+
+        // Remove ALL fallback children (Meshes + Groups), keep only PointLights
         var toRemove = [];
         group.children.forEach(function(child) {
-            if (child.isMesh) toRemove.push(child);
+            if (!child.isLight) toRemove.push(child);
         });
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
+        group.userData.glbLoaded = true;
+    }, undefined, function(err) {
+        console.error('[MAZE-HUNT] GLB load failed for', charId, ':', err);
+        // Keep fallback geometric model — it's already displayed
+        group.userData.glbLoaded = false;
     });
 }
 
@@ -5891,7 +5915,7 @@ function spawnOnis(stageId) {
 
         // Load GLB model (cycles through assigned models)
         const charId = oniModelIds[i % oniModelIds.length];
-        loadOniGLB(model, charId);
+        loadOniGLB(model, charId, stageId);
 
         // Distribute across floors (highest floors first for horror effect)
         const floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor((numFloors - 1) * (i / Math.max(1, oniCount - 1)) + 0.5)) : 0;
@@ -5938,10 +5962,18 @@ function updateOniAI(delta) {
     const playerFloor = GameState.playerCurrentFloor;
 
     GameState.onis.forEach(oni => {
-        // Path recalculation timer
+        // Calculate direct distance to player (for lunge detection)
+        const dxToPlayer = camera.position.x - oni.position.x;
+        const dzToPlayer = camera.position.z - oni.position.z;
+        const distToPlayer = Math.sqrt(dxToPlayer * dxToPlayer + dzToPlayer * dzToPlayer);
+        const sameFloor = oni.currentFloor === playerFloor;
+        const isLunging = sameFloor && distToPlayer < ONI_CONFIG.lungeDistance;
+
+        // Path recalculation timer (faster when lunging)
         oni.pathTimer -= delta;
+        var recalcInterval = isLunging ? ONI_CONFIG.lungeRecalcInterval : ONI_CONFIG.pathRecalcInterval;
         if (oni.pathTimer <= 0) {
-            oni.pathTimer = ONI_CONFIG.pathRecalcInterval;
+            oni.pathTimer = recalcInterval;
             const start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
             const goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
             oni.path = bfsPathfind3D(floors, start, goal);
@@ -5957,8 +5989,14 @@ function updateOniAI(delta) {
             const dz = targetZ - oni.position.z;
             const dist = Math.sqrt(dx * dx + dz * dz);
 
+            // Apply lunge speed boost when close to player
             let speed = oni.speed;
             if (oni.onStairs) speed *= ONI_CONFIG.stairSpeedMul;
+            if (isLunging) {
+                // Smooth acceleration: lerp from 1.0 to lungeSpeedMul as distance decreases
+                var lungeT = 1.0 - (distToPlayer / ONI_CONFIG.lungeDistance);
+                speed *= (1.0 + lungeT * (ONI_CONFIG.lungeSpeedMul - 1.0));
+            }
 
             if (dist < 0.3) {
                 // Reached cell, move to next
@@ -5992,10 +6030,27 @@ function updateOniAI(delta) {
             camera.position.z - oni.position.z
         );
 
-        // Breathing animation
-        if (oni.group.userData.chestMesh) {
-            oni.group.userData.chestMesh.scale.y = 1.0 + Math.sin(clock.elapsedTime * 1.5) * 0.015;
+        // Lunge posture: lean forward when charging at player
+        if (isLunging) {
+            var leanT = 1.0 - (distToPlayer / ONI_CONFIG.lungeDistance);
+            oni.group.rotation.x = leanT * 0.2; // Lean forward up to ~12 degrees
+        } else {
+            oni.group.rotation.x = 0;
         }
+
+        // Breathing animation (faster when lunging)
+        if (oni.group.userData.chestMesh) {
+            var breathRate = isLunging ? 4.0 : 1.5;
+            var breathAmp = isLunging ? 0.03 : 0.015;
+            oni.group.userData.chestMesh.scale.y = 1.0 + Math.sin(clock.elapsedTime * breathRate) * breathAmp;
+        }
+
+        // Intensify eye lights when lunging
+        oni.group.children.forEach(function(child) {
+            if (child.isLight && child.position.y > 1.5) {
+                child.intensity = isLunging ? 4.0 + Math.sin(clock.elapsedTime * 8) * 1.5 : 2.0;
+            }
+        });
     });
 }
 
@@ -6195,7 +6250,7 @@ function onPlayerCaught(oni) {
 
     // Phase 1: Red flash + camera shake
     const frame = document.getElementById('danger-frame');
-    frame.style.boxShadow = 'inset 0 0 100px rgba(255, 0, 0, 0.8)';
+    frame.style.boxShadow = 'inset 0 0 120px rgba(255, 0, 0, 0.9)';
     frame.style.display = 'block';
 
     // Lock input
@@ -6203,54 +6258,82 @@ function onPlayerCaught(oni) {
     GameState.moveBackward = false;
     GameState.sprint = false;
 
-    // Phase 2: Camera forced look at oni (after 0.5s)
+    // Save original camera position for shake effect
+    var origCamPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+
+    // Phase 1.5: Camera shake (immediate impact feel)
+    var shakeStart = performance.now();
+    function cameraShake() {
+        var elapsed = (performance.now() - shakeStart) / 1000;
+        if (elapsed < 0.4) {
+            var intensity = 0.08 * (1.0 - elapsed / 0.4);
+            camera.position.x = origCamPos.x + (Math.random() - 0.5) * intensity;
+            camera.position.y = origCamPos.y + (Math.random() - 0.5) * intensity * 0.5;
+            camera.position.z = origCamPos.z + (Math.random() - 0.5) * intensity;
+            if (renderer && scene && camera) renderer.render(scene, camera);
+            requestAnimationFrame(cameraShake);
+        } else {
+            camera.position.set(origCamPos.x, origCamPos.y, origCamPos.z);
+        }
+    }
+    cameraShake();
+
+    // Phase 2: Oni lunges at camera + forced look (after 0.3s)
     setTimeout(() => {
         const captureAnim = { startTime: performance.now(), oni: oni };
+        // Position oni to rush from its current position to right in front of camera
+        var oniStartPos = oni.group.position.clone();
+
         function animateCapture() {
             const elapsed = (performance.now() - captureAnim.startTime) / 1000;
-            const t = Math.min(elapsed / 1.5, 1);
+            const t = Math.min(elapsed / 1.2, 1);
+            // Fast initial rush, then slow approach (ease-out cubic)
             const eased = 1 - Math.pow(1 - t, 3);
 
             // Look at oni
-            const lookTarget = new THREE.Vector3(oni.position.x, camera.position.y, oni.position.z);
+            const lookTarget = new THREE.Vector3(
+                oni.group.position.x, camera.position.y - 0.1, oni.group.position.z
+            );
             camera.lookAt(lookTarget);
 
-            // Narrow FOV
-            camera.fov = THREE.MathUtils.lerp(60, 40, eased);
+            // Narrow FOV for claustrophobic effect
+            camera.fov = THREE.MathUtils.lerp(60, 35, eased);
             camera.updateProjectionMatrix();
 
-            // Move oni closer
-            var targetDist = 0.3;
+            // Rush oni to right in front of camera (0.3m away)
             var dir = new THREE.Vector3(
-                camera.position.x - oni.position.x,
+                origCamPos.x - oniStartPos.x,
                 0,
-                camera.position.z - oni.position.z
+                origCamPos.z - oniStartPos.z
             ).normalize();
-            var targetPos = new THREE.Vector3(
-                camera.position.x - dir.x * targetDist,
+            var finalPos = new THREE.Vector3(
+                origCamPos.x - dir.x * 0.3,
                 oni.position.y,
-                camera.position.z - dir.z * targetDist
+                origCamPos.z - dir.z * 0.3
             );
-            oni.group.position.lerpVectors(oni.group.position.clone(), targetPos, eased * 0.1);
+            oni.group.position.lerpVectors(oniStartPos, finalPos, eased);
+
+            // Slight upward lean for intimidation
+            oni.group.rotation.x = -0.15 * eased;
 
             if (renderer && scene && camera) renderer.render(scene, camera);
             if (t < 1) requestAnimationFrame(animateCapture);
         }
         animateCapture();
-    }, 500);
+    }, 300);
 
-    // Phase 3: Vignette (after 2s)
+    // Phase 3: Vignette (after 1.8s)
     setTimeout(() => {
         document.getElementById('capture-vignette').style.opacity = '0.9';
-    }, 2000);
+    }, 1800);
 
-    // Phase 4: Show GAME OVER text (after 3.5s)
+    // Phase 4: Show GAME OVER text (after 3s)
     setTimeout(() => {
         const lang = HUD_TEXT[GameState.language];
         var text = document.getElementById('caught-text');
         text.textContent = lang.caught_big;
         text.classList.add('visible');
-    }, 3500);
+    }, 3000);
 
     // Show result screen (after 5s)
     setTimeout(() => {
