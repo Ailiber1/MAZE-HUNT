@@ -366,7 +366,7 @@ body {
 }
 /* Disabled state */
 .btn:disabled, .btn.disabled {
-    opacity: 0.4;
+    opacity: 0.55;
     cursor: not-allowed;
     transform: none !important;
 }
@@ -898,16 +898,20 @@ body {
 .lobby-bottom-btns .btn {
     flex: 1;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 14px;
+    padding: 12px 10px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 .lobby-bottom-btns .btn-thin {
     flex: 0 0 auto;
     min-width: 80px;
 }
 #btn-leave-lobby {
-    padding: 6px 10px;
-    font-size: 11px;
+    padding: 10px 14px;
+    font-size: 13px;
     min-width: auto;
     flex: 0 0 auto;
 }
@@ -2315,7 +2319,7 @@ body {
         <div class="modal-title">MULTIPLAYER</div>
         <div class="modal-body">
             <div class="input-label">ROOM ID</div>
-            <input type="text" id="room-id-input" class="neon-input" placeholder="ルームIDを入力..." maxlength="6" autocomplete="off" style="text-transform:uppercase;">
+            <input type="text" id="room-id-input" class="neon-input" placeholder="ルームIDを入力..." maxlength="20" autocomplete="off" style="text-transform:uppercase;">
             <div id="room-id-error" class="input-error-msg"></div>
             <div style="font-size:11px;color:var(--text-dim);margin-top:6px;line-height:1.6;" data-i18n-html="lobbyHint">
                 同じルームIDを入力したプレイヤー<br>同士がマッチングします
@@ -3479,13 +3483,7 @@ function joinRoom() {
         return;
     }
     if (errorEl) errorEl.textContent = '';
-    if (roomId.length !== 6) {
-        if (errorEl) errorEl.textContent = GameState.language === 'ja' ? 'ルームIDは6文字です' : 'Room ID must be 6 characters';
-        input.classList.add('error-shake');
-        setTimeout(() => input.classList.remove('error-shake'), 400);
-        SoundManager.playSE('error');
-        return;
-    }
+    roomId = roomId.substring(0, 20); // cap at 20 characters
 
     // Re-verify registration with Firebase before proceeding
     database.ref('users/' + GameState.username).once('value').then(function(userSnap) {
@@ -4059,7 +4057,7 @@ function createPlayerModel(playerIndex) {
 function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
     // Add red glow for oni team players
-    var oniGlow = new THREE.PointLight(0xff0000, 1.5, 8);
+    var oniGlow = new THREE.PointLight(0xff0000, 0.4, 2.5);
     oniGlow.position.set(0, 1.3, 0);
     group.add(oniGlow);
     // Tint the existing materials darker
@@ -4635,7 +4633,7 @@ function launchMultiGame(config) {
                 scene.add(model);
                 // Add scene-level light immediately for coop oni
                 if (!model.userData.sceneLight) {
-                    var coopOniLight = new THREE.PointLight(0xff3322, 4.0, 8);
+                    var coopOniLight = new THREE.PointLight(0xff3322, 0.4, 2.5);
                     coopOniLight.position.set(worldX, floor * FLOOR_H + 1.0, worldZ);
                     scene.add(coopOniLight);
                     model.userData.sceneLight = coopOniLight;
@@ -5665,13 +5663,13 @@ const ONI_CONFIG = {
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
     // Light config
     eyeLightColor: 0xff0000,
-    eyeLightIntensity: 0.8,
-    eyeLightDistance: 4,
+    eyeLightIntensity: 0.25,
+    eyeLightDistance: 1.8,
     bodyLightColor: 0xff1010,
-    bodyLightIntensity: 0.4,
-    bodyLightDistance: 3,
-    emissiveColor: 0x881111,
-    emissiveIntensity: 0.3,
+    bodyLightIntensity: 0.15,
+    bodyLightDistance: 1.2,
+    emissiveColor: 0x551111,
+    emissiveIntensity: 0.15,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6045,7 +6043,7 @@ function createOniModel() {
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
         color: 0xcc1818, roughness: 0.38, metalness: 0.05,
-        emissive: 0x881111, emissiveIntensity: 0.3
+        emissive: 0x551111, emissiveIntensity: 0.15
     });
 
     // === HEAD ===
@@ -6310,11 +6308,11 @@ function createOniModel() {
     buildLeg(1);
 
     // === Internal Lights (minimal – just enough to self-illuminate the model) ===
-    const innerLight = new THREE.PointLight(0xff2020, 0.5, 2.5);
+    const innerLight = new THREE.PointLight(0xff2020, 0.15, 1.2);
     innerLight.position.set(0, 1.1, 0);
     human.add(innerLight);
 
-    const faceLight = new THREE.PointLight(0xff2020, 0.4, 2);
+    const faceLight = new THREE.PointLight(0xff2020, 0.12, 0.8);
     faceLight.position.set(0, 1.63, 0.3);
     human.add(faceLight);
 
@@ -6327,10 +6325,10 @@ function createOniModel() {
 
 /* --- C2: Add ONI Lights --- */
 function addOniLights(oniGroup, stageId) {
-    const eyeR = new THREE.PointLight(0xff0000, 0.8, 4);
+    const eyeR = new THREE.PointLight(0xff0000, 0.25, 1.8);
     eyeR.position.set(0.12, 1.65, 0.15);
     oniGroup.add(eyeR);
-    const eyeL = new THREE.PointLight(0xff0000, 0.8, 4);
+    const eyeL = new THREE.PointLight(0xff0000, 0.25, 1.8);
     eyeL.position.set(-0.12, 1.65, 0.15);
     oniGroup.add(eyeL);
 }
@@ -6436,8 +6434,8 @@ function loadOniGLB(group, charId, stageId) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
                     mats.forEach(function(m) {
                         if (m.emissive) {
-                            m.emissive.setHex(0x881111);
-                            m.emissiveIntensity = 0.35;
+                            m.emissive.setHex(0x551111);
+                            m.emissiveIntensity = 0.15;
                         }
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
@@ -6484,10 +6482,10 @@ function loadOniGLB(group, charId, stageId) {
 
         // Update scene-level light (already created in spawnOnis, or create if missing)
         if (group.userData.sceneLight) {
-            group.userData.sceneLight.intensity = 4.0;
-            group.userData.sceneLight.distance = 8;
+            group.userData.sceneLight.intensity = 0.4;
+            group.userData.sceneLight.distance = 2.5;
         } else {
-            var oniLight = new THREE.PointLight(0xff3322, 4.0, 8);
+            var oniLight = new THREE.PointLight(0xff3322, 0.4, 2.5);
             oniLight.position.copy(group.position);
             oniLight.position.y += 1.0;
             scene.add(oniLight);
@@ -6587,7 +6585,7 @@ function playCapturedDragAnimation(oni, capturePos) {
     dragDir.normalize();
 
     // Add a dim spotlight following the drag scene
-    var dragLight = new THREE.PointLight(0xff2020, 3, 15);
+    var dragLight = new THREE.PointLight(0xff2020, 1.0, 6);
     dragLight.position.set(capturePos.x, capturePos.y + 2.5, capturePos.z);
     scene.add(dragLight);
 
@@ -6770,7 +6768,7 @@ function spawnOnis(stageId) {
         // Add scene-level light immediately (don't wait for GLB load)
         // This ensures the oni is illuminated even with fallback model
         if (!model.userData.sceneLight) {
-            var earlyLight = new THREE.PointLight(0xff3322, 0.6, 3);
+            var earlyLight = new THREE.PointLight(0xff3322, 0.4, 2.5);
             earlyLight.position.set(worldX, worldY + 1.0, worldZ);
             scene.add(earlyLight);
             model.userData.sceneLight = earlyLight;
@@ -6997,13 +6995,13 @@ function updateOniAI(delta) {
         oni.group.children.forEach(function(child) {
             if (child.isLight && child.position.y > 1.5) {
                 if (isLunging) {
-                    child.intensity = 1.5 + Math.sin(clock.elapsedTime * 8) * 0.5;
+                    child.intensity = 0.5 + Math.sin(clock.elapsedTime * 8) * 0.2;
                 } else if (oni.aiState === 'chase') {
-                    child.intensity = 1.0;
+                    child.intensity = 0.35;
                 } else if (oni.aiState === 'alert') {
-                    child.intensity = 0.6;
+                    child.intensity = 0.2;
                 } else {
-                    child.intensity = 0.3; // dim eyes while patrolling
+                    child.intensity = 0.08; // dim eyes while patrolling
                 }
             }
         });
