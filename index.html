@@ -2231,9 +2231,7 @@ const CharacterPreview = {
         var scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0a0a0a);
 
-        var camera = new THREE.PerspectiveCamera(35, 256 / 320, 0.1, 100);
-        camera.position.set(0, 1.0, 3.2);
-        camera.lookAt(0, 0.85, 0);
+        var camera = new THREE.PerspectiveCamera(20, 256 / 320, 0.1, 100);
 
         var ambientLight = new THREE.AmbientLight(0xffffff, 2.5);
         scene.add(ambientLight);
@@ -2264,6 +2262,12 @@ const CharacterPreview = {
             model.position.z = -center.z * scale;
 
             scene.add(model);
+
+            // Camera targets the face: top 20% of scaled model
+            var scaledHeight = size.y * scale;
+            var faceY = scaledHeight * 0.85;
+            camera.position.set(0, faceY, 0.8);
+            camera.lookAt(0, faceY - 0.02, 0);
 
             renderer.render(scene, camera);
             var dataUrl = renderer.domElement.toDataURL('image/png');
