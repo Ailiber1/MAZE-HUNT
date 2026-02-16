@@ -4401,10 +4401,7 @@ function launchMultiGame(config) {
         // Override oni count for coop
         if (GameState.multiMode === 'coop') {
             // Clear default onis and respawn with coop count
-            GameState.onis.forEach(function(oni) {
-                if (oni.group.parent) oni.group.parent.remove(oni.group);
-            });
-            GameState.onis = [];
+            cleanupOnis();
             GameState.oniSpeedMultiplier = config.speedMul;
             var coopOniModelIds = getOniModelsForStage(stageId);
             for (var oi = 0; oi < config.oni; oi++) {
@@ -4924,9 +4921,23 @@ function checkRoomURL() {
     const params = new URLSearchParams(window.location.search);
     const roomId = params.get('room');
     if (roomId && roomId.length === 6) {
-        document.getElementById('room-id-input').value = roomId.toUpperCase();
-        GameState.multiMode = 'freeForAll';
-        joinRoom();
+        // Store room ID for later use after registration
+        GameState.pendingRoomId = roomId.toUpperCase();
+        // If already registered, join directly
+        if (GameState.username && !GameState.isGuest && GameState.isRegistered) {
+            document.getElementById('room-id-input').value = roomId.toUpperCase();
+            GameState.multiMode = 'freeForAll';
+            joinRoom();
+        } else {
+            // Show title screen with prompt - user must register first
+            showScreen('title-screen');
+            var errorEl = document.getElementById('username-error');
+            if (errorEl) {
+                errorEl.textContent = GameState.language === 'ja'
+                    ? 'ルームに参加するにはユーザー名を登録してください'
+                    : 'Please register a username to join the room';
+            }
+        }
     }
 }
 
@@ -4938,8 +4949,16 @@ function initButtons() {
     document.getElementById('btn-register').addEventListener('click', async () => {
         const ok = await registerUser();
         if (ok) {
-            showScreen('story-screen');
-            buildStageList();
+            // If user came via room link, auto-join after registration
+            if (GameState.pendingRoomId) {
+                document.getElementById('room-id-input').value = GameState.pendingRoomId;
+                GameState.pendingRoomId = null;
+                GameState.multiMode = 'freeForAll';
+                joinRoom();
+            } else {
+                showScreen('story-screen');
+                buildStageList();
+            }
         }
     });
 
@@ -5079,13 +5098,15 @@ function initButtons() {
 
     // Join room
     document.getElementById('btn-join-room').addEventListener('click', () => {
-        if (!GameState.username || GameState.isGuest) {
+        if (!GameState.username || GameState.isGuest || !GameState.isRegistered) {
             hideModal('lobby-modal');
+            showScreen('title-screen');
             const errorEl = document.getElementById('username-error');
             errorEl.textContent = GameState.language === 'ja' ? 'マルチプレイにはユーザー名の登録が必要です' : 'Username registration is required for Multiplayer';
             const input = document.getElementById('username-input');
             input.classList.add('error-shake');
             setTimeout(() => input.classList.remove('error-shake'), 400);
+            SoundManager.playSE('error');
             return;
         }
         joinRoom();
@@ -6094,14 +6115,14 @@ function loadOniGLB(group, charId, stageId) {
         glbModel.position.y = -box.min.y * scale;
         glbModel.position.z = -center.z * scale;
 
-        // Apply horror emissive tint to GLB materials so oni is visible in dark maze
+        // Apply strong emissive so oni is clearly visible in dark maze
         glbModel.traverse(function(child) {
             if (child.isMesh && child.material) {
                 var mats = Array.isArray(child.material) ? child.material : [child.material];
                 mats.forEach(function(m) {
                     if (m.emissive) {
-                        m.emissive.setHex(0x661111);
-                        m.emissiveIntensity = 0.6;
+                        m.emissive.setHex(0x991111);
+                        m.emissiveIntensity = 1.8;
                     }
                     m.metalness = Math.min(m.metalness || 0, 0.3);
                     m.roughness = Math.max(m.roughness || 0.5, 0.5);
@@ -6117,11 +6138,34 @@ function loadOniGLB(group, charId, stageId) {
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
         group.userData.glbLoaded = true;
+        group.userData.glbModel = glbModel;
 
-        // Add a dedicated self-illumination light so the oni model is always visible
-        var selfLight = new THREE.PointLight(0xff3322, 2.5, 5);
-        selfLight.position.set(0, 1.0, 0.3);
-        group.add(selfLight);
+        // Setup animation mixer if GLB has animations
+        if (gltf.animations && gltf.animations.length > 0) {
+            var mixer = new THREE.AnimationMixer(glbModel);
+            group.userData.mixer = mixer;
+            group.userData.animations = gltf.animations;
+            // Play walk/run animation by default, fallback to first clip
+            var walkClip = null;
+            for (var i = 0; i < gltf.animations.length; i++) {
+                var name = gltf.animations[i].name.toLowerCase();
+                if (name.indexOf('walk') !== -1 || name.indexOf('run') !== -1) {
+                    walkClip = gltf.animations[i];
+                    break;
+                }
+            }
+            if (!walkClip) walkClip = gltf.animations[0];
+            var action = mixer.clipAction(walkClip);
+            action.play();
+            group.userData.currentAction = action;
+        }
+
+        // Add scene-level light to illuminate the oni model from outside the group
+        var oniLight = new THREE.PointLight(0xff3322, 3.0, 6);
+        oniLight.position.copy(group.position);
+        oniLight.position.y += 1.0;
+        scene.add(oniLight);
+        group.userData.sceneLight = oniLight;
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] GLB load failed for', charId, ':', err);
         // Keep fallback geometric model — it's already displayed
@@ -6132,6 +6176,7 @@ function loadOniGLB(group, charId, stageId) {
 /* --- C4a: Preload player character GLB for capture animation --- */
 function preloadPlayerGLB() {
     GameState.playerGLBModel = null;
+    GameState.playerGLBAnimations = null;
     var charData = GameState.selectedCharacter;
     if (!charData || !charData.file) return;
     var loader = new THREE.GLTFLoader();
@@ -6147,6 +6192,9 @@ function preloadPlayerGLB() {
         model.position.y = -box.min.y * scale;
         model.position.z = -center.z * scale;
         GameState.playerGLBModel = model;
+        if (gltf.animations && gltf.animations.length > 0) {
+            GameState.playerGLBAnimations = gltf.animations;
+        }
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] Player GLB preload failed:', err);
     });
@@ -6158,10 +6206,19 @@ function playCapturedDragAnimation(oni, capturePos) {
     var playerGroup = new THREE.Group();
     playerGroup.position.set(capturePos.x, capturePos.y, capturePos.z);
 
+    var dragPlayerMixer = null;
     if (GameState.playerGLBModel) {
         // Use preloaded GLB model
-        var playerModel = GameState.playerGLBModel.clone();
+        var playerModel = THREE.SkeletonUtils
+            ? THREE.SkeletonUtils.clone(GameState.playerGLBModel)
+            : GameState.playerGLBModel.clone();
         playerGroup.add(playerModel);
+        // Setup animation for player model during drag
+        if (GameState.playerGLBAnimations && GameState.playerGLBAnimations.length > 0) {
+            dragPlayerMixer = new THREE.AnimationMixer(playerModel);
+            var pClip = GameState.playerGLBAnimations[0];
+            dragPlayerMixer.clipAction(pClip).play();
+        }
     } else {
         // Fallback: simple humanoid silhouette
         var fallbackMat = new THREE.MeshStandardMaterial({
@@ -6272,6 +6329,11 @@ function playCapturedDragAnimation(oni, capturePos) {
             oni.group.position.x, oni.group.position.y + 2.5, oni.group.position.z
         );
 
+        // Update animation mixers during drag
+        var frameDelta = 1 / 60;
+        if (oni.group.userData.mixer) oni.group.userData.mixer.update(frameDelta);
+        if (dragPlayerMixer) dragPlayerMixer.update(frameDelta);
+
         // Camera looks at midpoint between oni and player
         var lookX = (oni.group.position.x + playerGroup.position.x) / 2;
         var lookZ = (oni.group.position.z + playerGroup.position.z) / 2;
@@ -6301,8 +6363,26 @@ function playCapturedDragAnimation(oni, capturePos) {
 }
 
 /* --- C4: Spawn ONIs --- */
-function spawnOnis(stageId) {
+function cleanupOnis() {
+    if (!GameState.onis) return;
+    GameState.onis.forEach(function(oni) {
+        // Remove scene-level illumination light
+        if (oni.group.userData.sceneLight) {
+            scene.remove(oni.group.userData.sceneLight);
+            oni.group.userData.sceneLight = null;
+        }
+        // Stop animation mixer
+        if (oni.group.userData.mixer) {
+            oni.group.userData.mixer.stopAllAction();
+            oni.group.userData.mixer = null;
+        }
+        scene.remove(oni.group);
+    });
     GameState.onis = [];
+}
+
+function spawnOnis(stageId) {
+    cleanupOnis();
 
     // Determine oni count and speed multiplier
     let oniCount = 1, speedMul = 1.0;
@@ -6469,6 +6549,18 @@ function updateOniAI(delta) {
                 child.intensity = isLunging ? 4.0 + Math.sin(clock.elapsedTime * 8) * 1.5 : 2.0;
             }
         });
+
+        // Update animation mixer (GLB skeletal animation)
+        if (oni.group.userData.mixer) {
+            oni.group.userData.mixer.update(delta);
+        }
+
+        // Update scene-level illumination light to follow oni position
+        if (oni.group.userData.sceneLight) {
+            oni.group.userData.sceneLight.position.set(
+                oni.position.x, oni.position.y + 1.0, oni.position.z
+            );
+        }
     });
 }
 
@@ -9778,8 +9870,16 @@ function cleanupGame() {
     const ctext = document.getElementById('caught-text');
     if (ctext) ctext.classList.remove('visible');
 
-    // Clean up onis
+    // Clean up onis (scene lights, mixers, geometry, materials)
     GameState.onis.forEach(oni => {
+        if (oni.group.userData.sceneLight) {
+            scene.remove(oni.group.userData.sceneLight);
+            oni.group.userData.sceneLight = null;
+        }
+        if (oni.group.userData.mixer) {
+            oni.group.userData.mixer.stopAllAction();
+            oni.group.userData.mixer = null;
+        }
         oni.group.traverse(child => {
             if (child.geometry) child.geometry.dispose();
             if (child.material) {
