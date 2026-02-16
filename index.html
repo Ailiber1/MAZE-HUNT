@@ -1715,6 +1715,9 @@ body {
     height: 100%;
     object-fit: contain;
 }
+.char-preview-img-loading {
+    opacity: 0;
+}
 .char-preview-dark .char-preview-img {
     transform: scale(1.2);
     transform-origin: center 60%;
@@ -2300,7 +2303,16 @@ const STAGE_ONI_ASSIGNMENTS = {
 const DARK_CHARACTERS = ['CH18'];
 
 const CharacterPreview = {
-    init() {},
+    _cache: {},
+
+    init() {
+        var allChars = CHARACTER_LIST.runners.concat(CHARACTER_LIST.enemies);
+        allChars.forEach(function(char) {
+            var img = new Image();
+            img.src = 'Character_images/' + char.id + '.png';
+            CharacterPreview._cache[char.id] = img;
+        });
+    },
 
     createPreview(charId, containerEl, glbPath) {
         containerEl.innerHTML = '';
@@ -2309,18 +2321,30 @@ const CharacterPreview = {
         } else {
             containerEl.classList.remove('char-preview-dark');
         }
-        var img = document.createElement('img');
-        img.src = 'Character_images/' + charId + '.png';
-        img.className = 'char-preview-img';
-        img.alt = charId;
-        img.onerror = function() {
-            containerEl.innerHTML = '';
-            var fallback = document.createElement('div');
-            fallback.className = 'char-preview-fallback';
-            fallback.textContent = charId.charAt(0).toUpperCase();
-            containerEl.appendChild(fallback);
-        };
-        containerEl.appendChild(img);
+
+        var cached = this._cache[charId];
+        if (cached && cached.complete && cached.naturalWidth > 0) {
+            var img = cached.cloneNode();
+            img.className = 'char-preview-img';
+            img.alt = charId;
+            containerEl.appendChild(img);
+        } else {
+            var img = document.createElement('img');
+            img.src = 'Character_images/' + charId + '.png';
+            img.className = 'char-preview-img char-preview-img-loading';
+            img.alt = charId;
+            img.onload = function() {
+                img.classList.remove('char-preview-img-loading');
+            };
+            img.onerror = function() {
+                containerEl.innerHTML = '';
+                var fallback = document.createElement('div');
+                fallback.className = 'char-preview-fallback';
+                fallback.textContent = charId.charAt(0).toUpperCase();
+                containerEl.appendChild(fallback);
+            };
+            containerEl.appendChild(img);
+        }
     },
 
     stopPreview(charId) {},
