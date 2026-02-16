@@ -1393,28 +1393,40 @@ body {
     .modal-box {
         max-width: 600px;
     }
+    #solo-char-screen {
+        justify-content: center;
+        padding-top: 0;
+        padding-bottom: 0;
+    }
     #solo-char-grid {
-        max-width: 900px;
+        max-width: 960px;
         gap: 16px;
     }
     #solo-char-buttons {
         max-width: 460px;
+        margin-bottom: 10px;
     }
     #solo-char-stage-label {
-        font-size: 40px;
+        font-size: 36px;
+        margin-bottom: 2px;
     }
     #solo-char-theme-label {
-        font-size: 16px;
+        font-size: 15px;
+        margin-bottom: 8px;
     }
     #solo-char-instruction {
-        font-size: 15px;
+        font-size: 14px;
+        margin-bottom: 6px;
     }
     #solo-char-grid .char-preview {
-        height: 320px;
+        height: min(200px, 24vh);
+    }
+    #solo-char-grid .char-card {
+        padding: 10px;
     }
     #solo-char-grid .char-name {
         font-size: 14px;
-        margin-top: 8px;
+        margin-top: 6px;
     }
     .stage-select-title {
         font-size: 24px;
