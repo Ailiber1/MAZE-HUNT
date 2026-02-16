@@ -1316,7 +1316,7 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
     .char-preview {
-        height: 110px;
+        height: 150px;
     }
     #solo-char-stage-label {
         font-size: 22px;
@@ -1346,7 +1346,7 @@ body {
         gap: 6px;
     }
     .char-preview {
-        height: 90px;
+        height: 120px;
     }
     .char-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -1378,21 +1378,24 @@ body {
         max-width: 600px;
     }
     .char-grid {
-        gap: 12px;
+        gap: 14px;
+    }
+    .char-card {
+        padding: 8px;
     }
     .char-preview {
-        height: 160px;
+        height: 260px;
     }
     .char-name {
-        font-size: 12px;
-        margin-top: 6px;
+        font-size: 13px;
+        margin-top: 8px;
     }
     .modal-box {
         max-width: 600px;
     }
     #solo-char-grid {
-        max-width: 520px;
-        gap: 12px;
+        max-width: 580px;
+        gap: 14px;
     }
     #solo-char-buttons {
         max-width: 400px;
@@ -1647,15 +1650,28 @@ body {
 }
 .char-preview {
     width: 100%;
-    height: 140px;
+    height: 180px;
     position: relative;
     overflow: hidden;
+    background: rgba(0, 10, 5, 0.6);
 }
 .char-preview-img {
     display: block;
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
+    object-position: top center;
+}
+.char-preview-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Creepster', cursive;
+    font-size: 48px;
+    color: var(--neon-green-dim);
+    background: rgba(0, 20, 10, 0.8);
 }
 .char-name {
     font-size: 10px;
@@ -2200,107 +2216,27 @@ const STAGE_ONI_ASSIGNMENTS = {
    Character Preview System
    ============================================ */
 const CharacterPreview = {
-    imageCache: {},
-    loader: null,
-    renderer: null,
-
-    init() {
-        if (typeof THREE !== 'undefined' && typeof THREE.GLTFLoader !== 'undefined') {
-            this.loader = new THREE.GLTFLoader();
-            this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-            this.renderer.setSize(256, 320);
-            this.renderer.setPixelRatio(1);
-        }
-    },
+    init() {},
 
     createPreview(charId, containerEl, glbPath) {
-        if (!this.loader || !this.renderer) return;
-
-        // Use cached image if available
-        if (this.imageCache[charId]) {
-            var img = document.createElement('img');
-            img.src = this.imageCache[charId];
-            img.className = 'char-preview-img';
-            img.alt = charId;
+        containerEl.innerHTML = '';
+        var img = document.createElement('img');
+        img.src = 'Character_images/' + charId + '.png';
+        img.className = 'char-preview-img';
+        img.alt = charId;
+        img.onerror = function() {
+            // Fallback: show character name initial
             containerEl.innerHTML = '';
-            containerEl.appendChild(img);
-            return;
-        }
-
-        var renderer = this.renderer;
-        var scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x0a0a0a);
-
-        var camera = new THREE.PerspectiveCamera(20, 256 / 320, 0.1, 100);
-
-        var ambientLight = new THREE.AmbientLight(0xffffff, 2.5);
-        scene.add(ambientLight);
-        var dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        dirLight.position.set(0, 2, 3);
-        scene.add(dirLight);
-        var fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        fillLight.position.set(-2, 1, 1);
-        scene.add(fillLight);
-        var rimLight = new THREE.DirectionalLight(0x00ff41, 0.3);
-        rimLight.position.set(1, 1, -1);
-        scene.add(rimLight);
-
-        var self = this;
-        this.loader.load(glbPath, function(gltf) {
-            var model = gltf.scene;
-
-            var box = new THREE.Box3().setFromObject(model);
-            var size = box.getSize(new THREE.Vector3());
-            var center = box.getCenter(new THREE.Vector3());
-
-            var maxDim = Math.max(size.x, size.y, size.z);
-            var scale = 2.0 / maxDim;
-            model.scale.setScalar(scale);
-
-            model.position.x = -center.x * scale;
-            model.position.y = -box.min.y * scale;
-            model.position.z = -center.z * scale;
-
-            scene.add(model);
-
-            // Camera targets the face: top 20% of scaled model
-            var scaledHeight = size.y * scale;
-            var faceY = scaledHeight * 0.85;
-            camera.position.set(0, faceY, 0.8);
-            camera.lookAt(0, faceY - 0.02, 0);
-
-            renderer.render(scene, camera);
-            var dataUrl = renderer.domElement.toDataURL('image/png');
-
-            self.imageCache[charId] = dataUrl;
-
-            // Dispose model
-            model.traverse(function(child) {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (Array.isArray(child.material)) child.material.forEach(function(m) { m.dispose(); });
-                    else if (child.material.dispose) child.material.dispose();
-                }
-            });
-
-            var img = document.createElement('img');
-            img.src = dataUrl;
-            img.className = 'char-preview-img';
-            img.alt = charId;
-            containerEl.innerHTML = '';
-            containerEl.appendChild(img);
-        }, undefined, function(err) {
-            console.warn('Failed to load character:', charId, err);
-        });
+            var fallback = document.createElement('div');
+            fallback.className = 'char-preview-fallback';
+            fallback.textContent = charId.charAt(0).toUpperCase();
+            containerEl.appendChild(fallback);
+        };
+        containerEl.appendChild(img);
     },
 
-    stopPreview(charId) {
-        // No-op: images don't need cleanup
-    },
-
-    stopAll() {
-        // No-op: images don't need cleanup
-    }
+    stopPreview(charId) {},
+    stopAll() {}
 };
 
 /* ============================================
