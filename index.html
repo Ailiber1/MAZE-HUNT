@@ -4091,13 +4091,12 @@ function createPlayerModel(playerIndex) {
 
 function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
-    // Dark oni team player — no PointLight, subtle dark emissive
+    // Oni team player — subtle dark tint, no bright glow
     group.traverse(function(child) {
         if (child.isMesh && child.material) {
             child.material = child.material.clone();
-            child.material.color = new THREE.Color(0x1a0505);
-            child.material.emissive = new THREE.Color(0x220505);
-            child.material.emissiveIntensity = 0.1;
+            child.material.emissive = new THREE.Color(0x1a0505);
+            child.material.emissiveIntensity = 0.06;
         }
     });
     return group;
@@ -5687,9 +5686,10 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — dark shadow oni (minimal emissive to avoid red fog)
-    emissiveColor: 0x330808,
-    emissiveIntensity: 0.15,
+    // Visual config — no emissive glow (prevents red fog)
+    // Oni is visible via flashlight/stage lights + subtle eye glow
+    emissiveColor: 0x1a0505,
+    emissiveIntensity: 0.06,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6072,8 +6072,8 @@ function createOniModel() {
     const human = new THREE.Group();
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
-        color: 0x1a0505, roughness: 0.85, metalness: 0.1,
-        emissive: 0x330808, emissiveIntensity: 0.15
+        color: 0x8b1a1a, roughness: 0.7, metalness: 0.1,
+        emissive: 0x1a0505, emissiveIntensity: 0.06
     });
 
     // === HEAD ===
@@ -6467,15 +6467,10 @@ function loadOniGLB(group, charId, stageId) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
                     mats.forEach(function(m) {
                         if (m.emissive) {
-                            m.emissive.setHex(0x330808);
-                            m.emissiveIntensity = 0.15;
-                        }
-                        // Darken the base color to create shadow appearance
-                        if (m.color) {
-                            var r = m.color.r * 0.15;
-                            var g = m.color.g * 0.1;
-                            var b = m.color.b * 0.1;
-                            m.color.setRGB(r, g, b);
+                            // Very subtle emissive — just enough to see outline in darkness
+                            // GLB original colors are preserved for flashlight visibility
+                            m.emissive.setHex(0x1a0505);
+                            m.emissiveIntensity = 0.06;
                         }
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
@@ -9012,10 +9007,6 @@ function updateMovementSE() {
         FootstepManager.start('sprint');
         prevMovementState = 'sprint';
         FootstepManager.wasSprintingLastFrame = true;
-    } else if (isExhausted) {
-        FootstepManager.start('exhausted');
-        prevMovementState = 'exhausted';
-        FootstepManager.wasSprintingLastFrame = false;
     } else if (isMoving) {
         FootstepManager.start('walk');
         prevMovementState = 'walk';
