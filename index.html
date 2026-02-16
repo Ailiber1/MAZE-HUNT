@@ -2426,6 +2426,7 @@ const GameState = {
     turnLeft: false,
     turnRight: false,
     sprint: false,
+    sprintLocked: false,
     stamina: 100,
     moveSpeed: 4.5,
     sprintSpeed: 8.0,
@@ -4706,6 +4707,7 @@ function launchMultiGame(config) {
     GameState.playerRotationY = 0;
     GameState.playerPosition = { x: startX, y: PLAYER_HEIGHT, z: startZ };
     GameState.stamina = 100;
+    GameState.sprintLocked = false;
     GameState.alive = true;
     GameState.moveForward = false;
     GameState.moveBackward = false;
@@ -6832,7 +6834,7 @@ function updateOniAI(delta) {
     const playerCellZ = Math.floor(camera.position.z / CL);
     const playerFloor = GameState.playerCurrentFloor;
     const isPlayerMoving = GameState.moveForward || GameState.moveBackward;
-    const isPlayerSprinting = GameState.sprint && GameState.stamina > 0 && isPlayerMoving;
+    const isPlayerSprinting = GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0 && isPlayerMoving;
 
     GameState.onis.forEach(oni => {
         const dxToPlayer = camera.position.x - oni.position.x;
@@ -8281,7 +8283,7 @@ function initSprintButton() {
 function updateSprintButtonVisual() {
     const btn = document.getElementById('sprint-btn');
     if (!btn) return;
-    if (GameState.stamina <= 0) {
+    if (GameState.sprintLocked || GameState.stamina <= 0) {
         btn.classList.add('exhausted');
     } else {
         btn.classList.remove('exhausted');
@@ -8460,11 +8462,18 @@ function updatePlayerMovement(delta) {
         GameState.playerRotationY -= turnSpeed * delta;
     }
 
-    // Sprint / stamina
+    // Sprint / stamina (with lockout to prevent oscillation buzzer)
     let speed = GameState.moveSpeed;
-    if (GameState.sprint && GameState.stamina > 0 && (GameState.moveForward || GameState.moveBackward)) {
+    if (GameState.sprintLocked && GameState.stamina >= 20) {
+        GameState.sprintLocked = false;
+    }
+    const canSprint = GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0;
+    if (canSprint && (GameState.moveForward || GameState.moveBackward)) {
         speed = GameState.sprintSpeed;
         GameState.stamina = Math.max(0, GameState.stamina - 25 * delta);
+        if (GameState.stamina <= 0) {
+            GameState.sprintLocked = true;
+        }
     } else {
         GameState.stamina = Math.min(100, GameState.stamina + 12 * delta);
     }
@@ -8511,9 +8520,10 @@ function updateHeadBob(delta) {
     const baseHeight = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
 
     // Skip head bob if on stairs (updatePlayerY handles Y)
+    const effectiveSprint = GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0;
     if (GameState.onStairs) {
         // Sprint FOV effect only
-        if (GameState.sprint && GameState.stamina > 0) {
+        if (effectiveSprint) {
             camera.fov = THREE.MathUtils.lerp(camera.fov, 70, delta * 4);
         } else {
             camera.fov = THREE.MathUtils.lerp(camera.fov, 60, delta * 4);
@@ -8524,13 +8534,13 @@ function updateHeadBob(delta) {
     }
 
     if (isMoving && GameState.alive) {
-        const bobSpeed = GameState.sprint && GameState.stamina > 0 ? 14 : 10;
+        const bobSpeed = effectiveSprint ? 14 : 10;
         const bobAmount = 0.06;
         headBobTimer += delta * bobSpeed;
         camera.position.y = baseHeight + Math.sin(headBobTimer) * bobAmount;
 
         // Sprint FOV effect
-        if (GameState.sprint && GameState.stamina > 0) {
+        if (effectiveSprint) {
             camera.fov = THREE.MathUtils.lerp(camera.fov, 70, delta * 4);
         } else {
             camera.fov = THREE.MathUtils.lerp(camera.fov, 60, delta * 4);
@@ -8984,14 +8994,12 @@ const FootstepManager = {
 
 /* --- 7.2b Movement SE update (called from game loop) --- */
 let prevMovementState = 'idle';
-let prevStaminaDepleted = false;
 
 function updateMovementSE() {
     if (!GameState.alive) { FootstepManager.stop(); return; }
 
     const isMoving = GameState.moveForward || GameState.moveBackward || GameState.turnLeft || GameState.turnRight;
-    const isSprinting = GameState.sprint && GameState.stamina > 0 && (GameState.moveForward || GameState.moveBackward);
-    const isExhausted = GameState.stamina <= 5 && !prevStaminaDepleted && GameState.sprint;
+    const isSprinting = GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0 && (GameState.moveForward || GameState.moveBackward);
 
     if (!isMoving) {
         if (prevMovementState === 'sprint') {
@@ -9013,7 +9021,6 @@ function updateMovementSE() {
         FootstepManager.wasSprintingLastFrame = false;
     }
 
-    prevStaminaDepleted = GameState.stamina <= 5;
 }
 
 /* --- 7.3 Oni Footstep Manager --- */
@@ -10214,6 +10221,7 @@ function startGame(stageId) {
     GameState.playerRotationY = 0;
     GameState.playerPosition = { x: CL * 1.5, y: PLAYER_HEIGHT, z: CL * 1.5 };
     GameState.stamina = 100;
+    GameState.sprintLocked = false;
     GameState.alive = true;
     GameState.moveForward = false;
     GameState.moveBackward = false;
@@ -10251,7 +10259,6 @@ function startGame(stageId) {
 
     // Phase 7: Initialize sound & effects
     prevMovementState = 'idle';
-    prevStaminaDepleted = false;
     FootstepManager.stop();
     FootstepManager.wasSprintingLastFrame = false;
     OniFootstepManager.start();
