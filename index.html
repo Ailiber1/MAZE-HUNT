@@ -4612,6 +4612,13 @@ function launchMultiGame(config) {
                 var worldZ = spawnZ * CL + CL / 2;
                 model.position.set(worldX, floor * FLOOR_H, worldZ);
                 scene.add(model);
+                // Add scene-level light immediately for coop oni
+                if (!model.userData.sceneLight) {
+                    var coopOniLight = new THREE.PointLight(0xff3322, 4.0, 8);
+                    coopOniLight.position.set(worldX, floor * FLOOR_H + 1.0, worldZ);
+                    scene.add(coopOniLight);
+                    model.userData.sceneLight = coopOniLight;
+                }
                 GameState.onis.push({
                     group: model,
                     position: { x: worldX, y: floor * FLOOR_H, z: worldZ },
@@ -5628,13 +5635,13 @@ const ONI_CONFIG = {
     lungeSpeedMul: 2.0,      // Speed multiplier during lunge
     lungeRecalcInterval: 0.15, // Faster path recalc when lunging
     eyeLightColor: 0xff0000,
-    eyeLightIntensity: 2.0,
-    eyeLightDistance: 8,
+    eyeLightIntensity: 3.0,
+    eyeLightDistance: 12,
     bodyLightColor: 0xff1010,
-    bodyLightIntensity: 0.8,
-    bodyLightDistance: 6,
-    emissiveColor: 0x220000,
-    emissiveIntensity: 0.1,
+    bodyLightIntensity: 1.5,
+    bodyLightDistance: 8,
+    emissiveColor: 0xcc2222,
+    emissiveIntensity: 1.5,
 };
 
 /* --- Three.js Globals --- */
@@ -5925,7 +5932,7 @@ function createOniModel() {
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
         color: 0xcc1818, roughness: 0.38, metalness: 0.05,
-        emissive: 0x330000, emissiveIntensity: 0.15
+        emissive: 0xcc2222, emissiveIntensity: 1.5
     });
 
     // === HEAD ===
@@ -6215,14 +6222,14 @@ function createOniModel() {
 
 /* --- C2: Add ONI Lights --- */
 function addOniLights(oniGroup, stageId) {
-    const eyeR = new THREE.PointLight(0xff0000, 2.0, 8);
+    const eyeR = new THREE.PointLight(0xff0000, 3.0, 12);
     eyeR.position.set(0.12, 1.65, 0.15);
     oniGroup.add(eyeR);
-    const eyeL = new THREE.PointLight(0xff0000, 2.0, 8);
+    const eyeL = new THREE.PointLight(0xff0000, 3.0, 12);
     eyeL.position.set(-0.12, 1.65, 0.15);
     oniGroup.add(eyeL);
     const bodyColor = (stageId === 5) ? 0xff4400 : 0xff1010;
-    const bodyLight = new THREE.PointLight(bodyColor, 0.8, 6);
+    const bodyLight = new THREE.PointLight(bodyColor, 1.5, 8);
     bodyLight.position.set(0, 1.1, 0);
     oniGroup.add(bodyLight);
 }
@@ -6321,16 +6328,25 @@ function loadOniGLB(group, charId, stageId) {
 
         // Apply strong emissive so oni is clearly visible in dark maze
         glbModel.traverse(function(child) {
-            if (child.isMesh && child.material) {
-                var mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach(function(m) {
-                    if (m.emissive) {
-                        m.emissive.setHex(0x991111);
-                        m.emissiveIntensity = 1.8;
-                    }
-                    m.metalness = Math.min(m.metalness || 0, 0.3);
-                    m.roughness = Math.max(m.roughness || 0.5, 0.5);
-                });
+            if (child.isMesh) {
+                child.frustumCulled = false;
+                if (child.material) {
+                    var mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(function(m) {
+                        if (m.emissive) {
+                            m.emissive.setHex(0xcc2222);
+                            m.emissiveIntensity = 2.2;
+                        }
+                        m.metalness = Math.min(m.metalness || 0, 0.3);
+                        m.roughness = Math.max(m.roughness || 0.5, 0.5);
+                        // Force opaque rendering — some GLB models have transparent materials
+                        m.transparent = false;
+                        m.opacity = 1.0;
+                        m.depthWrite = true;
+                        m.side = THREE.DoubleSide;
+                        m.alphaTest = 0;
+                    });
+                }
             }
         });
 
@@ -6364,12 +6380,17 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.currentAction = action;
         }
 
-        // Add scene-level light to illuminate the oni model from outside the group
-        var oniLight = new THREE.PointLight(0xff3322, 3.0, 6);
-        oniLight.position.copy(group.position);
-        oniLight.position.y += 1.0;
-        scene.add(oniLight);
-        group.userData.sceneLight = oniLight;
+        // Update scene-level light (already created in spawnOnis, or create if missing)
+        if (group.userData.sceneLight) {
+            group.userData.sceneLight.intensity = 4.0;
+            group.userData.sceneLight.distance = 8;
+        } else {
+            var oniLight = new THREE.PointLight(0xff3322, 4.0, 8);
+            oniLight.position.copy(group.position);
+            oniLight.position.y += 1.0;
+            scene.add(oniLight);
+            group.userData.sceneLight = oniLight;
+        }
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] GLB load failed for', charId, ':', err);
         // Keep fallback geometric model — it's already displayed
@@ -6637,6 +6658,15 @@ function spawnOnis(stageId) {
         model.position.set(worldX, worldY, worldZ);
         scene.add(model);
 
+        // Add scene-level light immediately (don't wait for GLB load)
+        // This ensures the oni is illuminated even with fallback model
+        if (!model.userData.sceneLight) {
+            var earlyLight = new THREE.PointLight(0xff3322, 4.0, 8);
+            earlyLight.position.set(worldX, worldY + 1.0, worldZ);
+            scene.add(earlyLight);
+            model.userData.sceneLight = earlyLight;
+        }
+
         GameState.onis.push({
             group: model,
             position: { x: worldX, y: worldY, z: worldZ },
@@ -6750,7 +6780,7 @@ function updateOniAI(delta) {
         // Intensify eye lights when lunging
         oni.group.children.forEach(function(child) {
             if (child.isLight && child.position.y > 1.5) {
-                child.intensity = isLunging ? 4.0 + Math.sin(clock.elapsedTime * 8) * 1.5 : 2.0;
+                child.intensity = isLunging ? 6.0 + Math.sin(clock.elapsedTime * 8) * 2.0 : 3.0;
             }
         });
 
@@ -9591,9 +9621,13 @@ function updateFloorVisibility() {
             pl.light.visible = Math.abs(pl.floor - playerFloor) <= 1;
         }
     });
-    // ONI models
+    // ONI models + scene lights
     GameState.onis.forEach(function(oni) {
-        oni.group.visible = Math.abs(oni.currentFloor - playerFloor) <= 1;
+        var oniVisible = Math.abs(oni.currentFloor - playerFloor) <= 1;
+        oni.group.visible = oniVisible;
+        if (oni.group.userData.sceneLight) {
+            oni.group.userData.sceneLight.visible = oniVisible;
+        }
     });
     // Wall meshes floor culling
     wallMeshes.forEach(function(wm) {
