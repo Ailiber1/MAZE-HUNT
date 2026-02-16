@@ -1652,8 +1652,9 @@ body {
     overflow: hidden;
 }
 .char-preview canvas {
-    width: 100% !important;
-    height: 100% !important;
+    display: block;
+    width: 100%;
+    height: 100%;
 }
 .char-name {
     font-size: 10px;
@@ -2210,27 +2211,28 @@ const CharacterPreview = {
     createPreview(charId, containerEl, glbPath) {
         if (!this.loader) return;
 
-        const width = containerEl.clientWidth || 100;
-        const height = containerEl.clientHeight || 140;
+        var rect = containerEl.getBoundingClientRect();
+        var width = Math.round(rect.width) || 120;
+        var height = Math.round(rect.height) || 140;
 
-        const pScene = new THREE.Scene();
+        var pScene = new THREE.Scene();
         pScene.background = new THREE.Color(0x080808);
 
-        const pCamera = new THREE.PerspectiveCamera(30, width / height, 0.1, 100);
-        pCamera.position.set(0, 1.4, 1.8);
-        pCamera.lookAt(0, 1.2, 0);
+        var pCamera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
+        pCamera.position.set(0, 1.0, 3.5);
+        pCamera.lookAt(0, 0.9, 0);
 
-        const pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        var pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         pRenderer.setSize(width, height);
         pRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         containerEl.appendChild(pRenderer.domElement);
 
-        var ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
+        var ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
         pScene.add(ambientLight);
-        var dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        var dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
         dirLight.position.set(0, 2, 3);
         pScene.add(dirLight);
-        var fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        var fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
         fillLight.position.set(-2, 1, 1);
         pScene.add(fillLight);
         var rimLight = new THREE.DirectionalLight(0x00ff41, 0.3);
@@ -2384,10 +2386,12 @@ function createCharCard(char) {
     });
 
     requestAnimationFrame(function() {
-        var previewEl = document.getElementById('char-preview-' + char.id);
-        if (previewEl) {
-            CharacterPreview.createPreview(char.id, previewEl, char.file);
-        }
+        requestAnimationFrame(function() {
+            var previewEl = document.getElementById('char-preview-' + char.id);
+            if (previewEl) {
+                CharacterPreview.createPreview(char.id, previewEl, char.file);
+            }
+        });
     });
 
     return card;
@@ -2504,16 +2508,20 @@ function showSoloCharSelect(stageId) {
         });
 
         grid.appendChild(card);
-
-        requestAnimationFrame(function() {
-            var previewEl = document.getElementById('solo-preview-' + char.id);
-            if (previewEl) {
-                CharacterPreview.createPreview(char.id, previewEl, char.file);
-            }
-        });
     });
 
     screen.classList.add('active');
+
+    requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+            CHARACTER_LIST.runners.forEach(function(char) {
+                var previewEl = document.getElementById('solo-preview-' + char.id);
+                if (previewEl) {
+                    CharacterPreview.createPreview(char.id, previewEl, char.file);
+                }
+            });
+        });
+    });
 }
 
 function selectSoloCharacter(char) {
