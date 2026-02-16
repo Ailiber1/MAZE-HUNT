@@ -1695,6 +1695,12 @@ body {
     color: #2060ff;
     border-bottom: 1px solid rgba(32, 96, 255, 0.4);
 }
+.char-team-label[class*="label"] {
+    grid-column: 1 / -1;
+}
+.char-grid .char-grid {
+    grid-column: 1 / -1;
+}
 
 /* ============================================
    Pause Screen
@@ -2247,15 +2253,13 @@ function buildCharacterGrid(mode) {
     CharacterPreview.stopAll();
     grid.innerHTML = '';
 
-    var chars;
     if (mode === 'teamBattle') {
         buildTeamBattleCharGrid(grid);
         return;
-    } else {
-        chars = CHARACTER_LIST.runners;
     }
 
-    chars.forEach(function(char) {
+    // Runner selection
+    CHARACTER_LIST.runners.forEach(function(char) {
         var card = createCharCard(char);
         grid.appendChild(card);
     });
