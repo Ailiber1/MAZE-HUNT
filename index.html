@@ -1743,12 +1743,29 @@ body {
     top: 0; left: 0;
     width: 100%; height: 100%;
     z-index: 85;
-    background: rgba(0, 0, 0, 0.95);
+    background: linear-gradient(180deg,
+        #000a00 0%,
+        #001a05 20%,
+        #00120a 50%,
+        #000d04 80%,
+        #000800 100%
+    );
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
     padding-top: 40px;
     overflow-y: auto;
+}
+#solo-char-matrix-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 0;
+}
+#solo-char-screen > *:not(#solo-char-matrix-canvas) {
+    position: relative;
+    z-index: 1;
 }
 #solo-char-screen.active {
     display: flex;
@@ -1970,6 +1987,7 @@ body {
 
 <!-- Solo Character Select Screen -->
 <div id="solo-char-screen">
+    <canvas id="solo-char-matrix-canvas"></canvas>
     <div id="solo-char-stage-label"></div>
     <div id="solo-char-theme-label"></div>
     <div id="solo-char-instruction">キャラクター選択</div>
@@ -2462,6 +2480,7 @@ function showSoloCharSelect(stageId) {
     });
 
     screen.classList.add('active');
+    startSoloMatrixRain();
 }
 
 function selectSoloCharacter(char) {
@@ -2477,6 +2496,7 @@ function selectSoloCharacter(char) {
 }
 
 function hideSoloCharSelect() {
+    stopSoloMatrixRain();
     CharacterPreview.stopAll();
     document.getElementById('solo-char-screen').classList.remove('active');
 }
@@ -2653,6 +2673,94 @@ function createMatrixBg() {
         }
         col.textContent = text;
         bg.appendChild(col);
+    }
+}
+
+/* ============================================
+   Solo Char Select — Green Matrix Rain (Canvas)
+   ============================================ */
+var soloMatrixRainId = null;
+
+function startSoloMatrixRain() {
+    var canvas = document.getElementById('solo-char-matrix-canvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+
+    function resize() {
+        canvas.width = canvas.parentElement.offsetWidth;
+        canvas.height = canvas.parentElement.offsetHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    var chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF<>{}[]=/\\';
+    var fontSize = 14;
+    var columns = Math.floor(canvas.width / fontSize);
+    var drops = [];
+    for (var i = 0; i < columns; i++) {
+        drops[i] = Math.random() * -100;
+    }
+
+    function draw() {
+        // Semi-transparent overlay for trail effect
+        ctx.fillStyle = 'rgba(0, 6, 0, 0.06)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Recalculate columns if canvas resized
+        var newCols = Math.floor(canvas.width / fontSize);
+        while (drops.length < newCols) {
+            drops.push(Math.random() * -100);
+        }
+
+        for (var i = 0; i < newCols; i++) {
+            var ch = chars[Math.floor(Math.random() * chars.length)];
+            var x = i * fontSize;
+            var y = drops[i] * fontSize;
+
+            // Bright head character
+            var brightness = 0.6 + Math.random() * 0.4;
+            ctx.font = fontSize + 'px monospace';
+            ctx.fillStyle = 'rgba(0, 255, 65, ' + brightness + ')';
+            ctx.shadowColor = 'rgba(0, 255, 65, 0.8)';
+            ctx.shadowBlur = 8;
+            ctx.fillText(ch, x, y);
+
+            // Occasional bright white head
+            if (Math.random() < 0.08) {
+                ctx.fillStyle = 'rgba(180, 255, 180, 0.95)';
+                ctx.shadowColor = 'rgba(180, 255, 180, 1)';
+                ctx.shadowBlur = 15;
+                ctx.fillText(ch, x, y);
+            }
+
+            ctx.shadowBlur = 0;
+
+            // Reset drop when it goes off screen
+            if (y > canvas.height && Math.random() > 0.975) {
+                drops[i] = 0;
+            }
+            drops[i]++;
+        }
+
+        soloMatrixRainId = requestAnimationFrame(draw);
+    }
+
+    // Cancel any existing animation
+    if (soloMatrixRainId) {
+        cancelAnimationFrame(soloMatrixRainId);
+    }
+    draw();
+}
+
+function stopSoloMatrixRain() {
+    if (soloMatrixRainId) {
+        cancelAnimationFrame(soloMatrixRainId);
+        soloMatrixRainId = null;
+    }
+    var canvas = document.getElementById('solo-char-matrix-canvas');
+    if (canvas) {
+        var ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 }
 
