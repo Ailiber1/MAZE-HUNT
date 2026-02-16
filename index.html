@@ -3259,6 +3259,25 @@ function generateRoomId() {
 }
 
 function joinRoom() {
+    // Require registered username (not guest) for multiplayer
+    if (!GameState.username || GameState.isGuest) {
+        hideModal('lobby-modal');
+        showScreen('title-screen');
+        var errorEl = document.getElementById('username-error');
+        if (errorEl) {
+            errorEl.textContent = GameState.language === 'ja'
+                ? 'マルチプレイにはユーザー名の登録が必要です'
+                : 'Username registration is required for Multiplayer';
+        }
+        var nameInput = document.getElementById('username-input');
+        if (nameInput) {
+            nameInput.classList.add('error-shake');
+            setTimeout(function() { nameInput.classList.remove('error-shake'); }, 400);
+        }
+        SoundManager.playSE('error');
+        return;
+    }
+
     const input = document.getElementById('room-id-input');
     let roomId = input.value.trim().toUpperCase();
     if (!roomId) roomId = generateRoomId();
@@ -5890,17 +5909,17 @@ function loadOniGLB(group, charId, stageId) {
         glbModel.position.y = -box.min.y * scale;
         glbModel.position.z = -center.z * scale;
 
-        // Apply horror emissive tint to GLB materials
+        // Apply horror emissive tint to GLB materials so oni is visible in dark maze
         glbModel.traverse(function(child) {
             if (child.isMesh && child.material) {
                 var mats = Array.isArray(child.material) ? child.material : [child.material];
                 mats.forEach(function(m) {
                     if (m.emissive) {
-                        m.emissive.setHex(0x220000);
-                        m.emissiveIntensity = 0.15;
+                        m.emissive.setHex(0x661111);
+                        m.emissiveIntensity = 0.6;
                     }
-                    m.metalness = Math.min(m.metalness || 0, 0.4);
-                    m.roughness = Math.max(m.roughness || 0.5, 0.4);
+                    m.metalness = Math.min(m.metalness || 0, 0.3);
+                    m.roughness = Math.max(m.roughness || 0.5, 0.5);
                 });
             }
         });
@@ -5913,6 +5932,11 @@ function loadOniGLB(group, charId, stageId) {
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
         group.userData.glbLoaded = true;
+
+        // Add a dedicated self-illumination light so the oni model is always visible
+        var selfLight = new THREE.PointLight(0xff3322, 2.5, 5);
+        selfLight.position.set(0, 1.0, 0.3);
+        group.add(selfLight);
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] GLB load failed for', charId, ':', err);
         // Keep fallback geometric model — it's already displayed
@@ -6186,7 +6210,15 @@ function updateOniAI(delta) {
             oni.path = bfsPathfind3D(floors, start, goal);
         }
 
-        // Follow path
+        // Calculate speed (with lunge boost)
+        let speed = oni.speed;
+        if (oni.onStairs) speed *= ONI_CONFIG.stairSpeedMul;
+        if (isLunging) {
+            var lungeT = 1.0 - (distToPlayer / ONI_CONFIG.lungeDistance);
+            speed *= (1.0 + lungeT * (ONI_CONFIG.lungeSpeedMul - 1.0));
+        }
+
+        // Follow BFS path OR chase player directly when path is empty
         if (oni.path.length > 0) {
             const target = oni.path[0];
             const targetX = target.x * CL + CL / 2;
@@ -6196,17 +6228,7 @@ function updateOniAI(delta) {
             const dz = targetZ - oni.position.z;
             const dist = Math.sqrt(dx * dx + dz * dz);
 
-            // Apply lunge speed boost when close to player
-            let speed = oni.speed;
-            if (oni.onStairs) speed *= ONI_CONFIG.stairSpeedMul;
-            if (isLunging) {
-                // Smooth acceleration: lerp from 1.0 to lungeSpeedMul as distance decreases
-                var lungeT = 1.0 - (distToPlayer / ONI_CONFIG.lungeDistance);
-                speed *= (1.0 + lungeT * (ONI_CONFIG.lungeSpeedMul - 1.0));
-            }
-
             if (dist < 0.3) {
-                // Reached cell, move to next
                 oni.cellX = target.x;
                 oni.cellZ = target.z;
                 if (target.floor !== oni.currentFloor) {
@@ -6219,6 +6241,10 @@ function updateOniAI(delta) {
                 oni.position.x += moveX;
                 oni.position.z += moveZ;
             }
+        } else if (sameFloor && distToPlayer > ONI_CONFIG.catchDistance * 0.5) {
+            // Path is empty but player is on the same floor — move directly toward player
+            oni.position.x += (dxToPlayer / distToPlayer) * speed * delta;
+            oni.position.z += (dzToPlayer / distToPlayer) * speed * delta;
         }
 
         // Update cell from position
