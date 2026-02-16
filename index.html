@@ -3198,22 +3198,35 @@ function initCatchcopy() {
     if (!catchcopy) return;
     let dismissed = false;
 
-    function dismissCatchcopy() {
+    function dismissCatchcopy(fromUser) {
         if (dismissed) return;
         dismissed = true;
+        // Play BGM immediately inside user gesture (browser allows it)
+        if (fromUser && SoundManager.bgmEnabled) SoundManager.playBGM('op');
         catchcopy.style.opacity = '0';
         setTimeout(() => {
             catchcopy.style.display = 'none';
             showScreen('title-screen');
             createChaseAnimation();
-            if (SoundManager.bgmEnabled) SoundManager.playBGM('op');
         }, 800);
     }
 
-    catchcopy.addEventListener('click', dismissCatchcopy);
-    catchcopy.addEventListener('touchstart', dismissCatchcopy, { passive: true });
+    catchcopy.addEventListener('click', () => dismissCatchcopy(true));
+    catchcopy.addEventListener('touchstart', () => dismissCatchcopy(true), { passive: true });
 
-    setTimeout(dismissCatchcopy, 2500);
+    // Auto-dismiss after 2.5s (no user gesture — BGM deferred to first interaction)
+    setTimeout(() => dismissCatchcopy(false), 2500);
+
+    // Fallback: if BGM didn't start (auto-dismiss), play on first user interaction
+    function tryStartBGM() {
+        if (SoundManager.bgmEnabled && !SoundManager.bgm) {
+            SoundManager.playBGM('op');
+        }
+        document.removeEventListener('click', tryStartBGM);
+        document.removeEventListener('touchstart', tryStartBGM);
+    }
+    document.addEventListener('click', tryStartBGM, { once: false });
+    document.addEventListener('touchstart', tryStartBGM, { once: false, passive: true });
 }
 
 /* ============================================
@@ -8602,18 +8615,12 @@ const SoundManager = {
         const audio = new Audio();
         audio.loop = true;
         audio.volume = 0.3;
-        audio.preload = 'auto';
-        audio.addEventListener('canplaythrough', function handler() {
-            audio.removeEventListener('canplaythrough', handler);
-            audio.play().catch(function(e) {
-                console.warn('BGM play failed:', e.message);
-            });
-        });
-        audio.addEventListener('error', function() {
-            console.warn('BGM load error:', file, audio.error);
-        });
         audio.src = file;
         this.bgm = audio;
+        // Play immediately (works when called inside a user gesture)
+        audio.play().catch(function() {
+            // Autoplay blocked — will be retried on next user interaction
+        });
     },
 
     stopBGM() {
