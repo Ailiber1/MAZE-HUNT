@@ -862,14 +862,14 @@ body {
 .player-slot {
     display: flex;
     align-items: center;
-    padding: 8px 12px;
+    padding: 10px 14px;
     border: 1px solid rgba(0, 170, 42, 0.2);
-    font-size: 15px;
-    gap: 8px;
+    font-size: 18px;
+    gap: 10px;
 }
 .player-slot .player-badge {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
 }
@@ -897,15 +897,19 @@ body {
 }
 .lobby-bottom-btns .btn {
     flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .lobby-bottom-btns .btn-thin {
     flex: 0 0 auto;
     min-width: 80px;
 }
 #btn-leave-lobby {
-    padding: 8px 12px;
-    font-size: 12px;
+    padding: 6px 10px;
+    font-size: 11px;
     min-width: auto;
+    flex: 0 0 auto;
 }
 #lobby-screen .char-preview {
     height: 130px;
@@ -1753,7 +1757,7 @@ body {
         grid-template-columns: 1fr 1fr;
     }
     .lobby-room-id { font-size: 18px; }
-    .player-slot { padding: 6px 10px; font-size: 13px; }
+    .player-slot { padding: 8px 10px; font-size: 15px; }
     #lobby-screen .char-preview { height: 110px; }
     #lobby-screen .char-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
     .lobby-bottom-btns { max-width: 340px; }
@@ -2312,6 +2316,7 @@ body {
         <div class="modal-body">
             <div class="input-label">ROOM ID</div>
             <input type="text" id="room-id-input" class="neon-input" placeholder="ルームIDを入力..." maxlength="6" autocomplete="off" style="text-transform:uppercase;">
+            <div id="room-id-error" class="input-error-msg"></div>
             <div style="font-size:11px;color:var(--text-dim);margin-top:6px;line-height:1.6;" data-i18n-html="lobbyHint">
                 同じルームIDを入力したプレイヤー<br>同士がマッチングします
             </div>
@@ -3464,10 +3469,21 @@ function joinRoom() {
     }
 
     const input = document.getElementById('room-id-input');
+    const errorEl = document.getElementById('room-id-error');
     let roomId = input.value.trim().toUpperCase();
-    if (!roomId) roomId = generateRoomId();
+    if (!roomId) {
+        if (errorEl) errorEl.textContent = GameState.language === 'ja' ? 'ルームIDを入力してください' : 'Please enter a Room ID';
+        input.classList.add('error-shake');
+        setTimeout(() => input.classList.remove('error-shake'), 400);
+        SoundManager.playSE('error');
+        return;
+    }
+    if (errorEl) errorEl.textContent = '';
     if (roomId.length !== 6) {
-        showNotification(GameState.language === 'ja' ? 'ルームIDは6文字です' : 'Room ID must be 6 characters', true);
+        if (errorEl) errorEl.textContent = GameState.language === 'ja' ? 'ルームIDは6文字です' : 'Room ID must be 6 characters';
+        input.classList.add('error-shake');
+        setTimeout(() => input.classList.remove('error-shake'), 400);
+        SoundManager.playSE('error');
         return;
     }
 
@@ -3688,7 +3704,7 @@ function updateLobbyDisplay() {
     // Host-only start button
     const startBtn = document.getElementById('btn-start-game');
     if (!GameState.isHost) {
-        startBtn.textContent = GameState.language === 'ja' ? 'ホストの開始を待っています...' : 'Waiting for host...';
+        startBtn.textContent = GameState.language === 'ja' ? 'ホスト待機中...' : 'Waiting...';
         startBtn.disabled = true;
     }
 }
