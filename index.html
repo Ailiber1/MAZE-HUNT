@@ -2804,14 +2804,26 @@ function hideSoloCharSelect() {
 let gamePaused = false;
 
 function initVisibilityHandler() {
+    // Primary: visibilitychange (works in most browsers for tab switch)
     document.addEventListener('visibilitychange', function() {
         if (!GameState.gameActive) return;
-
         if (document.hidden) {
             onTabHidden();
         } else {
             onTabVisible();
         }
+    });
+
+    // Fallback 1: window blur (fires when tab/app loses focus — covers iOS PWA, split view)
+    window.addEventListener('blur', function() {
+        if (!GameState.gameActive) return;
+        onTabHidden();
+    });
+
+    // Fallback 2: pagehide (fires on mobile when switching apps/tabs)
+    window.addEventListener('pagehide', function() {
+        if (!GameState.gameActive) return;
+        onTabHidden();
     });
 }
 
@@ -7740,7 +7752,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
     const wallMat = new THREE.MeshStandardMaterial({
         color: colors.baseColor,
         emissive: colors.emissive,
-        emissiveIntensity: colors.emissiveIntensity * 0.3,
+        emissiveIntensity: colors.emissiveIntensity * 0.8,
         roughness: 0.8,
         metalness: 0.2,
     });
@@ -7763,9 +7775,9 @@ function buildMaze3D(floors, cols, rows, stageId) {
         // Floor plane
         const floorGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
         const floorMat = new THREE.MeshStandardMaterial({
-            color: 0x050a06,
+            color: 0x0a140c,
             emissive: colors.emissive,
-            emissiveIntensity: 0.02,
+            emissiveIntensity: 0.08,
             roughness: 0.95,
             metalness: 0.1,
         });
@@ -7803,9 +7815,9 @@ function buildMaze3D(floors, cols, rows, stageId) {
         // Ceiling (indoor stages only) - skip tiles above stair cells
         if (!theme.outdoor) {
             const ceilMat = new THREE.MeshStandardMaterial({
-                color: 0x030503,
+                color: 0x080e08,
                 emissive: colors.emissive,
-                emissiveIntensity: 0.01,
+                emissiveIntensity: 0.05,
                 roughness: 0.95,
                 metalness: 0.1,
                 side: THREE.BackSide,
@@ -7900,13 +7912,12 @@ function initThreeJS() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    renderer.toneMapping = THREE.NoToneMapping;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000805);
+    scene.background = new THREE.Color(0x050f08);
 
     camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 100);
     camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
@@ -7949,15 +7960,15 @@ function setupLighting(stageId) {
     pointLights = [];
 
     // Ambient light
-    const ambient = new THREE.AmbientLight(colors.emissive, 0.18);
+    const ambient = new THREE.AmbientLight(colors.emissive, 0.3);
     scene.add(ambient);
     wallMeshes.push(ambient);
 
     // Hemisphere light
     const hemi = new THREE.HemisphereLight(
-        theme.outdoor ? 0x222233 : 0x101820,
-        0x060608,
-        0.3
+        theme.outdoor ? 0x334455 : 0x1a2830,
+        0x0c100c,
+        0.5
     );
     scene.add(hemi);
     wallMeshes.push(hemi);
@@ -7993,7 +8004,7 @@ function setupLighting(stageId) {
         for (let i = 0; i < count; i++) {
             const cell = openCells[i];
             const color = theme.pointLightColors[i % theme.pointLightColors.length];
-            const pl = new THREE.PointLight(color, 0.8, 14, 1.5);
+            const pl = new THREE.PointLight(color, 1.2, 18, 1.2);
             pl.position.set(cell.x * CL + CL / 2, yOffset + WH * 0.8, cell.y * CL + CL / 2);
             scene.add(pl);
             pointLights.push({
@@ -10421,6 +10432,8 @@ window.addEventListener('resize', () => {
    Initialize
    ============================================ */
 window.addEventListener('DOMContentLoaded', () => {
+    // Register visibility/pause handlers FIRST (before anything that could throw)
+    initVisibilityHandler();
     GameState.deviceId = getDeviceId();
     GameState.isMobile = isMobile();
     initFirebase();
@@ -10433,8 +10446,6 @@ window.addEventListener('DOMContentLoaded', () => {
     initUISounds();
     // Character preview system
     CharacterPreview.init();
-    // Tab visibility change handler
-    initVisibilityHandler();
 });
 </script>
 </body>
