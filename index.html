@@ -1316,7 +1316,7 @@ body {
         grid-template-columns: repeat(2, 1fr);
     }
     .char-preview {
-        height: 80px;
+        height: 110px;
     }
     #solo-char-stage-label {
         font-size: 22px;
@@ -1346,11 +1346,83 @@ body {
         gap: 6px;
     }
     .char-preview {
-        height: 70px;
+        height: 90px;
     }
     .char-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 6px;
+    }
+}
+
+/* ============================================
+   Desktop (wide screen) layout
+   ============================================ */
+@media (min-width: 769px) {
+    .ui-panel {
+        max-width: 600px;
+        padding: 28px;
+    }
+    .stage-list {
+        max-width: 560px;
+    }
+    .stage-btn {
+        padding: 16px 20px;
+        font-size: 14px;
+    }
+    .stage-btn .stage-name {
+        font-size: 16px;
+    }
+    .stage-btn .stage-info {
+        font-size: 12px;
+    }
+    .back-btn {
+        max-width: 560px;
+    }
+    #char-select-section {
+        max-width: 600px;
+    }
+    .char-grid {
+        gap: 12px;
+    }
+    .char-preview {
+        height: 160px;
+    }
+    .char-name {
+        font-size: 12px;
+        margin-top: 6px;
+    }
+    .modal-box {
+        max-width: 600px;
+    }
+    #solo-char-grid {
+        max-width: 520px;
+        gap: 12px;
+    }
+    #solo-char-buttons {
+        max-width: 400px;
+    }
+    #solo-char-stage-label {
+        font-size: 36px;
+    }
+    #solo-char-theme-label {
+        font-size: 15px;
+    }
+    #solo-char-instruction {
+        font-size: 14px;
+    }
+    .btn {
+        padding: 14px;
+        font-size: 16px;
+    }
+    .btn-group {
+        gap: 12px;
+    }
+    #title-logo h1 {
+        font-size: clamp(48px, 10vw, 96px);
+    }
+    .stage-select-title {
+        font-size: 24px;
+        letter-spacing: 6px;
     }
 }
 
@@ -1589,7 +1661,7 @@ body {
 }
 .char-preview {
     width: 100%;
-    height: 100px;
+    height: 140px;
     position: relative;
     overflow: hidden;
 }
@@ -2152,38 +2224,41 @@ const CharacterPreview = {
     createPreview(charId, containerEl, glbPath) {
         if (!this.loader) return;
 
-        const width = containerEl.clientWidth || 100;
-        const height = containerEl.clientHeight || 100;
+        const width = containerEl.clientWidth || 120;
+        const height = containerEl.clientHeight || 150;
 
         const pScene = new THREE.Scene();
-        pScene.background = new THREE.Color(0x050505);
+        pScene.background = new THREE.Color(0x0a0a0a);
 
-        const pCamera = new THREE.PerspectiveCamera(30, width / height, 0.1, 100);
-        pCamera.position.set(0, 1.5, 1.6);
-        pCamera.lookAt(0, 1.3, 0);
+        const pCamera = new THREE.PerspectiveCamera(22, width / height, 0.1, 100);
 
         const pRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         pRenderer.setSize(width, height);
         pRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        pRenderer.outputEncoding = THREE.sRGBEncoding;
         containerEl.appendChild(pRenderer.domElement);
 
-        var ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+        var ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
         pScene.add(ambientLight);
-        var dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-        dirLight.position.set(1, 2, 2);
-        pScene.add(dirLight);
-        var rimLight = new THREE.DirectionalLight(0x00ff41, 0.3);
-        rimLight.position.set(-1, 1, -1);
+        var frontLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        frontLight.position.set(0, 2, 3);
+        pScene.add(frontLight);
+        var fillLight = new THREE.DirectionalLight(0xccddff, 0.8);
+        fillLight.position.set(-2, 1, 1);
+        pScene.add(fillLight);
+        var rimLight = new THREE.DirectionalLight(0x00ff41, 0.4);
+        rimLight.position.set(1, 1, -2);
         pScene.add(rimLight);
 
         this.loader.load(glbPath, (gltf) => {
             var model = gltf.scene;
 
             var box = new THREE.Box3().setFromObject(model);
-            var size = box.getSize(new THREE.Vector3());
+            var fullSize = box.getSize(new THREE.Vector3());
             var center = box.getCenter(new THREE.Vector3());
+            var fullHeight = fullSize.y;
 
-            var maxDim = Math.max(size.x, size.y, size.z);
+            var maxDim = Math.max(fullSize.x, fullSize.y, fullSize.z);
             var scale = 2.0 / maxDim;
             model.scale.setScalar(scale);
 
@@ -2193,15 +2268,14 @@ const CharacterPreview = {
 
             pScene.add(model);
 
-            var preview = { scene: pScene, camera: pCamera, renderer: pRenderer, model: model, animId: null };
-            this.previews[charId] = preview;
+            var scaledHeight = fullHeight * scale;
+            var headY = scaledHeight * 0.82;
+            pCamera.position.set(0, headY, 1.2);
+            pCamera.lookAt(0, headY - 0.05, 0);
 
-            var animate = () => {
-                preview.animId = requestAnimationFrame(animate);
-                model.rotation.y += 0.01;
-                pRenderer.render(pScene, pCamera);
-            };
-            animate();
+            pRenderer.render(pScene, pCamera);
+
+            this.previews[charId] = { scene: pScene, camera: pCamera, renderer: pRenderer, model: model, animId: null };
         }, undefined, (err) => {
             console.warn('Failed to load character:', charId, err);
         });
@@ -2912,14 +2986,24 @@ function buildStageList() {
         const btn = document.createElement('button');
         const isCleared = GameState.clearedStages.includes(stage.id);
         const isUnlocked = i === 0 || GameState.clearedStages.includes(STAGES[i - 1].id);
+        // Stage name is revealed only if the previous stage is cleared (stage 1 always shown)
+        const isRevealed = i === 0 || GameState.clearedStages.includes(STAGES[i - 1].id);
 
         btn.className = 'stage-btn';
         if (stage.id === 5) btn.classList.add('stage-btn-final');
         if (isCleared) btn.classList.add('stage-cleared');
         if (!isUnlocked) { btn.classList.add('stage-locked'); btn.disabled = true; }
 
-        const theme = lang === 'ja' ? stage.theme : stage.themeEn;
-        btn.innerHTML = `<span class="stage-name">${stage.name}</span><span class="stage-info">${theme} | ${stage.size} | ${stage.floors}F | ${stage.time}s</span>`;
+        var displayName, displayInfo;
+        if (isRevealed) {
+            const theme = lang === 'ja' ? stage.theme : stage.themeEn;
+            displayName = stage.name;
+            displayInfo = theme + ' | ' + stage.size + ' | ' + stage.floors + 'F | ' + stage.time + 's';
+        } else {
+            displayName = stage.id === 5 ? 'FINAL STAGE' : stage.name;
+            displayInfo = '???';
+        }
+        btn.innerHTML = '<span class="stage-name">' + displayName + '</span><span class="stage-info">' + displayInfo + '</span>';
 
         btn.addEventListener('click', () => {
             if (!isUnlocked) return;
