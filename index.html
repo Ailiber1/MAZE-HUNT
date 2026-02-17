@@ -4127,6 +4127,111 @@ function createOniPlayerModel(playerIndex) {
     return group;
 }
 
+function loadRemotePlayerGLB(group, charId, isOni) {
+    // Find character in both runner and enemy lists
+    var charData = CHARACTER_LIST.runners.find(function(c) { return c.id === charId; });
+    if (!charData) charData = CHARACTER_LIST.enemies.find(function(c) { return c.id === charId; });
+    if (!charData || !charData.file) return;
+
+    var loader = new THREE.GLTFLoader();
+    loader.load(charData.file, function(gltf) {
+        var glbModel = gltf.scene;
+        glbModel.updateMatrixWorld(true);
+
+        // Compute scale from skeleton bones (for Mixamo models) or bounding box
+        var boneBox = new THREE.Box3();
+        var bonePos = new THREE.Vector3();
+        var hasBones = false;
+        glbModel.traverse(function(child) {
+            if (child.isBone) {
+                child.getWorldPosition(bonePos);
+                boneBox.expandByPoint(bonePos);
+                hasBones = true;
+            }
+        });
+
+        var scale, center;
+        if (hasBones && !boneBox.isEmpty()) {
+            var boneSize = boneBox.getSize(new THREE.Vector3());
+            center = boneBox.getCenter(new THREE.Vector3());
+            var skeletonHeight = boneSize.y;
+            scale = (skeletonHeight > 0.01) ? (1.8 / skeletonHeight) : 1.0;
+            glbModel.scale.setScalar(scale);
+            glbModel.position.x = -center.x * scale;
+            glbModel.position.y = -boneBox.min.y * scale;
+            glbModel.position.z = -center.z * scale;
+        } else {
+            var box = new THREE.Box3().setFromObject(glbModel);
+            var size = box.getSize(new THREE.Vector3());
+            center = box.getCenter(new THREE.Vector3());
+            var maxDim = Math.max(size.x, size.y, size.z);
+            scale = (maxDim > 0.001) ? (1.8 / maxDim) : 1.0;
+            glbModel.scale.setScalar(scale);
+            glbModel.position.x = -center.x * scale;
+            glbModel.position.y = -box.min.y * scale;
+            glbModel.position.z = -center.z * scale;
+        }
+
+        // If oni team, apply dark-red material; otherwise keep original appearance
+        if (isOni) {
+            var oniBodyMat = new THREE.MeshStandardMaterial({
+                color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
+                emissive: 0xff0000, emissiveIntensity: 0.35,
+                side: THREE.FrontSide
+            });
+            glbModel.traverse(function(child) {
+                if (child.isLight) { child.intensity = 0; child.visible = false; }
+                if (child.isMesh) { child.frustumCulled = false; child.material = oniBodyMat.clone(); }
+            });
+        } else {
+            glbModel.traverse(function(child) {
+                if (child.isLight) { child.intensity = 0; child.visible = false; }
+                if (child.isMesh) { child.frustumCulled = false; }
+            });
+        }
+
+        // Remove fallback geometric meshes but keep nameSprite and speechBubble
+        var toRemove = [];
+        group.children.forEach(function(child) {
+            if (child === group.userData.nameSprite) return;
+            if (child.isSprite) return; // keep any sprites
+            toRemove.push(child);
+        });
+        toRemove.forEach(function(child) { group.remove(child); });
+        group.add(glbModel);
+        group.userData.glbLoaded = true;
+        group.userData.glbModel = glbModel;
+
+        // Setup animation
+        if (gltf.animations && gltf.animations.length > 0) {
+            var mixer = new THREE.AnimationMixer(glbModel);
+            group.userData.mixer = mixer;
+            group.userData.animations = gltf.animations;
+            var walkClip = null;
+            for (var i = 0; i < gltf.animations.length; i++) {
+                var name = gltf.animations[i].name.toLowerCase();
+                if (name.indexOf('walk') !== -1 || name.indexOf('run') !== -1) {
+                    walkClip = gltf.animations[i]; break;
+                }
+            }
+            if (!walkClip) walkClip = gltf.animations[0];
+            var action = mixer.clipAction(walkClip);
+            action.play();
+            group.userData.currentAction = action;
+        } else if (sharedAnimationsLoaded) {
+            var mixer = new THREE.AnimationMixer(glbModel);
+            group.userData.mixer = mixer;
+            if (sharedAnimations.run) {
+                var action = mixer.clipAction(sharedAnimations.run);
+                action.play();
+                group.userData.currentAction = action;
+            }
+        }
+    }, undefined, function(err) {
+        console.error('[MAZE-HUNT] Remote player GLB load failed:', charId, err);
+    });
+}
+
 function spawnRemotePlayers() {
     // Remove existing remote players
     Object.keys(GameState.remotePlayers).forEach(function(idx) {
@@ -4149,13 +4254,20 @@ function spawnRemotePlayers() {
         var isOniTeam = GameState.multiMode === 'teamBattle' &&
             GameState.teamAssignment[pi] === 'oni';
         var model = isOniTeam ? createOniPlayerModel(pi) : createPlayerModel(pi);
-        model.position.set(CL * 1.5 + pi * 2, 0, CL * 1.5);
+        var rSpawn = getSpawnPosition(pi, GameState.mazeCols, GameState.mazeRows);
+        model.position.set(rSpawn.x, 0, rSpawn.z);
         if (scene) scene.add(model);
+
+        // Load GLB character model if player selected one
+        var playerData = GameState.players[pi];
+        if (playerData && playerData.character) {
+            loadRemotePlayerGLB(model, playerData.character, isOniTeam);
+        }
 
         GameState.remotePlayers[pi] = {
             model: model,
-            position: { x: CL * 1.5 + pi * 2, y: 0, z: CL * 1.5 },
-            targetPosition: { x: CL * 1.5 + pi * 2, y: 0, z: CL * 1.5 },
+            position: { x: rSpawn.x, y: 0, z: rSpawn.z },
+            targetPosition: { x: rSpawn.x, y: 0, z: rSpawn.z },
             rotationY: 0,
             targetRotationY: 0,
             currentFloor: 0,
@@ -4204,15 +4316,17 @@ function updateRemotePlayers(delta) {
         rp.model.position.set(rp.position.x, rp.position.y, rp.position.z);
         rp.model.rotation.y = rp.rotationY;
 
-        // Animate legs (simple bob)
-        var legPhase = (Date.now() * 0.01) % (Math.PI * 2);
+        // Animate: use mixer for GLB models, fallback to leg bob for geometric
         var isMoving = Math.abs(rp.targetPosition.x - rp.position.x) > 0.05 ||
                        Math.abs(rp.targetPosition.z - rp.position.z) > 0.05;
-        if (isMoving) {
-            rp.model.children[2].rotation.x = Math.sin(legPhase) * 0.3;
-            rp.model.children[3].rotation.x = -Math.sin(legPhase) * 0.3;
-            rp.model.children[4].rotation.x = Math.sin(legPhase) * 0.2;
-            rp.model.children[5].rotation.x = -Math.sin(legPhase) * 0.2;
+        if (rp.model.userData.glbLoaded && rp.model.userData.mixer) {
+            rp.model.userData.mixer.update(delta);
+        } else if (isMoving) {
+            var legPhase = (Date.now() * 0.01) % (Math.PI * 2);
+            if (rp.model.children[2]) rp.model.children[2].rotation.x = Math.sin(legPhase) * 0.3;
+            if (rp.model.children[3]) rp.model.children[3].rotation.x = -Math.sin(legPhase) * 0.3;
+            if (rp.model.children[4]) rp.model.children[4].rotation.x = Math.sin(legPhase) * 0.2;
+            if (rp.model.children[5]) rp.model.children[5].rotation.x = -Math.sin(legPhase) * 0.2;
         }
 
         // Speech bubble timer
@@ -4335,12 +4449,17 @@ function placePinMarker() {
    ============================================ */
 function enterSpectatorMode() {
     GameState.isSpectating = true;
-    // Find first alive teammate
+    // Find first alive teammate (in team battle, only spectate same team)
+    var localTeam = GameState.teamAssignment ? GameState.teamAssignment[GameState.playerIndex] : null;
     var aliveTargets = [];
     Object.keys(GameState.remotePlayers).forEach(function(idx) {
-        if (GameState.remotePlayers[idx].alive) {
-            aliveTargets.push(parseInt(idx));
+        var pi = parseInt(idx);
+        if (!GameState.remotePlayers[pi].alive) return;
+        // In team battle, only spectate same team
+        if (GameState.multiMode === 'teamBattle' && localTeam) {
+            if (GameState.teamAssignment[pi] !== localTeam) return;
         }
+        aliveTargets.push(pi);
     });
     if (aliveTargets.length > 0) {
         GameState.spectateTarget = aliveTargets[0];
@@ -4350,11 +4469,15 @@ function enterSpectatorMode() {
 
 function switchSpectateTarget() {
     if (!GameState.isSpectating) return;
+    var localTeam = GameState.teamAssignment ? GameState.teamAssignment[GameState.playerIndex] : null;
     var aliveTargets = [];
     Object.keys(GameState.remotePlayers).forEach(function(idx) {
-        if (GameState.remotePlayers[idx].alive) {
-            aliveTargets.push(parseInt(idx));
+        var pi = parseInt(idx);
+        if (!GameState.remotePlayers[pi].alive) return;
+        if (GameState.multiMode === 'teamBattle' && localTeam) {
+            if (GameState.teamAssignment[pi] !== localTeam) return;
         }
+        aliveTargets.push(pi);
     });
     if (aliveTargets.length === 0) return;
     var currentIdx = aliveTargets.indexOf(GameState.spectateTarget);
@@ -4557,6 +4680,32 @@ function getMultiStageConfig(mode, stageNum) {
     return { cols: 10, rows: 10, floors: 1, oni: 1, time: 90, speedMul: 1.0 };
 }
 
+function getSpawnPosition(playerIndex, cols, rows) {
+    if (GameState.multiMode === 'teamBattle' && GameState.teamAssignment) {
+        var isOni = GameState.teamAssignment[playerIndex] === 'oni';
+        // Count how many same-team players have a lower index (for offset)
+        var teamOffset = 0;
+        for (var i = 0; i < playerIndex; i++) {
+            if (GameState.players[i] && GameState.teamAssignment[i] === GameState.teamAssignment[playerIndex]) {
+                teamOffset++;
+            }
+        }
+        if (isOni) {
+            // Hunters spawn near the far corner (bottom-right area)
+            var hx = (cols - 2 - teamOffset) * CL + CL / 2;
+            var hz = (rows - 2 - teamOffset) * CL + CL / 2;
+            return { x: hx, z: hz };
+        } else {
+            // Runners spawn near the start corner (top-left area) with spread
+            var rx = (1 + teamOffset) * CL + CL / 2;
+            var rz = (1 + teamOffset) * CL + CL / 2;
+            return { x: rx, z: rz };
+        }
+    }
+    // Default: all modes — each player near the start with slight offset
+    return { x: CL * 1.5 + playerIndex * 2, z: CL * 1.5 };
+}
+
 function startMultiplayerGame() {
     if (!GameState.isHost) return;
 
@@ -4614,6 +4763,11 @@ function launchMultiGame(config) {
     GameState.multiStagePoints = [0, 0, 0, 0];
     GameState.isSpectating = false;
     GameState.spectateTarget = -1;
+
+    // Team battle: single stage only
+    if (GameState.multiMode === 'teamBattle') {
+        GameState.multiMaxStages = 1;
+    }
 
     // Reset player alive status
     Object.keys(GameState.players).forEach(function(idx) {
@@ -4738,12 +4892,11 @@ function launchMultiGame(config) {
     // Preload shared Mixamo animations (Running/Walking/Idle)
     preloadSharedAnimations();
 
-    // Player start position (offset by playerIndex)
-    var startX = CL * 1.5 + GameState.playerIndex * 2;
-    var startZ = CL * 1.5;
-    camera.position.set(startX, PLAYER_HEIGHT, startZ);
+    // Player start position — scattered by team in team battle
+    var spawnPos = getSpawnPosition(GameState.playerIndex, cols, rows);
+    camera.position.set(spawnPos.x, PLAYER_HEIGHT, spawnPos.z);
     GameState.playerRotationY = 0;
-    GameState.playerPosition = { x: startX, y: PLAYER_HEIGHT, z: startZ };
+    GameState.playerPosition = { x: spawnPos.x, y: PLAYER_HEIGHT, z: spawnPos.z };
     GameState.stamina = 100;
     GameState.sprintLocked = false;
     GameState.alive = true;
@@ -6067,6 +6220,8 @@ function getStairProgress(pos, direction) {
 }
 
 var _stairTransitionCooldown = 0;
+var _stairMinProgress = 1.0; // Track minimum progress seen since entering stair cell
+var _lastStairCellKey = '';   // Track which stair cell we're on
 
 function updatePlayerY() {
     const floors = GameState.mazeFloors;
@@ -6090,10 +6245,23 @@ function updatePlayerY() {
         const toY = cell.connectsTo.floor * FLOOR_H + PLAYER_HEIGHT;
         camera.position.y = fromY + (toY - fromY) * clampedProgress;
 
-        // Floor switch when reaching the end (with debounce)
-        if (progress >= 0.95 && _stairTransitionCooldown <= 0) {
+        // Track minimum progress to ensure player traversed the stair properly
+        var stairKey = currentFloor + '_' + cellX + '_' + cellZ;
+        if (stairKey !== _lastStairCellKey) {
+            // Entered a new stair cell — reset tracking
+            _stairMinProgress = clampedProgress;
+            _lastStairCellKey = stairKey;
+        } else {
+            _stairMinProgress = Math.min(_stairMinProgress, clampedProgress);
+        }
+
+        // Floor switch: only if player traversed from low progress to high
+        // (entered from the correct side of the stair)
+        if (progress >= 0.95 && _stairTransitionCooldown <= 0 && _stairMinProgress < 0.4) {
             GameState.playerCurrentFloor = cell.connectsTo.floor;
-            _stairTransitionCooldown = 30; // ~0.5s at 60fps
+            _stairTransitionCooldown = 60; // ~1s at 60fps
+            _stairMinProgress = 1.0; // reset
+            _lastStairCellKey = '';
             updateFloorLabel();
         }
 
@@ -6101,6 +6269,8 @@ function updatePlayerY() {
     } else {
         camera.position.y = currentFloor * FLOOR_H + PLAYER_HEIGHT;
         GameState.onStairs = false;
+        _lastStairCellKey = '';
+        _stairMinProgress = 1.0;
     }
 }
 
@@ -10168,8 +10338,8 @@ function onMultiPlayerCaught() {
     GameState.alive = false;
     SyncLayer.reportCaught(GameState.playerIndex);
 
-    if (GameState.multiMode === 'coop') {
-        // Enter spectator mode instead of game over
+    if (GameState.multiMode === 'coop' || GameState.multiMode === 'teamBattle') {
+        // Enter spectator mode — watch alive teammates
         GameState.captureInProgress = true;
         document.getElementById('danger-frame').style.boxShadow = 'inset 0 0 60px rgba(255,0,0,0.6)';
         document.getElementById('danger-frame').style.display = 'block';
