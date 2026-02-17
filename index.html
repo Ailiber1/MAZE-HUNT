@@ -4261,9 +4261,11 @@ function createPlayerModel(playerIndex) {
 function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
     // Oni team player — MeshBasicMaterial always visible in dark maze
+    // skinning:true required for SkinnedMesh in Three.js r128
     var oniMat = new THREE.MeshBasicMaterial({
         color: ONI_CONFIG.bodyColor,
-        side: THREE.FrontSide
+        side: THREE.DoubleSide,
+        skinning: true
     });
     group.traverse(function(child) {
         if (child.isMesh && child.material) {
@@ -4322,7 +4324,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
         if (isOni) {
             var oniBodyMat = new THREE.MeshBasicMaterial({
                 color: ONI_CONFIG.bodyColor,
-                side: THREE.FrontSide
+                side: THREE.DoubleSide,
+                skinning: true
             });
             glbModel.traverse(function(child) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
@@ -6216,7 +6219,7 @@ const ONI_CONFIG = {
     //   - emissive too strong → red smoke on walls (when PointLights were used)
     //   - green flashlight (0x00ff88) cannot illuminate red surface (complementary colors)
     // MeshBasicMaterial ignores ALL lighting and always renders at the specified color.
-    bodyColor: 0x8B0000,  // CSS DarkRed = RGB(139,0,0) — clearly visible against dark background
+    bodyColor: 0xcc2211,  // Bright dark-red RGB(204,34,17) — visible silhouette in dark maze
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6619,7 +6622,7 @@ function createOniModel() {
     // This guarantees visibility in any lighting condition (dark maze, green flashlight, etc.)
     const mat = new THREE.MeshBasicMaterial({
         color: ONI_CONFIG.bodyColor,
-        side: THREE.FrontSide
+        side: THREE.DoubleSide
     });
 
     // === HEAD ===
@@ -7094,10 +7097,14 @@ function loadOniGLB(group, charId, stageId) {
         }
 
         // Strip embedded lights; replace ALL mesh materials with
-        // MeshBasicMaterial — always visible regardless of scene lighting
+        // MeshBasicMaterial — always visible regardless of scene lighting.
+        // CRITICAL: skinning:true is REQUIRED in Three.js r128 for SkinnedMesh.
+        // Without it, the bone transforms are ignored and vertices stay at origin → invisible body.
+        // DoubleSide ensures visibility regardless of face-winding in GLB exports.
         var oniBodyMat = new THREE.MeshBasicMaterial({
             color: ONI_CONFIG.bodyColor,
-            side: THREE.FrontSide
+            side: THREE.DoubleSide,
+            skinning: true
         });
         glbModel.traverse(function(child) {
             if (child.isLight) {
