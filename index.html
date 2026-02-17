@@ -3784,11 +3784,23 @@ function updateLobbyPlayerList() {
         container.appendChild(slot);
     }
 
-    // Enable start if host and 2+ players
+    // Enable start if host and conditions are met
     const playerCount = Object.keys(GameState.players).length;
     const startBtn = document.getElementById('btn-start-game');
-    if (GameState.isHost && playerCount >= 2) {
-        startBtn.disabled = false;
+    if (GameState.isHost) {
+        var canStart = playerCount >= 2;
+
+        // Team battle: both teams must have at least 1 player
+        if (canStart && GameState.multiMode === 'teamBattle') {
+            var oniCount = 0, runnerCount = 0;
+            Object.keys(GameState.players).forEach(function(idx) {
+                if (GameState.teamAssignment[parseInt(idx)] === 'oni') oniCount++;
+                else runnerCount++;
+            });
+            canStart = oniCount >= 1 && runnerCount >= 1;
+        }
+
+        startBtn.disabled = !canStart;
         startBtn.textContent = GameState.language === 'ja' ? 'ゲーム開始' : 'Start Game';
     }
 
@@ -4443,6 +4455,22 @@ function renderTeamAssignment() {
             runnerDiv.appendChild(item);
         }
     });
+
+    // Update start button based on team balance
+    if (GameState.isHost) {
+        var startBtn = document.getElementById('btn-start-game');
+        if (startBtn) {
+            var oniCount = 0, runnerCount = 0;
+            Object.keys(GameState.players).forEach(function(idx) {
+                if (GameState.players[idx]) {
+                    if (GameState.teamAssignment[parseInt(idx)] === 'oni') oniCount++;
+                    else runnerCount++;
+                }
+            });
+            var playerCount = oniCount + runnerCount;
+            startBtn.disabled = !(playerCount >= 2 && oniCount >= 1 && runnerCount >= 1);
+        }
+    }
 }
 
 /* ============================================
