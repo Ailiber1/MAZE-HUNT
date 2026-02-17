@@ -6563,8 +6563,7 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Strip embedded lights from GLB; hide fog/aura meshes;
-        // adjust opaque body materials for maze visibility
+        // Strip embedded lights from GLB; force all body meshes opaque & dark
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -6574,31 +6573,30 @@ function loadOniGLB(group, charId, stageId) {
                 child.frustumCulled = false;
                 if (child.material) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    // Check if ALL materials on this mesh are transparent (fog/aura mesh)
-                    var allTransparent = mats.every(function(m) {
-                        return m.transparent || m.alphaTest > 0;
+                    // Only hide meshes that are truly particle/fog effects:
+                    // no texture map, transparent, AND very low opacity
+                    var isFogEffect = mats.every(function(m) {
+                        return !m.map && (m.transparent || m.alphaTest > 0) && m.opacity < 0.3;
                     });
-                    if (allTransparent) {
-                        // Hide the entire MESH so nothing renders
+                    if (isFogEffect) {
                         child.visible = false;
                         return;
                     }
-                    // For mixed meshes: hide only the transparent sub-materials
+                    // Force all body meshes visible & opaque with dark ONI coloring
+                    child.visible = true;
                     mats.forEach(function(m) {
-                        if (m.transparent || m.alphaTest > 0) {
-                            m.opacity = 0;
-                            m.depthWrite = false;
-                            m.colorWrite = false;
-                            return;
-                        }
+                        m.transparent = false;
+                        m.alphaTest = 0;
+                        m.opacity = 1;
+                        m.depthWrite = true;
+                        m.colorWrite = true;
+                        m.side = THREE.FrontSide;
                         if (m.emissive) {
                             m.emissive.setHex(0x4a1010);
                             m.emissiveIntensity = 0.4;
                         }
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
-                        m.depthWrite = true;
-                        m.side = THREE.FrontSide;
                     });
                 }
             }
