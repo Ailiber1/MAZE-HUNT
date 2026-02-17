@@ -4260,12 +4260,11 @@ function createPlayerModel(playerIndex) {
 
 function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
-    // Oni team player — MeshBasicMaterial always visible in dark maze
-    // skinning:true required for SkinnedMesh in Three.js r128
-    var oniMat = new THREE.MeshBasicMaterial({
-        color: ONI_CONFIG.bodyColor,
-        side: THREE.DoubleSide,
-        skinning: true
+    // Oni team player — dark red self-glow + responds to flashlight
+    var oniMat = new THREE.MeshStandardMaterial({
+        color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
+        emissive: 0xff0000, emissiveIntensity: 0.35,
+        side: THREE.FrontSide
     });
     group.traverse(function(child) {
         if (child.isMesh && child.material) {
@@ -4322,10 +4321,10 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
         // If oni team, apply dark-red material; otherwise keep original appearance
         if (isOni) {
-            var oniBodyMat = new THREE.MeshBasicMaterial({
-                color: ONI_CONFIG.bodyColor,
-                side: THREE.DoubleSide,
-                skinning: true
+            var oniBodyMat = new THREE.MeshStandardMaterial({
+                color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
+                emissive: 0xff0000, emissiveIntensity: 0.35,
+                side: THREE.FrontSide
             });
             glbModel.traverse(function(child) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
@@ -6176,24 +6175,24 @@ const PLAYER_RADIUS = 0.3;
 
 /* --- Circuit Colors (per stage) --- */
 const CIRCUIT_COLORS = {
-    1: { emissive: 0x00ff41, baseColor: 0x1a3a22, emissiveIntensity: 0.8 },
-    2: { emissive: 0x0066ff, baseColor: 0x142038, emissiveIntensity: 0.8 },
-    3: { emissive: 0xffcc00, baseColor: 0x302810, emissiveIntensity: 0.7 },
-    4: { emissive: 0xaa44ff, baseColor: 0x1e1030, emissiveIntensity: 0.8 },
-    5: { emissive: 0x881818, baseColor: 0x2a1010, emissiveIntensity: 0.6 },
-    scoreAttack: { emissive: 0x00ffff, baseColor: 0x102830, emissiveIntensity: 0.7 },
-    hidden: { emissive: 0xff6600, baseColor: 0x302010, emissiveIntensity: 0.85 },
+    1: { emissive: 0x00ff41, baseColor: 0x0a1a0e, emissiveIntensity: 0.5 },
+    2: { emissive: 0x0066ff, baseColor: 0x081018, emissiveIntensity: 0.5 },
+    3: { emissive: 0xffcc00, baseColor: 0x181408, emissiveIntensity: 0.45 },
+    4: { emissive: 0xaa44ff, baseColor: 0x0e0818, emissiveIntensity: 0.5 },
+    5: { emissive: 0x881818, baseColor: 0x180808, emissiveIntensity: 0.35 },
+    scoreAttack: { emissive: 0x00ffff, baseColor: 0x081418, emissiveIntensity: 0.45 },
+    hidden: { emissive: 0xff6600, baseColor: 0x181008, emissiveIntensity: 0.55 },
 };
 
 /* --- Stage Themes --- */
 const STAGE_THEMES = {
-    1: { fogColor: 0x000805, fogDensity: 0.06, pointLightColors: [0x00ff41, 0x00cc33, 0xccffcc], pointLightCount: 12, outdoor: false, skyColor: null },
-    2: { fogColor: 0x050810, fogDensity: 0.055, pointLightColors: [0x0066ff, 0x0044cc, 0xccccff], pointLightCount: 14, outdoor: false, skyColor: null },
-    3: { fogColor: 0x0a0814, fogDensity: 0.04, pointLightColors: [0xffcc00, 0xffaa00, 0xffffcc], pointLightCount: 16, outdoor: true, skyColor: 0x0a0818 },
-    4: { fogColor: 0x080604, fogDensity: 0.045, pointLightColors: [0xaa44ff, 0xff6600, 0xddccff], pointLightCount: 16, outdoor: true, skyColor: 0x0c0608 },
-    5: { fogColor: 0x100404, fogDensity: 0.05, pointLightColors: [0x881818, 0x663333, 0xffaaaa], pointLightCount: 12, outdoor: false, skyColor: null },
-    scoreAttack: { fogColor: 0x040a0a, fogDensity: 0.05, pointLightColors: [0x00ffff, 0x00cccc, 0xccffff], pointLightCount: 14, outdoor: false, skyColor: null },
-    hidden: { fogColor: 0x0c0804, fogDensity: 0.05, pointLightColors: [0xff6600, 0xff4400, 0xffddaa], pointLightCount: 16, outdoor: true, skyColor: 0x0e0804 },
+    1: { fogColor: 0x000805, fogDensity: 0.06, pointLightColors: [0x00ff41, 0x00cc33], pointLightCount: 6, outdoor: false, skyColor: null },
+    2: { fogColor: 0x050810, fogDensity: 0.055, pointLightColors: [0x0066ff, 0x0044cc], pointLightCount: 8, outdoor: false, skyColor: null },
+    3: { fogColor: 0x0a0814, fogDensity: 0.04, pointLightColors: [0xffcc00, 0xffaa00], pointLightCount: 10, outdoor: true, skyColor: 0x0a0818 },
+    4: { fogColor: 0x080604, fogDensity: 0.045, pointLightColors: [0xaa44ff, 0xff6600], pointLightCount: 10, outdoor: true, skyColor: 0x0c0608 },
+    5: { fogColor: 0x100404, fogDensity: 0.05, pointLightColors: [0x881818, 0x663333], pointLightCount: 6, outdoor: false, skyColor: null },
+    scoreAttack: { fogColor: 0x040a0a, fogDensity: 0.05, pointLightColors: [0x00ffff, 0x00cccc], pointLightCount: 8, outdoor: false, skyColor: null },
+    hidden: { fogColor: 0x0c0804, fogDensity: 0.05, pointLightColors: [0xff6600, 0xff4400], pointLightCount: 10, outdoor: true, skyColor: 0x0e0804 },
 };
 
 /* --- ONI Configuration --- */
@@ -6213,13 +6212,10 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — MeshBasicMaterial: always visible regardless of lighting
-    // Previous MeshStandardMaterial + emissive approaches failed 11+ times because:
-    //   - emissive too weak → body invisible in dark maze
-    //   - emissive too strong → red smoke on walls (when PointLights were used)
-    //   - green flashlight (0x00ff88) cannot illuminate red surface (complementary colors)
-    // MeshBasicMaterial ignores ALL lighting and always renders at the specified color.
-    bodyColor: 0xcc2211,  // Bright dark-red RGB(204,34,17) — visible silhouette in dark maze
+    // Visual config — MeshStandardMaterial: self-glow (emissive) + responds to flashlight
+    bodyColor: 0x4a0a0a,
+    emissiveColor: 0xff0000,
+    emissiveIntensity: 0.35,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6486,9 +6482,9 @@ function createStairs(cellX, cellZ, fromFloor, toFloor, direction, stageId) {
     const rampGeo = new THREE.BoxGeometry(CL, 0.15, CL * 1.42);
     const rampMat = new THREE.MeshStandardMaterial({
         color: colors.baseColor,
-        roughness: 0.5, metalness: 0.3,
+        roughness: 0.6, metalness: 0.3,
         emissive: colors.emissive,
-        emissiveIntensity: 0.25
+        emissiveIntensity: 0.08
     });
     const ramp = new THREE.Mesh(rampGeo, rampMat);
     ramp.rotation.x = -Math.atan2(FLOOR_H, CL);
@@ -6618,11 +6614,13 @@ function updatePlayerY() {
 function createOniModel() {
     const human = new THREE.Group();
     const SEG = 16;
-    // MeshBasicMaterial: ignores scene lighting, always renders at specified color.
-    // This guarantees visibility in any lighting condition (dark maze, green flashlight, etc.)
-    const mat = new THREE.MeshBasicMaterial({
-        color: ONI_CONFIG.bodyColor,
-        side: THREE.DoubleSide
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x4a0a0a,
+        roughness: 0.8,
+        metalness: 0.1,
+        emissive: 0xff0000,
+        emissiveIntensity: 0.35,
+        side: THREE.FrontSide
     });
 
     // === HEAD ===
@@ -6886,8 +6884,8 @@ function createOniModel() {
     buildLeg(-1);
     buildLeg(1);
 
-    // Oni uses MeshBasicMaterial (lighting-independent) for guaranteed visibility
-    // Dark red body (0x8B0000) + bright red eyes (0xff0000) = clear silhouette in dark maze
+    // Dark shadow oni — no PointLights, no bright emissive
+    // Visibility comes from subtle dark silhouette + glowing red eyes
 
     // === userData refs ===
     human.userData.headGroup = headG;
@@ -7097,14 +7095,14 @@ function loadOniGLB(group, charId, stageId) {
         }
 
         // Strip embedded lights; replace ALL mesh materials with
-        // MeshBasicMaterial — always visible regardless of scene lighting.
-        // CRITICAL: skinning:true is REQUIRED in Three.js r128 for SkinnedMesh.
-        // Without it, the bone transforms are ignored and vertices stay at origin → invisible body.
-        // DoubleSide ensures visibility regardless of face-winding in GLB exports.
-        var oniBodyMat = new THREE.MeshBasicMaterial({
-            color: ONI_CONFIG.bodyColor,
-            side: THREE.DoubleSide,
-            skinning: true
+        // dark red MeshStandardMaterial that self-glows AND responds to flashlight
+        var oniBodyMat = new THREE.MeshStandardMaterial({
+            color: 0x4a0a0a,
+            roughness: 0.8,
+            metalness: 0.1,
+            emissive: 0xff0000,
+            emissiveIntensity: 0.35,
+            side: THREE.FrontSide
         });
         glbModel.traverse(function(child) {
             if (child.isLight) {
@@ -8359,20 +8357,20 @@ function buildMaze3D(floors, cols, rows, stageId) {
     });
     GameState.stairMeshes = [];
 
-    // Wall material — brighter base + lower roughness for flashlight specular
+    // Wall material
     const wallMat = new THREE.MeshStandardMaterial({
         color: colors.baseColor,
         emissive: colors.emissive,
-        emissiveIntensity: colors.emissiveIntensity,
-        roughness: 0.55,
-        metalness: 0.3,
+        emissiveIntensity: colors.emissiveIntensity * 0.8,
+        roughness: 0.8,
+        metalness: 0.2,
     });
 
     // Wire material for edge glow
     const wireMat = new THREE.LineBasicMaterial({
         color: colors.emissive,
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.25,
     });
 
     // If floors is a single grid (backward compat), wrap it
@@ -8386,11 +8384,11 @@ function buildMaze3D(floors, cols, rows, stageId) {
         // Floor plane
         const floorGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
         const floorMat = new THREE.MeshStandardMaterial({
-            color: 0x152018,
+            color: 0x0a140c,
             emissive: colors.emissive,
-            emissiveIntensity: 0.2,
-            roughness: 0.75,
-            metalness: 0.15,
+            emissiveIntensity: 0.08,
+            roughness: 0.95,
+            metalness: 0.1,
         });
         const floorMesh = new THREE.Mesh(floorGeo, floorMat);
         floorMesh.rotation.x = -Math.PI / 2;
@@ -8401,7 +8399,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
         wallMeshes.push(floorMesh);
 
         // Floor grid lines
-        const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.25 });
+        const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.08 });
         for (let i = 0; i <= cols; i++) {
             const lineGeo = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(i * CL, yOffset + 0.01, 0),
@@ -8426,10 +8424,10 @@ function buildMaze3D(floors, cols, rows, stageId) {
         // Ceiling (indoor stages only) - skip tiles above stair cells
         if (!theme.outdoor) {
             const ceilMat = new THREE.MeshStandardMaterial({
-                color: 0x101810,
+                color: 0x080e08,
                 emissive: colors.emissive,
-                emissiveIntensity: 0.15,
-                roughness: 0.8,
+                emissiveIntensity: 0.05,
+                roughness: 0.95,
                 metalness: 0.1,
                 side: THREE.BackSide,
             });
@@ -8523,8 +8521,7 @@ function initThreeJS() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.4;
+    renderer.toneMapping = THREE.NoToneMapping;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
@@ -8535,8 +8532,8 @@ function initThreeJS() {
     camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
     scene.add(camera);
 
-    // Flashlight — warm white for surface-colour contrast (green light on green walls = no contrast)
-    flashlight = new THREE.SpotLight(0xffeedd, 5, 60, 0.7, 0.35, 1.2);
+    // Flashlight
+    flashlight = new THREE.SpotLight(0x00ff88, 3, 50, 0.6, 0.3, 1.5);
     flashlight.castShadow = true;
     flashlight.shadow.mapSize.width = 512;
     flashlight.shadow.mapSize.height = 512;
@@ -8571,22 +8568,22 @@ function setupLighting(stageId) {
     });
     pointLights = [];
 
-    // Ambient light — brighter fill so corridors aren't pitch black
-    const ambient = new THREE.AmbientLight(0x666666, 0.6);
+    // Ambient light
+    const ambient = new THREE.AmbientLight(colors.emissive, 0.3);
     scene.add(ambient);
     wallMeshes.push(ambient);
 
-    // Hemisphere light — sky/ground contrast for wall face differentiation
+    // Hemisphere light
     const hemi = new THREE.HemisphereLight(
-        theme.outdoor ? 0x556677 : 0x334455,
-        0x1a221a,
-        0.8
+        theme.outdoor ? 0x334455 : 0x1a2830,
+        0x0c100c,
+        0.5
     );
     scene.add(hemi);
     wallMeshes.push(hemi);
 
-    // Subtle exponential fog for depth cues (not too dense to obscure)
-    scene.fog = new THREE.FogExp2(0x050f08, 0.025);
+    // Fog removed — was causing dark/black fog obscuring the view
+    scene.fog = null;
 
     // Point lights scattered in passages (across all floors)
     const cols = GameState.mazeCols;
@@ -8616,12 +8613,12 @@ function setupLighting(stageId) {
         for (let i = 0; i < count; i++) {
             const cell = openCells[i];
             const color = theme.pointLightColors[i % theme.pointLightColors.length];
-            const pl = new THREE.PointLight(color, 2.5, 30, 1.0);
+            const pl = new THREE.PointLight(color, 1.2, 18, 1.2);
             pl.position.set(cell.x * CL + CL / 2, yOffset + WH * 0.8, cell.y * CL + CL / 2);
             scene.add(pl);
             pointLights.push({
                 light: pl,
-                baseIntensity: 0.8 + Math.random() * 0.4,
+                baseIntensity: 0.35 + Math.random() * 0.25,
                 flickerSpeed: 1.5 + Math.random() * 2,
                 flickerPhase: Math.random() * Math.PI * 2,
                 floor: f,
