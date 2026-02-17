@@ -3368,7 +3368,26 @@ async function registerUser() {
                     setTimeout(() => input.classList.remove('error-shake'), 400);
                     return false;
                 }
-                // Same device = re-login
+                // Same device = re-login — but check if name is active in a room
+                const roomsSnap = await database.ref('rooms').once('value');
+                if (roomsSnap.exists()) {
+                    const rooms = roomsSnap.val();
+                    for (const [rId, room] of Object.entries(rooms)) {
+                        if (room && room.players) {
+                            const activeInRoom = Object.values(room.players).some(function(p) {
+                                return p && p.username && p.username.trim() === name && p.sessionId !== GameState.sessionId;
+                            });
+                            if (activeInRoom) {
+                                errorEl.textContent = GameState.language === 'ja'
+                                    ? 'この名前は現在マルチプレイのルーム内で使用中です。別の名前を入力してください'
+                                    : 'This name is currently active in a multiplayer room. Please choose a different name.';
+                                input.classList.add('error-shake');
+                                setTimeout(() => input.classList.remove('error-shake'), 400);
+                                return false;
+                            }
+                        }
+                    }
+                }
                 GameState.storyClearedStage5 = data.stats?.storyClearedStage5 || false;
                 GameState.hiddenStageUnlocked = data.stats?.hiddenStageUnlocked || false;
                 GameState.clearedStages = data.stats?.clearedStages || [];
