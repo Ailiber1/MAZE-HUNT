@@ -6459,22 +6459,46 @@ function loadOniGLB(group, charId, stageId) {
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
         var glbModel = gltf.scene;
-
-        // CRITICAL: Force world matrix update before computing bounding box.
-        // Three.js r128 Box3.setFromObject() does NOT update matrixWorld,
-        // so Armature transforms (scale=0.01, rotation) are ignored,
-        // causing wildly incorrect scaling.
         glbModel.updateMatrixWorld(true);
 
-        var box = new THREE.Box3().setFromObject(glbModel);
-        var size = box.getSize(new THREE.Vector3());
-        var center = box.getCenter(new THREE.Vector3());
-        var maxDim = Math.max(size.x, size.y, size.z);
-        var scale = 1.8 / maxDim;
-        glbModel.scale.setScalar(scale);
-        glbModel.position.x = -center.x * scale;
-        glbModel.position.y = -box.min.y * scale;
-        glbModel.position.z = -center.z * scale;
+        // For SkinnedMesh (Mixamo models): Box3.setFromObject() is broken
+        // because it uses raw geometry positions (tiny after Armature 0.01 scale),
+        // but skinning already places vertices at correct world positions (~1.8m).
+        // Using Box3 gives scale=66x, making the skinned character ~60m tall.
+        // Instead, compute the skeleton extent from bone world positions.
+        var boneBox = new THREE.Box3();
+        var bonePos = new THREE.Vector3();
+        var hasBones = false;
+        glbModel.traverse(function(child) {
+            if (child.isBone) {
+                child.getWorldPosition(bonePos);
+                boneBox.expandByPoint(bonePos);
+                hasBones = true;
+            }
+        });
+
+        var scale, center;
+        if (hasBones && !boneBox.isEmpty()) {
+            var boneSize = boneBox.getSize(new THREE.Vector3());
+            center = boneBox.getCenter(new THREE.Vector3());
+            var skeletonHeight = boneSize.y;
+            scale = (skeletonHeight > 0.01) ? (1.8 / skeletonHeight) : 1.0;
+            glbModel.scale.setScalar(scale);
+            glbModel.position.x = -center.x * scale;
+            glbModel.position.y = -boneBox.min.y * scale;
+            glbModel.position.z = -center.z * scale;
+        } else {
+            // Fallback for non-skinned models
+            var box = new THREE.Box3().setFromObject(glbModel);
+            var size = box.getSize(new THREE.Vector3());
+            center = box.getCenter(new THREE.Vector3());
+            var maxDim = Math.max(size.x, size.y, size.z);
+            scale = (maxDim > 0.001) ? (1.8 / maxDim) : 1.0;
+            glbModel.scale.setScalar(scale);
+            glbModel.position.x = -center.x * scale;
+            glbModel.position.y = -box.min.y * scale;
+            glbModel.position.z = -center.z * scale;
+        }
 
         // Strip embedded lights from GLB; hide fog/aura meshes;
         // adjust opaque body materials for maze visibility
