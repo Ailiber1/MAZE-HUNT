@@ -1020,6 +1020,72 @@ body {
 }
 
 /* ============================================
+   Stage Select (Team Battle Lobby)
+   ============================================ */
+#stage-select-section {
+    display: none;
+    width: 100%;
+    max-width: 460px;
+    margin-top: 6px;
+}
+#stage-select-section.active { display: block; }
+.stage-select-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: center;
+    margin-bottom: 6px;
+    letter-spacing: 2px;
+}
+.stage-select-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+}
+.stage-select-btn {
+    font-family: 'Share Tech Mono', monospace;
+    padding: 8px 4px;
+    border: 1px solid rgba(0, 170, 42, 0.3);
+    background: rgba(0, 0, 0, 0.5);
+    color: var(--neon-green);
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s;
+    font-size: 11px;
+    line-height: 1.3;
+}
+.stage-select-btn .stage-num { display: block; font-size: 13px; font-weight: bold; letter-spacing: 1px; }
+.stage-select-btn .stage-theme { display: block; font-size: 9px; color: var(--text-dim); margin-top: 2px; }
+.stage-select-btn.selected {
+    border-color: var(--neon-green);
+    background: rgba(0, 255, 65, 0.12);
+    box-shadow: 0 0 10px var(--neon-green-glow);
+}
+.stage-select-btn:not(.disabled):hover {
+    border-color: var(--neon-green-dim);
+    background: rgba(0, 255, 65, 0.06);
+}
+.stage-select-btn.disabled {
+    cursor: default;
+    opacity: 0.7;
+}
+.stage-select-waiting {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 10px;
+    border: 1px dashed rgba(0, 170, 42, 0.2);
+    letter-spacing: 1px;
+}
+.stage-select-waiting .selected-stage-name {
+    color: var(--neon-green);
+    font-size: 14px;
+    margin-top: 4px;
+    text-shadow: 0 0 8px var(--neon-green-glow);
+}
+
+/* ============================================
    Quick Chat (Coop)
    ============================================ */
 #quick-chat-hud {
@@ -1775,6 +1841,10 @@ body {
     #lobby-screen .char-preview { height: 90px; }
     .lobby-bottom-btns { flex-direction: column; gap: 6px; }
     .lobby-bottom-btns .btn-thin { min-width: auto; }
+    .stage-select-grid { gap: 4px; }
+    .stage-select-btn { padding: 6px 2px; }
+    .stage-select-btn .stage-num { font-size: 12px; }
+    .stage-select-btn .stage-theme { font-size: 8px; }
 }
 @media (max-width: 360px) {
     #hud-timer { font-size: 16px; }
@@ -2132,6 +2202,10 @@ body {
                 <div class="lobby-mode-label" id="lobby-mode-display"></div>
             </div>
             <div class="lobby-top-right" id="lobby-player-list"></div>
+        </div>
+        <div id="stage-select-section">
+            <div class="stage-select-label">SELECT STAGE</div>
+            <div id="stage-select-content"></div>
         </div>
         <div id="team-assignment">
             <div class="team-section team-oni">
@@ -3568,10 +3642,12 @@ function joinRoom() {
 function proceedJoinRoom(roomId) {
     GameState.roomId = roomId;
     GameState.selectedCharacter = null;
+    GameState.multiCurrentStage = 1;
     hideModal('lobby-modal');
     showScreen('lobby-screen');
     updateLobbyDisplay();
     updateRoleSelectVisibility();
+    updateStageSelectVisibility();
     buildCharacterGrid(GameState.multiMode);
 
     var roomRef = database.ref('rooms/' + roomId);
@@ -3585,6 +3661,7 @@ function proceedJoinRoom(roomId) {
                 gameMode: GameState.multiMode,
                 currentStage: 1,
                 maxStages: 5,
+                selectedStage: 1,
                 host: GameState.sessionId,
                 players: {
                     0: {
@@ -3672,6 +3749,7 @@ function proceedJoinRoom(roomId) {
             GameState.playerIndex = emptySlot;
             GameState.multiMode = data.gameMode;
             if (data.teamAssignment) GameState.teamAssignment = data.teamAssignment;
+            if (data.selectedStage) GameState.multiCurrentStage = data.selectedStage;
             roomRef.child('players/' + emptySlot).set({
                 username: GameState.username || ('PLAYER ' + (emptySlot + 1)),
                 sessionId: GameState.sessionId,
@@ -3682,6 +3760,8 @@ function proceedJoinRoom(roomId) {
             roomRef.child('players/' + emptySlot).onDisconnect().remove();
         }
         updateLobbyDisplay();
+        updateRoleSelectVisibility();
+        updateStageSelectVisibility();
 
         // Listen for player changes
         roomRef.child('players').on('value', function(pSnap) {
@@ -3702,6 +3782,15 @@ function proceedJoinRoom(roomId) {
                     renderTeamAssignment();
                     buildCharacterGrid('teamBattle');
                 }
+            }
+        });
+
+        // Listen for selected stage changes (team battle)
+        roomRef.child('selectedStage').on('value', function(stSnap) {
+            var stage = stSnap.val();
+            if (stage && GameState.multiMode === 'teamBattle') {
+                GameState.multiCurrentStage = stage;
+                buildStageSelectGrid();
             }
         });
 
@@ -3726,6 +3815,7 @@ function proceedJoinRoom(roomId) {
                 showScreen('lobby-screen');
                 updateLobbyDisplay();
                 updateLobbyPlayerList();
+                updateStageSelectVisibility();
             }
         });
     });
@@ -3819,6 +3909,7 @@ function leaveLobby() {
         roomRef.child('players').off();
         roomRef.child('status').off();
         roomRef.child('teamAssignment').off();
+        roomRef.child('selectedStage').off();
         if (GameState.playerIndex !== null) {
             roomRef.child('players/' + GameState.playerIndex).remove();
         }
@@ -3835,6 +3926,7 @@ function leaveLobby() {
     GameState.teamAssignment = {};
     GameState.selectedCharacter = null;
     document.getElementById('team-assignment').classList.remove('active');
+    document.getElementById('stage-select-section').classList.remove('active');
     showScreen('title-screen');
 }
 
@@ -5273,26 +5365,102 @@ function nextMultiStage() {
 }
 
 function rematchMulti() {
+    // Team battle: reset to stage 1 default (host can re-select)
     GameState.multiCurrentStage = 1;
     GameState.multiPoints = [0, 0, 0, 0];
     GameState.teamScores = { oni: 0, runner: 0 };
     GameState.teamRound = 1;
 
     if (GameState.isHost && firebaseReady && GameState.roomId) {
-        database.ref('rooms/' + GameState.roomId).update({
-            status: 'waiting',
-            currentStage: 1
-        });
+        var updateData = { status: 'waiting', currentStage: 1 };
+        if (GameState.multiMode === 'teamBattle') {
+            updateData.selectedStage = 1;
+        }
+        database.ref('rooms/' + GameState.roomId).update(updateData);
     }
     showScreen('lobby-screen');
     updateLobbyDisplay();
     updateLobbyPlayerList();
+    updateStageSelectVisibility();
 }
 
 function backToMultiTitle() {
     SyncLayer.disconnect();
     leaveLobby();
     backToTitle();
+}
+
+/* ============================================
+   Stage Selection (Team Battle Lobby)
+   ============================================ */
+function updateStageSelectVisibility() {
+    var section = document.getElementById('stage-select-section');
+    if (!section) return;
+    if (GameState.multiMode === 'teamBattle') {
+        section.classList.add('active');
+        var label = section.querySelector('.stage-select-label');
+        if (label) {
+            label.textContent = GameState.language === 'ja' ? 'ステージ選択' : 'SELECT STAGE';
+        }
+        buildStageSelectGrid();
+    } else {
+        section.classList.remove('active');
+    }
+}
+
+function buildStageSelectGrid() {
+    var container = document.getElementById('stage-select-content');
+    if (!container) return;
+
+    var stageNames = [
+        { id: 1, name: 'STAGE 1', theme: '地下研究所', themeEn: 'Cyber Lab' },
+        { id: 2, name: 'STAGE 2', theme: '廃工場', themeEn: 'Factory' },
+        { id: 3, name: 'STAGE 3', theme: '夜の西洋街路', themeEn: 'Night Streets' },
+        { id: 4, name: 'STAGE 4', theme: '江戸の夜村', themeEn: 'Edo Village' },
+        { id: 5, name: 'STAGE 5', theme: '崩壊データセンター', themeEn: 'Data Center' }
+    ];
+
+    var selected = GameState.multiCurrentStage || 1;
+
+    if (GameState.isHost) {
+        // Host: show clickable stage buttons
+        var html = '<div class="stage-select-grid">';
+        stageNames.forEach(function(s) {
+            var isSelected = s.id === selected;
+            var themeName = GameState.language === 'ja' ? s.theme : s.themeEn;
+            html += '<button class="stage-select-btn' + (isSelected ? ' selected' : '') + '" data-stage="' + s.id + '">' +
+                '<span class="stage-num">' + s.id + '</span>' +
+                '<span class="stage-theme">' + themeName + '</span>' +
+                '</button>';
+        });
+        html += '</div>';
+        container.innerHTML = html;
+
+        // Add click handlers
+        container.querySelectorAll('.stage-select-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var stageId = parseInt(btn.dataset.stage);
+                GameState.multiCurrentStage = stageId;
+                // Update UI
+                container.querySelectorAll('.stage-select-btn').forEach(function(b) { b.classList.remove('selected'); });
+                btn.classList.add('selected');
+                // Sync to Firebase
+                if (firebaseReady && GameState.roomId) {
+                    database.ref('rooms/' + GameState.roomId + '/selectedStage').set(stageId);
+                }
+                SoundManager.playSE('click');
+            });
+        });
+    } else {
+        // Non-host: show read-only selected stage
+        var s = stageNames[selected - 1] || stageNames[0];
+        var themeName = GameState.language === 'ja' ? s.theme : s.themeEn;
+        var waitLabel = GameState.language === 'ja' ? 'ホストがステージを選択中...' : 'Host is selecting stage...';
+        container.innerHTML = '<div class="stage-select-waiting">' +
+            '<div>' + waitLabel + '</div>' +
+            '<div class="selected-stage-name">STAGE ' + selected + ' - ' + themeName + '</div>' +
+            '</div>';
+    }
 }
 
 /* ============================================
@@ -5577,7 +5745,10 @@ function initButtons() {
     // Start game (host)
     document.getElementById('btn-start-game').addEventListener('click', () => {
         if (!GameState.isHost) return;
-        GameState.multiCurrentStage = 1;
+        // Team battle: use host-selected stage; others start from stage 1
+        if (GameState.multiMode !== 'teamBattle') {
+            GameState.multiCurrentStage = 1;
+        }
         GameState.multiPoints = [0, 0, 0, 0];
         GameState.teamScores = { oni: 0, runner: 0 };
         GameState.teamRound = 1;
