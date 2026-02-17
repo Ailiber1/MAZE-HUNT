@@ -4711,6 +4711,8 @@ function launchMultiGame(config) {
 
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
+    // Preload shared Mixamo animations (Running/Walking/Idle)
+    preloadSharedAnimations();
 
     // Player start position (offset by playerIndex)
     var startX = CL * 1.5 + GameState.playerIndex * 2;
@@ -6452,6 +6454,68 @@ function getOniModelsForStage(stageId) {
     return assignment;
 }
 
+/* --- C3b: Preload shared Mixamo animations (Running/Walking/Idle) --- */
+var sharedAnimations = { running: null, walking: null, idle: null };
+var sharedAnimationsLoaded = false;
+
+function preloadSharedAnimations() {
+    var loader = new THREE.GLTFLoader();
+    var animFiles = [
+        { key: 'running', file: 'characters/Running.glb' },
+        { key: 'walking', file: 'characters/Walking.glb' },
+        { key: 'idle',    file: 'characters/Idle.glb' }
+    ];
+    var loaded = 0;
+    animFiles.forEach(function(entry) {
+        loader.load(entry.file, function(gltf) {
+            if (gltf.animations && gltf.animations.length > 0) {
+                // Merge per-bone clips into a single AnimationClip
+                var tracks = [];
+                gltf.animations.forEach(function(clip) {
+                    clip.tracks.forEach(function(track) {
+                        tracks.push(track);
+                    });
+                });
+                sharedAnimations[entry.key] = new THREE.AnimationClip(entry.key, -1, tracks);
+            }
+            loaded++;
+            if (loaded === animFiles.length) {
+                sharedAnimationsLoaded = true;
+                // Apply animations to any ONIs that loaded before animations were ready
+                applyPendingAnimations();
+            }
+        }, undefined, function(err) {
+            console.error('[MAZE-HUNT] Failed to load shared animation:', entry.file, err);
+            loaded++;
+            if (loaded === animFiles.length) {
+                sharedAnimationsLoaded = true;
+                applyPendingAnimations();
+            }
+        });
+    });
+}
+
+var pendingAnimationGroups = [];
+
+function applyPendingAnimations() {
+    pendingAnimationGroups.forEach(function(group) {
+        if (group.userData.glbModel && !group.userData.mixer) {
+            applySharedAnimation(group, group.userData.glbModel);
+        }
+    });
+    pendingAnimationGroups = [];
+}
+
+function applySharedAnimation(group, glbModel) {
+    var clip = sharedAnimations.running || sharedAnimations.walking;
+    if (!clip) return;
+    var mixer = new THREE.AnimationMixer(glbModel);
+    var action = mixer.clipAction(clip);
+    action.play();
+    group.userData.mixer = mixer;
+    group.userData.currentAction = action;
+}
+
 /* --- C4: Load GLB model into ONI group --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
@@ -6554,12 +6618,11 @@ function loadOniGLB(group, charId, stageId) {
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
 
-        // Setup animation mixer if GLB has animations
+        // Setup animation: prefer embedded animations, fallback to shared
         if (gltf.animations && gltf.animations.length > 0) {
             var mixer = new THREE.AnimationMixer(glbModel);
             group.userData.mixer = mixer;
             group.userData.animations = gltf.animations;
-            // Play walk/run animation by default, fallback to first clip
             var walkClip = null;
             for (var i = 0; i < gltf.animations.length; i++) {
                 var name = gltf.animations[i].name.toLowerCase();
@@ -6572,6 +6635,12 @@ function loadOniGLB(group, charId, stageId) {
             var action = mixer.clipAction(walkClip);
             action.play();
             group.userData.currentAction = action;
+        } else if (sharedAnimationsLoaded) {
+            // No embedded animations — use shared Running/Walking animation
+            applySharedAnimation(group, glbModel);
+        } else {
+            // Shared animations not yet loaded — queue for later
+            pendingAnimationGroups.push(group);
         }
 
         // Remove scene-level light (causes red smoke on walls)
@@ -10211,6 +10280,8 @@ function startGame(stageId) {
 
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
+    // Preload shared Mixamo animations (Running/Walking/Idle)
+    preloadSharedAnimations();
 
     // Place EXIT (story mode)
     if (stageId !== 'scoreAttack') {
