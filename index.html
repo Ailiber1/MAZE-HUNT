@@ -4260,10 +4260,9 @@ function createPlayerModel(playerIndex) {
 
 function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
-    // Oni team player — dark red self-glow + responds to flashlight
-    var oniMat = new THREE.MeshStandardMaterial({
-        color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
-        emissive: 0xff0000, emissiveIntensity: 0.35,
+    // Oni team player — MeshBasicMaterial always visible in dark maze
+    var oniMat = new THREE.MeshBasicMaterial({
+        color: ONI_CONFIG.bodyColor,
         side: THREE.FrontSide
     });
     group.traverse(function(child) {
@@ -4321,9 +4320,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
         // If oni team, apply dark-red material; otherwise keep original appearance
         if (isOni) {
-            var oniBodyMat = new THREE.MeshStandardMaterial({
-                color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
-                emissive: 0xff0000, emissiveIntensity: 0.35,
+            var oniBodyMat = new THREE.MeshBasicMaterial({
+                color: ONI_CONFIG.bodyColor,
                 side: THREE.FrontSide
             });
             glbModel.traverse(function(child) {
@@ -6212,10 +6210,13 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — MeshStandardMaterial: self-glow (emissive) + responds to flashlight
-    bodyColor: 0x4a0a0a,
-    emissiveColor: 0xff0000,
-    emissiveIntensity: 0.35,
+    // Visual config — MeshBasicMaterial: always visible regardless of lighting
+    // Previous MeshStandardMaterial + emissive approaches failed 11+ times because:
+    //   - emissive too weak → body invisible in dark maze
+    //   - emissive too strong → red smoke on walls (when PointLights were used)
+    //   - green flashlight (0x00ff88) cannot illuminate red surface (complementary colors)
+    // MeshBasicMaterial ignores ALL lighting and always renders at the specified color.
+    bodyColor: 0x8B0000,  // CSS DarkRed = RGB(139,0,0) — clearly visible against dark background
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6614,12 +6615,10 @@ function updatePlayerY() {
 function createOniModel() {
     const human = new THREE.Group();
     const SEG = 16;
-    const mat = new THREE.MeshStandardMaterial({
-        color: 0x4a0a0a,
-        roughness: 0.8,
-        metalness: 0.1,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.35,
+    // MeshBasicMaterial: ignores scene lighting, always renders at specified color.
+    // This guarantees visibility in any lighting condition (dark maze, green flashlight, etc.)
+    const mat = new THREE.MeshBasicMaterial({
+        color: ONI_CONFIG.bodyColor,
         side: THREE.FrontSide
     });
 
@@ -6884,8 +6883,8 @@ function createOniModel() {
     buildLeg(-1);
     buildLeg(1);
 
-    // Dark shadow oni — no PointLights, no bright emissive
-    // Visibility comes from subtle dark silhouette + glowing red eyes
+    // Oni uses MeshBasicMaterial (lighting-independent) for guaranteed visibility
+    // Dark red body (0x8B0000) + bright red eyes (0xff0000) = clear silhouette in dark maze
 
     // === userData refs ===
     human.userData.headGroup = headG;
@@ -7095,13 +7094,9 @@ function loadOniGLB(group, charId, stageId) {
         }
 
         // Strip embedded lights; replace ALL mesh materials with
-        // dark red MeshStandardMaterial that self-glows AND responds to flashlight
-        var oniBodyMat = new THREE.MeshStandardMaterial({
-            color: 0x4a0a0a,
-            roughness: 0.8,
-            metalness: 0.1,
-            emissive: 0xff0000,
-            emissiveIntensity: 0.35,
+        // MeshBasicMaterial — always visible regardless of scene lighting
+        var oniBodyMat = new THREE.MeshBasicMaterial({
+            color: ONI_CONFIG.bodyColor,
             side: THREE.FrontSide
         });
         glbModel.traverse(function(child) {
