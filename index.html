@@ -2406,6 +2406,7 @@ const GameState = {
     isRegistered: false,
     selectedRole: 'runner',
     deviceId: null,
+    sessionId: null,
     isMobile: false,
     hiddenStageUnlocked: false,
     storyClearedStage5: false,
@@ -3588,11 +3589,11 @@ function proceedJoinRoom(roomId) {
                 gameMode: GameState.multiMode,
                 currentStage: 1,
                 maxStages: 5,
-                host: GameState.deviceId,
+                host: GameState.sessionId,
                 players: {
                     0: {
                         username: GameState.username || 'PLAYER 1',
-                        deviceId: GameState.deviceId,
+                        sessionId: GameState.sessionId,
                         alive: true,
                         selectedRole: GameState.selectedRole || 'runner'
                     }
@@ -3646,14 +3647,14 @@ function proceedJoinRoom(roomId) {
                 return;
             }
 
-            // Duplicate deviceId check (prevent same device joining twice)
-            var dupDevice = Object.values(players).some(function(p) {
-                return p && p.deviceId === GameState.deviceId;
+            // Duplicate session check (prevent same tab joining twice)
+            var dupSession = Object.values(players).some(function(p) {
+                return p && p.sessionId === GameState.sessionId;
             });
-            if (dupDevice) {
+            if (dupSession) {
                 showNotification(GameState.language === 'ja'
-                    ? 'この端末は既にルームに参加中です'
-                    : 'This device is already in the room.', true);
+                    ? 'このタブは既にルームに参加中です'
+                    : 'This tab is already in the room.', true);
                 showScreen('title-screen');
                 SoundManager.playSE('error');
                 return;
@@ -3677,7 +3678,7 @@ function proceedJoinRoom(roomId) {
             if (data.teamAssignment) GameState.teamAssignment = data.teamAssignment;
             roomRef.child('players/' + emptySlot).set({
                 username: GameState.username || ('PLAYER ' + (emptySlot + 1)),
-                deviceId: GameState.deviceId,
+                sessionId: GameState.sessionId,
                 alive: true,
                 selectedRole: GameState.selectedRole || 'runner'
             });
@@ -4104,11 +4105,15 @@ function createPlayerModel(playerIndex) {
 
 function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
-    // Oni team player — dark self-lit silhouette (MeshBasicMaterial)
-    var oniMat = new THREE.MeshBasicMaterial({ color: 0x2a0808, side: THREE.FrontSide });
+    // Oni team player — dark red self-glow + responds to flashlight
+    var oniMat = new THREE.MeshStandardMaterial({
+        color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
+        emissive: 0xff0000, emissiveIntensity: 0.35,
+        side: THREE.FrontSide
+    });
     group.traverse(function(child) {
         if (child.isMesh && child.material) {
-            child.material = oniMat;
+            child.material = oniMat.clone();
         }
     });
     return group;
@@ -5701,8 +5706,10 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — MeshBasicMaterial (self-lit, no scene lighting needed)
-    bodyColor: 0x2a0808,
+    // Visual config — MeshStandardMaterial: self-glow (emissive) + responds to flashlight
+    bodyColor: 0x4a0a0a,
+    emissiveColor: 0xff0000,
+    emissiveIntensity: 0.35,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6084,8 +6091,12 @@ function updatePlayerY() {
 function createOniModel() {
     const human = new THREE.Group();
     const SEG = 16;
-    const mat = new THREE.MeshBasicMaterial({
-        color: 0x2a0808,
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x4a0a0a,
+        roughness: 0.8,
+        metalness: 0.1,
+        emissive: 0xff0000,
+        emissiveIntensity: 0.35,
         side: THREE.FrontSide
     });
 
@@ -6560,10 +6571,14 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Strip embedded lights; replace ALL mesh materials with dark
-        // MeshBasicMaterial so ONI body is always visible regardless of lighting
-        var oniBodyMat = new THREE.MeshBasicMaterial({
-            color: 0x2a0808,
+        // Strip embedded lights; replace ALL mesh materials with
+        // dark red MeshStandardMaterial that self-glows AND responds to flashlight
+        var oniBodyMat = new THREE.MeshStandardMaterial({
+            color: 0x4a0a0a,
+            roughness: 0.8,
+            metalness: 0.1,
+            emissive: 0xff0000,
+            emissiveIntensity: 0.35,
             side: THREE.FrontSide
         });
         glbModel.traverse(function(child) {
@@ -6574,13 +6589,7 @@ function loadOniGLB(group, charId, stageId) {
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-                // Replace material entirely with dark self-lit material
-                if (child.isSkinnedMesh) {
-                    // SkinnedMesh: clone material per-mesh to avoid shared state
-                    child.material = oniBodyMat.clone();
-                } else {
-                    child.material = oniBodyMat;
-                }
+                child.material = oniBodyMat.clone();
             }
         });
 
@@ -10514,6 +10523,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Register visibility/pause handlers FIRST (before anything that could throw)
     initVisibilityHandler();
     GameState.deviceId = getDeviceId();
+    GameState.sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     GameState.isMobile = isMobile();
     initFirebase();
     createMatrixBg();
