@@ -1015,12 +1015,8 @@ body {
     margin: 2px;
     font-size: 12px;
     border: 1px solid rgba(0,170,42,0.3);
-    cursor: pointer;
+    cursor: default;
     transition: all 0.2s;
-}
-.team-player-item:hover {
-    border-color: var(--neon-green);
-    box-shadow: 0 0 6px var(--neon-green-glow);
 }
 
 /* ============================================
@@ -4440,20 +4436,6 @@ function renderTeamAssignment() {
         item.style.color = teamColor;
         item.style.borderColor = teamColor;
         item.textContent = p.username;
-
-        if (GameState.isHost) {
-            item.addEventListener('click', function() {
-                var newRole = GameState.teamAssignment[pi] === 'oni' ? 'runner' : 'oni';
-                GameState.teamAssignment[pi] = newRole;
-                renderTeamAssignment();
-                buildCharacterGrid('teamBattle');
-                // Sync to Firebase
-                if (firebaseReady && GameState.roomId) {
-                    database.ref('rooms/' + GameState.roomId + '/teamAssignment').set(GameState.teamAssignment);
-                    database.ref('rooms/' + GameState.roomId + '/players/' + pi + '/selectedRole').set(newRole);
-                }
-            });
-        }
 
         if (GameState.teamAssignment[pi] === 'oni') {
             oniDiv.appendChild(item);
