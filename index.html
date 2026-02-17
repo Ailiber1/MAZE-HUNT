@@ -4104,12 +4104,11 @@ function createPlayerModel(playerIndex) {
 
 function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
-    // Oni team player — subtle dark tint, no bright glow
+    // Oni team player — dark self-lit silhouette (MeshBasicMaterial)
+    var oniMat = new THREE.MeshBasicMaterial({ color: 0x2a0808, side: THREE.FrontSide });
     group.traverse(function(child) {
         if (child.isMesh && child.material) {
-            child.material = child.material.clone();
-            child.material.emissive = new THREE.Color(0x4a1010);
-            child.material.emissiveIntensity = 0.4;
+            child.material = oniMat;
         }
     });
     return group;
@@ -5702,9 +5701,8 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — self-illumination so oni body is visible in dark maze
-    emissiveColor: 0x4a1010,
-    emissiveIntensity: 0.4,
+    // Visual config — MeshBasicMaterial (self-lit, no scene lighting needed)
+    bodyColor: 0x2a0808,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6086,9 +6084,8 @@ function updatePlayerY() {
 function createOniModel() {
     const human = new THREE.Group();
     const SEG = 16;
-    const mat = new THREE.MeshStandardMaterial({
-        color: 0x8b1a1a, roughness: 0.7, metalness: 0.1,
-        emissive: 0x4a1010, emissiveIntensity: 0.4,
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0x2a0808,
         side: THREE.FrontSide
     });
 
@@ -6563,7 +6560,12 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Strip embedded lights from GLB; force all body meshes opaque & dark
+        // Strip embedded lights; replace ALL mesh materials with dark
+        // MeshBasicMaterial so ONI body is always visible regardless of lighting
+        var oniBodyMat = new THREE.MeshBasicMaterial({
+            color: 0x2a0808,
+            side: THREE.FrontSide
+        });
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -6571,33 +6573,13 @@ function loadOniGLB(group, charId, stageId) {
             }
             if (child.isMesh) {
                 child.frustumCulled = false;
-                if (child.material) {
-                    var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    // Only hide meshes that are truly particle/fog effects:
-                    // no texture map, transparent, AND very low opacity
-                    var isFogEffect = mats.every(function(m) {
-                        return !m.map && (m.transparent || m.alphaTest > 0) && m.opacity < 0.3;
-                    });
-                    if (isFogEffect) {
-                        child.visible = false;
-                        return;
-                    }
-                    // Force all body meshes visible & opaque with dark ONI coloring
-                    child.visible = true;
-                    mats.forEach(function(m) {
-                        m.transparent = false;
-                        m.alphaTest = 0;
-                        m.opacity = 1;
-                        m.depthWrite = true;
-                        m.colorWrite = true;
-                        m.side = THREE.FrontSide;
-                        if (m.emissive) {
-                            m.emissive.setHex(0x4a1010);
-                            m.emissiveIntensity = 0.4;
-                        }
-                        m.metalness = Math.min(m.metalness || 0, 0.3);
-                        m.roughness = Math.max(m.roughness || 0.5, 0.5);
-                    });
+                child.visible = true;
+                // Replace material entirely with dark self-lit material
+                if (child.isSkinnedMesh) {
+                    // SkinnedMesh: clone material per-mesh to avoid shared state
+                    child.material = oniBodyMat.clone();
+                } else {
+                    child.material = oniBodyMat;
                 }
             }
         });
