@@ -6212,10 +6212,10 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — MeshStandardMaterial: self-glow (emissive) + responds to flashlight
-    bodyColor: 0x4a0a0a,
-    emissiveColor: 0xff0000,
-    emissiveIntensity: 0.35,
+    // Visual config — MeshBasicMaterial for GLB (always visible in dark), MeshStandardMaterial for fallback
+    bodyColor: 0x3a0808,
+    fallbackEmissiveColor: 0xff0000,
+    fallbackEmissiveIntensity: 0.8,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6619,8 +6619,8 @@ function createOniModel() {
         roughness: 0.8,
         metalness: 0.1,
         emissive: 0xff0000,
-        emissiveIntensity: 0.35,
-        side: THREE.FrontSide
+        emissiveIntensity: 0.8,
+        side: THREE.DoubleSide
     });
 
     // === HEAD ===
@@ -7095,14 +7095,15 @@ function loadOniGLB(group, charId, stageId) {
         }
 
         // Strip embedded lights; replace ALL mesh materials with
-        // dark red MeshStandardMaterial that self-glows AND responds to flashlight
-        var oniBodyMat = new THREE.MeshStandardMaterial({
-            color: 0x4a0a0a,
-            roughness: 0.8,
-            metalness: 0.1,
-            emissive: 0xff0000,
-            emissiveIntensity: 0.35,
-            side: THREE.FrontSide
+        // dark MeshBasicMaterial — guaranteed visible regardless of scene lighting.
+        // MeshStandardMaterial was invisible on SkinnedMesh in the dark maze because
+        // the diffuse component needs external light, and emissive alone was too faint.
+        // MeshBasicMaterial ignores lighting, so the set color always renders exactly.
+        // Using a very dark red to preserve horror atmosphere (eyes are still brightest).
+        var oniBodyMat = new THREE.MeshBasicMaterial({
+            color: 0x3a0808,
+            side: THREE.DoubleSide,
+            skinning: true
         });
         glbModel.traverse(function(child) {
             if (child.isLight) {
@@ -7112,6 +7113,8 @@ function loadOniGLB(group, charId, stageId) {
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
+                child.castShadow = false;
+                child.receiveShadow = false;
                 child.material = oniBodyMat.clone();
             }
         });
@@ -7176,15 +7179,45 @@ function preloadPlayerGLB() {
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
         var model = gltf.scene;
-        var box = new THREE.Box3().setFromObject(model);
-        var size = box.getSize(new THREE.Vector3());
-        var center = box.getCenter(new THREE.Vector3());
-        var maxDim = Math.max(size.x, size.y, size.z);
-        var scale = 1.7 / maxDim;
-        model.scale.setScalar(scale);
-        model.position.x = -center.x * scale;
-        model.position.y = -box.min.y * scale;
-        model.position.z = -center.z * scale;
+        model.updateMatrixWorld(true);
+
+        // Use bone-based scaling for SkinnedMesh (same approach as loadOniGLB).
+        // Box3.setFromObject() is broken for SkinnedMesh because it reads raw
+        // geometry positions (tiny after Armature 0.01 scale), giving wrong scale.
+        var boneBox = new THREE.Box3();
+        var bonePos = new THREE.Vector3();
+        var hasBones = false;
+        model.traverse(function(child) {
+            if (child.isBone) {
+                child.getWorldPosition(bonePos);
+                boneBox.expandByPoint(bonePos);
+                hasBones = true;
+            }
+        });
+
+        var scale, center;
+        if (hasBones && !boneBox.isEmpty()) {
+            var boneSize = boneBox.getSize(new THREE.Vector3());
+            center = boneBox.getCenter(new THREE.Vector3());
+            var skeletonHeight = boneSize.y;
+            scale = (skeletonHeight > 0.01) ? (1.7 / skeletonHeight) : 1.0;
+            model.scale.setScalar(scale);
+            model.position.x = -center.x * scale;
+            model.position.y = -boneBox.min.y * scale;
+            model.position.z = -center.z * scale;
+        } else {
+            // Fallback for non-skinned models
+            var box = new THREE.Box3().setFromObject(model);
+            var size = box.getSize(new THREE.Vector3());
+            center = box.getCenter(new THREE.Vector3());
+            var maxDim = Math.max(size.x, size.y, size.z);
+            scale = (maxDim > 0.001) ? (1.7 / maxDim) : 1.0;
+            model.scale.setScalar(scale);
+            model.position.x = -center.x * scale;
+            model.position.y = -box.min.y * scale;
+            model.position.z = -center.z * scale;
+        }
+
         GameState.playerGLBModel = model;
         if (gltf.animations && gltf.animations.length > 0) {
             GameState.playerGLBAnimations = gltf.animations;
@@ -7207,11 +7240,18 @@ function playCapturedDragAnimation(oni, capturePos) {
             ? THREE.SkeletonUtils.clone(GameState.playerGLBModel)
             : GameState.playerGLBModel.clone();
         playerGroup.add(playerModel);
-        // Setup animation for player model during drag
+        // Setup animation for player model during drag:
+        // prefer embedded animations, fall back to shared animations (Running/Walking/Idle)
+        // to avoid T-pose on characters without embedded clips (most Mixamo models).
+        var dragClip = null;
         if (GameState.playerGLBAnimations && GameState.playerGLBAnimations.length > 0) {
+            dragClip = GameState.playerGLBAnimations[0];
+        } else if (sharedAnimationsLoaded) {
+            dragClip = sharedAnimations.idle || sharedAnimations.walking || sharedAnimations.running;
+        }
+        if (dragClip) {
             dragPlayerMixer = new THREE.AnimationMixer(playerModel);
-            var pClip = GameState.playerGLBAnimations[0];
-            dragPlayerMixer.clipAction(pClip).play();
+            dragPlayerMixer.clipAction(dragClip).play();
         }
     } else {
         // Fallback: simple humanoid silhouette
