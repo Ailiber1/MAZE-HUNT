@@ -4414,18 +4414,6 @@ function initTeamAssignment() {
         }
     });
 
-    // Validate: at least 1 player on each team. If all same role, force last player to other team.
-    var oniCount = 0, runnerCount = 0;
-    playerKeys.forEach(function(idx) {
-        if (GameState.teamAssignment[parseInt(idx)] === 'oni') oniCount++;
-        else runnerCount++;
-    });
-    if (oniCount === 0 && playerKeys.length > 1) {
-        GameState.teamAssignment[parseInt(playerKeys[0])] = 'oni';
-    } else if (runnerCount === 0 && playerKeys.length > 1) {
-        GameState.teamAssignment[parseInt(playerKeys[playerKeys.length - 1])] = 'runner';
-    }
-
     renderTeamAssignment();
 }
 
@@ -4445,20 +4433,24 @@ function renderTeamAssignment() {
         var pi = parseInt(idx);
         var p = GameState.players[pi];
         if (!p) return;
+        var isOni = GameState.teamAssignment[pi] === 'oni';
+        var teamColor = isOni ? '#ff3366' : '#00aaff';
         var item = document.createElement('div');
         item.className = 'team-player-item';
-        item.style.color = PLAYER_COLOR_HEX[pi] || '#fff';
-        item.style.borderColor = PLAYER_COLOR_HEX[pi] || '#fff';
+        item.style.color = teamColor;
+        item.style.borderColor = teamColor;
         item.textContent = p.username;
 
         if (GameState.isHost) {
             item.addEventListener('click', function() {
-                GameState.teamAssignment[pi] = GameState.teamAssignment[pi] === 'oni' ? 'runner' : 'oni';
+                var newRole = GameState.teamAssignment[pi] === 'oni' ? 'runner' : 'oni';
+                GameState.teamAssignment[pi] = newRole;
                 renderTeamAssignment();
                 buildCharacterGrid('teamBattle');
                 // Sync to Firebase
                 if (firebaseReady && GameState.roomId) {
                     database.ref('rooms/' + GameState.roomId + '/teamAssignment').set(GameState.teamAssignment);
+                    database.ref('rooms/' + GameState.roomId + '/players/' + pi + '/selectedRole').set(newRole);
                 }
             });
         }
@@ -4557,6 +4549,24 @@ function getMultiStageConfig(mode, stageNum) {
 
 function startMultiplayerGame() {
     if (!GameState.isHost) return;
+
+    // Team battle: validate both teams have at least 1 player
+    if (GameState.multiMode === 'teamBattle') {
+        var playerKeys = Object.keys(GameState.players).filter(function(k) { return GameState.players[k]; });
+        var oniCount = 0, runnerCount = 0;
+        playerKeys.forEach(function(idx) {
+            if (GameState.teamAssignment[parseInt(idx)] === 'oni') oniCount++;
+            else runnerCount++;
+        });
+        if (playerKeys.length > 1 && (oniCount === 0 || runnerCount === 0)) {
+            showNotification(GameState.language === 'ja'
+                ? '両チームに最低1人ずつ必要です'
+                : 'Each team needs at least 1 player', true);
+            SoundManager.playSE('error');
+            return;
+        }
+    }
+
     CharacterPreview.stopAll();
 
     var stageConfig = getMultiStageConfig(GameState.multiMode, GameState.multiCurrentStage);
@@ -5166,6 +5176,7 @@ function initRoleSelectButtons() {
             // Sync to Firebase
             if (firebaseReady && GameState.roomId) {
                 database.ref('rooms/' + GameState.roomId + '/players/' + GameState.playerIndex + '/selectedRole').set(role);
+                database.ref('rooms/' + GameState.roomId + '/teamAssignment').set(GameState.teamAssignment);
             }
 
             // Reset character selection (role changed = different character pool)
