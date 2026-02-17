@@ -6459,6 +6459,13 @@ function loadOniGLB(group, charId, stageId) {
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
         var glbModel = gltf.scene;
+
+        // CRITICAL: Force world matrix update before computing bounding box.
+        // Three.js r128 Box3.setFromObject() does NOT update matrixWorld,
+        // so Armature transforms (scale=0.01, rotation) are ignored,
+        // causing wildly incorrect scaling.
+        glbModel.updateMatrixWorld(true);
+
         var box = new THREE.Box3().setFromObject(glbModel);
         var size = box.getSize(new THREE.Vector3());
         var center = box.getCenter(new THREE.Vector3());
