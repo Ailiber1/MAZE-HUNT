@@ -4108,8 +4108,8 @@ function createOniPlayerModel(playerIndex) {
     group.traverse(function(child) {
         if (child.isMesh && child.material) {
             child.material = child.material.clone();
-            child.material.emissive = new THREE.Color(0x1a0505);
-            child.material.emissiveIntensity = 0.06;
+            child.material.emissive = new THREE.Color(0x4a1010);
+            child.material.emissiveIntensity = 0.4;
         }
     });
     return group;
@@ -5702,10 +5702,9 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — no emissive glow (prevents red fog)
-    // Oni is visible via flashlight/stage lights + subtle eye glow
-    emissiveColor: 0x1a0505,
-    emissiveIntensity: 0.06,
+    // Visual config — self-illumination so oni body is visible in dark maze
+    emissiveColor: 0x4a1010,
+    emissiveIntensity: 0.4,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6089,7 +6088,7 @@ function createOniModel() {
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
         color: 0x8b1a1a, roughness: 0.7, metalness: 0.1,
-        emissive: 0x1a0505, emissiveIntensity: 0.06,
+        emissive: 0x4a1010, emissiveIntensity: 0.4,
         side: THREE.FrontSide
     });
 
@@ -6593,8 +6592,8 @@ function loadOniGLB(group, charId, stageId) {
                             return;
                         }
                         if (m.emissive) {
-                            m.emissive.setHex(0x1a0505);
-                            m.emissiveIntensity = 0.06;
+                            m.emissive.setHex(0x4a1010);
+                            m.emissiveIntensity = 0.4;
                         }
                         m.metalness = Math.min(m.metalness || 0, 0.3);
                         m.roughness = Math.max(m.roughness || 0.5, 0.5);
