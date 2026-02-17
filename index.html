@@ -1320,6 +1320,39 @@ body {
 }
 
 /* ============================================
+   Capture Notification (プレイヤーX確保)
+   ============================================ */
+#capture-notif {
+    position: fixed;
+    top: 140px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 310;
+    background: rgba(0, 0, 0, 0.85);
+    border: 2px solid #ff4444;
+    box-shadow: 0 0 20px rgba(255, 68, 68, 0.6), inset 0 0 10px rgba(255, 68, 68, 0.2);
+    padding: 12px 32px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 18px;
+    letter-spacing: 2px;
+    color: #ff4444;
+    text-shadow: 0 0 10px rgba(255, 68, 68, 0.8);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    white-space: nowrap;
+}
+#capture-notif.show {
+    opacity: 1;
+    animation: captureNotifFlash 0.4s ease-out;
+}
+@keyframes captureNotifFlash {
+    0%   { transform: translateX(-50%) scale(1.2); opacity: 0; }
+    50%  { transform: translateX(-50%) scale(1.05); opacity: 1; }
+    100% { transform: translateX(-50%) scale(1.0); opacity: 1; }
+}
+
+/* ============================================
    HUD Extended
    ============================================ */
 #hud-status {
@@ -2302,6 +2335,9 @@ body {
 
 <!-- Caught Text -->
 <div id="caught-text"></div>
+
+<!-- Capture Notification (プレイヤーX確保) -->
+<div id="capture-notif"></div>
 
 <!-- Disconnect Notification -->
 <div id="disconnect-notif"></div>
@@ -4708,6 +4744,29 @@ function renderTeamAssignment() {
 }
 
 /* ============================================
+   Phase 6: Capture Notification
+   ============================================ */
+var captureNotifTimer = null;
+function showCaptureNotification(playerIndex) {
+    var el = document.getElementById('capture-notif');
+    if (!el) return;
+    var pname = GameState.players[playerIndex]
+        ? GameState.players[playerIndex].username
+        : ('P' + (playerIndex + 1));
+    el.textContent = GameState.language === 'ja'
+        ? (pname + ' 確保')
+        : (pname + ' CAPTURED');
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+    SoundManager.playSE('captureImpact');
+    if (captureNotifTimer) clearTimeout(captureNotifTimer);
+    captureNotifTimer = setTimeout(function() {
+        el.classList.remove('show');
+    }, 3000);
+}
+
+/* ============================================
    Phase 6: Disconnect Handling
    ============================================ */
 function showDisconnectNotification(username) {
@@ -4817,6 +4876,61 @@ function getSpawnPosition(playerIndex, cols, rows) {
     return { x: CL * 1.5 + playerIndex * 2, z: CL * 1.5 };
 }
 
+function autoAssignCharacters() {
+    // Collect already-taken character IDs
+    var takenChars = {};
+    Object.keys(GameState.players).forEach(function(idx) {
+        var p = GameState.players[idx];
+        if (p && p.character) takenChars[p.character] = true;
+    });
+
+    Object.keys(GameState.players).forEach(function(idx) {
+        var pi = parseInt(idx);
+        var p = GameState.players[pi];
+        if (!p || p.character) return;
+
+        // Determine pool based on role
+        var isOni = GameState.multiMode === 'teamBattle' &&
+            GameState.teamAssignment[pi] === 'oni';
+        var pool = isOni ? CHARACTER_LIST.enemies : CHARACTER_LIST.runners;
+
+        // Pick first available character not taken by another player
+        var chosen = null;
+        for (var i = 0; i < pool.length; i++) {
+            if (!takenChars[pool[i].id]) {
+                chosen = pool[i];
+                break;
+            }
+        }
+        // Fallback: allow duplicates if all taken
+        if (!chosen) chosen = pool[Math.floor(Math.random() * pool.length)];
+
+        p.character = chosen.id;
+        takenChars[chosen.id] = true;
+
+        // Sync to Firebase
+        if (firebaseReady && GameState.roomId) {
+            database.ref('rooms/' + GameState.roomId + '/players/' + pi + '/character')
+                .set(chosen.id);
+        }
+
+        // Also set local selectedCharacter if this is the local player
+        if (pi === GameState.playerIndex) {
+            GameState.selectedCharacter = chosen;
+        }
+    });
+
+    // Ensure local player has selectedCharacter set even if they did select one
+    if (!GameState.selectedCharacter && GameState.playerIndex !== null) {
+        var localPlayer = GameState.players[GameState.playerIndex];
+        if (localPlayer && localPlayer.character) {
+            var allChars = CHARACTER_LIST.runners.concat(CHARACTER_LIST.enemies);
+            var found = allChars.find(function(c) { return c.id === localPlayer.character; });
+            if (found) GameState.selectedCharacter = found;
+        }
+    }
+}
+
 function startMultiplayerGame() {
     if (!GameState.isHost) return;
 
@@ -4838,6 +4952,9 @@ function startMultiplayerGame() {
     }
 
     CharacterPreview.stopAll();
+
+    // Auto-assign characters for players who haven't selected one
+    autoAssignCharacters();
 
     var stageConfig = getMultiStageConfig(GameState.multiMode, GameState.multiCurrentStage);
 
@@ -4868,6 +4985,24 @@ function startMultiplayerGame() {
 
 function launchMultiGame(config) {
     CharacterPreview.stopAll();
+
+    // Ensure local player's selectedCharacter is set from Firebase data
+    if (!GameState.selectedCharacter && GameState.playerIndex !== null) {
+        var localPlayer = GameState.players[GameState.playerIndex];
+        if (localPlayer && localPlayer.character) {
+            var allChars = CHARACTER_LIST.runners.concat(CHARACTER_LIST.enemies);
+            var found = allChars.find(function(c) { return c.id === localPlayer.character; });
+            if (found) GameState.selectedCharacter = found;
+        }
+        // Fallback: assign a random runner character if still no selection
+        if (!GameState.selectedCharacter) {
+            var isOni = GameState.multiMode === 'teamBattle' &&
+                GameState.teamAssignment[GameState.playerIndex] === 'oni';
+            var pool = isOni ? CHARACTER_LIST.enemies : CHARACTER_LIST.runners;
+            GameState.selectedCharacter = pool[Math.floor(Math.random() * pool.length)];
+        }
+    }
+
     GameState.gameMode = 'multi_' + GameState.multiMode;
     GameState.currentStage = GameState.multiCurrentStage;
     GameState.multiEscapeOrder = 0;
@@ -5083,6 +5218,8 @@ function launchMultiGame(config) {
             if (pdata.alive === false && rp.alive) {
                 rp.alive = false;
                 rp.model.visible = false;
+                // Show capture notification to all players
+                showCaptureNotification(pi);
             }
             if (pdata.escaped === true && !rp.escaped) {
                 rp.escaped = true;
@@ -5142,6 +5279,11 @@ function launchMultiGame(config) {
     // Mobile coop actions
     if (GameState.isMobile && GameState.multiMode === 'coop') {
         showMobileCoopActions();
+    }
+
+    // Play stage-specific BGM for multiplayer
+    if (SoundManager.bgmEnabled) {
+        SoundManager.playBGM(GameState.multiCurrentStage);
     }
 
     GameState.gameActive = true;
@@ -10519,6 +10661,8 @@ function checkTeamBattleCatch() {
                 SyncLayer.reportCaught(pi);
                 rp.alive = false;
                 rp.model.visible = false;
+                // Show capture notification on oni player's screen
+                showCaptureNotification(pi);
             }
         });
     }
@@ -10527,6 +10671,8 @@ function checkTeamBattleCatch() {
 function onMultiPlayerCaught() {
     GameState.alive = false;
     SyncLayer.reportCaught(GameState.playerIndex);
+    // Show capture notification for self (visible to this player)
+    showCaptureNotification(GameState.playerIndex);
 
     if (GameState.multiMode === 'coop' || GameState.multiMode === 'teamBattle') {
         // Enter spectator mode — watch alive teammates
@@ -10806,6 +10952,8 @@ function cleanupGame() {
     if (cvignette) cvignette.style.opacity = '0';
     const ctext = document.getElementById('caught-text');
     if (ctext) ctext.classList.remove('visible');
+    const captureNotif = document.getElementById('capture-notif');
+    if (captureNotif) captureNotif.classList.remove('show');
 
     // Clean up onis (scene lights, mixers, geometry, materials)
     GameState.onis.forEach(oni => {
