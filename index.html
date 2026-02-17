@@ -2406,6 +2406,7 @@ const GameState = {
     isRegistered: false,
     selectedRole: 'runner',
     deviceId: null,
+    sessionId: null,
     isMobile: false,
     hiddenStageUnlocked: false,
     storyClearedStage5: false,
@@ -3588,11 +3589,11 @@ function proceedJoinRoom(roomId) {
                 gameMode: GameState.multiMode,
                 currentStage: 1,
                 maxStages: 5,
-                host: GameState.deviceId,
+                host: GameState.sessionId,
                 players: {
                     0: {
                         username: GameState.username || 'PLAYER 1',
-                        deviceId: GameState.deviceId,
+                        sessionId: GameState.sessionId,
                         alive: true,
                         selectedRole: GameState.selectedRole || 'runner'
                     }
@@ -3646,14 +3647,14 @@ function proceedJoinRoom(roomId) {
                 return;
             }
 
-            // Duplicate deviceId check (prevent same device joining twice)
-            var dupDevice = Object.values(players).some(function(p) {
-                return p && p.deviceId === GameState.deviceId;
+            // Duplicate session check (prevent same tab joining twice)
+            var dupSession = Object.values(players).some(function(p) {
+                return p && p.sessionId === GameState.sessionId;
             });
-            if (dupDevice) {
+            if (dupSession) {
                 showNotification(GameState.language === 'ja'
-                    ? 'この端末は既にルームに参加中です'
-                    : 'This device is already in the room.', true);
+                    ? 'このタブは既にルームに参加中です'
+                    : 'This tab is already in the room.', true);
                 showScreen('title-screen');
                 SoundManager.playSE('error');
                 return;
@@ -3677,7 +3678,7 @@ function proceedJoinRoom(roomId) {
             if (data.teamAssignment) GameState.teamAssignment = data.teamAssignment;
             roomRef.child('players/' + emptySlot).set({
                 username: GameState.username || ('PLAYER ' + (emptySlot + 1)),
-                deviceId: GameState.deviceId,
+                sessionId: GameState.sessionId,
                 alive: true,
                 selectedRole: GameState.selectedRole || 'runner'
             });
@@ -10522,6 +10523,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Register visibility/pause handlers FIRST (before anything that could throw)
     initVisibilityHandler();
     GameState.deviceId = getDeviceId();
+    GameState.sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     GameState.isMobile = isMobile();
     initFirebase();
     createMatrixBg();
