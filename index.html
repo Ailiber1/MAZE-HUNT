@@ -7304,10 +7304,7 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Apply dark-red tint to existing materials WITHOUT triggering shader recompile.
-        // needsUpdate=true after texture removal breaks skinning shader in r128.
-        // Instead: tint color/emissive in-place (mutates Color objects, no recompile needed)
-        // and keep original textures (they'll be tinted by the dark color).
+        // === DIAGNOSTIC: Log full SkinnedMesh state ===
         var meshCount = 0, skinnedCount = 0;
         glbModel.traverse(function(child) {
             if (child.isLight) {
@@ -7316,52 +7313,57 @@ function loadOniGLB(group, charId, stageId) {
             }
             if (child.isMesh) {
                 meshCount++;
-                if (child.isSkinnedMesh) skinnedCount++;
+                var isSkinned = !!child.isSkinnedMesh;
+                if (isSkinned) skinnedCount++;
+                var geo = child.geometry;
+                var mat = Array.isArray(child.material) ? child.material[0] : child.material;
+                console.log('[MAZE-HUNT] ONI mesh:', child.name,
+                    '| type:', child.type,
+                    '| skinned:', isSkinned,
+                    '| mat.type:', mat.type,
+                    '| mat.skinning:', mat.skinning,
+                    '| mat.visible:', mat.visible,
+                    '| mat.transparent:', mat.transparent,
+                    '| mat.opacity:', mat.opacity,
+                    '| geo.index:', geo.index ? geo.index.count : 'null',
+                    '| geo.position:', geo.attributes.position ? geo.attributes.position.count : 'null',
+                    '| geo.skinWeight:', geo.attributes.skinWeight ? 'yes' : 'NO',
+                    '| geo.skinIndex:', geo.attributes.skinIndex ? 'yes' : 'NO',
+                    '| skeleton.bones:', isSkinned && child.skeleton ? child.skeleton.bones.length : 'N/A',
+                    '| child.visible:', child.visible,
+                    '| child.frustumCulled:', child.frustumCulled
+                );
+                // === DO NOT modify materials — test raw GLB rendering ===
                 child.frustumCulled = false;
                 child.visible = true;
-                child.castShadow = false;
-                child.receiveShadow = false;
-                var mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach(function(mat) {
-                    // Tint color/emissive in-place (no shader recompile)
-                    if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
-                    if (mat.emissive) mat.emissive.set(ONI_CONFIG.bodyEmissive);
-                    if ('emissiveIntensity' in mat) mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
-                    if ('roughness' in mat) mat.roughness = 1.0;
-                    if ('metalness' in mat) mat.metalness = 0.0;
-                    mat.side = THREE.DoubleSide;
-                    mat.transparent = false;
-                    mat.opacity = 1.0;
-                    // Set skinning for first-render shader compilation
-                    mat.skinning = true;
-                    // DO NOT call needsUpdate — keep original shader program intact
-                    // DO NOT remove texture maps — triggers shader recompile which breaks skinning
-                });
             }
         });
-        console.log('[MAZE-HUNT] ONI GLB loaded:', charId,
+        console.log('[MAZE-HUNT] ONI GLB:', charId,
             '| meshes:', meshCount, '| skinned:', skinnedCount,
-            '| scale:', glbModel.scale.x.toFixed(3),
-            '| pos:', glbModel.position.x.toFixed(2), glbModel.position.y.toFixed(2), glbModel.position.z.toFixed(2));
+            '| scale:', glbModel.scale.x.toFixed(4),
+            '| pos:', glbModel.position.x.toFixed(3), glbModel.position.y.toFixed(3), glbModel.position.z.toFixed(3));
 
-        // DEBUG: If no meshes found in GLB, log skeleton structure
-        if (meshCount === 0) {
-            console.warn('[MAZE-HUNT] ONI GLB has NO meshes! Children:');
-            glbModel.traverse(function(c) { console.log('  ', c.type, c.name); });
-        }
+        // === DIAGNOSTIC: Add bright green debug box to confirm model is in scene ===
+        var debugGeo = new THREE.BoxGeometry(0.3, 1.8, 0.3);
+        var debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+        var debugBox = new THREE.Mesh(debugGeo, debugMat);
+        debugBox.position.set(0, 0.9, 0);
+        glbModel.add(debugBox);
+        console.log('[MAZE-HUNT] DEBUG green wireframe box added to glbModel');
 
         // Remove ALL fallback children except eye meshes, then add GLB
         var toRemove = [];
         group.children.forEach(function(child) {
-            // Keep eye meshes (userData refs) and any non-light, non-mesh items
             if (child === group.userData.eyeR || child === group.userData.eyeL) return;
-            if (child.isLight) { toRemove.push(child); return; } // remove ANY remaining PointLights
+            if (child.isLight) { toRemove.push(child); return; }
             if (!child.isLight) toRemove.push(child);
         });
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
+        console.log('[MAZE-HUNT] group.children after GLB add:', group.children.length,
+            group.children.map(function(c) { return c.type + '(' + c.name + ')'; }).join(', '));
 
         // Setup animation: prefer embedded walk/run clips, fallback to shared animations
         var usedEmbedded = false;
