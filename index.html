@@ -4349,20 +4349,21 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
                 if (child.isMesh) {
                     child.frustumCulled = false;
-                    var matOpts = {
+                    child.material = new THREE.MeshStandardMaterial({
                         color: ONI_CONFIG.bodyColor,
                         emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
                         emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
                         roughness: 1.0,
                         metalness: 0.0,
                         side: THREE.DoubleSide
-                    };
+                    });
+                    // setValues() in r128 rejects skinning/morphTargets — set directly on instance
                     if (child.isSkinnedMesh) {
-                        matOpts.skinning = true;
-                        matOpts.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
-                        matOpts.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
+                        child.material.skinning = true;
+                        child.material.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
+                        child.material.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
                     }
-                    child.material = new THREE.MeshStandardMaterial(matOpts);
+                    child.material.needsUpdate = true;
                 }
             });
         } else {
@@ -7317,20 +7318,21 @@ function loadOniGLB(group, charId, stageId) {
                 child.visible = true;
                 child.castShadow = false;
                 child.receiveShadow = false;
-                var matOpts = {
+                child.material = new THREE.MeshStandardMaterial({
                     color: ONI_CONFIG.bodyColor,
                     emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
                     emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
                     roughness: 1.0,
                     metalness: 0.0,
                     side: THREE.DoubleSide
-                };
+                });
+                // setValues() in r128 rejects skinning/morphTargets — set directly on instance
                 if (child.isSkinnedMesh) {
-                    matOpts.skinning = true;
-                    matOpts.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
-                    matOpts.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
+                    child.material.skinning = true;
+                    child.material.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
+                    child.material.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
                 }
-                child.material = new THREE.MeshStandardMaterial(matOpts);
+                child.material.needsUpdate = true;
             }
         });
 
