@@ -7187,35 +7187,54 @@ function setCharacterAnimation(group, state) {
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
 function cpuSkinUpdate(cpuSkinData) {
     try {
-        var skeleton = cpuSkinData.skeleton;
         var srcPos = cpuSkinData.srcPositions;
         var dstPos = cpuSkinData.dstPositions;
+        var skeleton = cpuSkinData.skeleton;
         var si = cpuSkinData.skinIndex;
         var sw = cpuSkinData.skinWeight;
         var bindMatrix = cpuSkinData.bindMatrix;
         var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
 
-        // Update bone world matrices on DETACHED sourceScene (no parent contamination)
+        // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         skeleton.update();
         var bm = skeleton.boneMatrices;
 
-        // Validate bone matrices exist and are not NaN
-        if (!bm || bm.length === 0 || isNaN(bm[0])) return;
+        // Validate bone matrices
+        if (!bm || bm.length === 0 || isNaN(bm[0])) {
+            console.warn('[cpuSkin] Invalid bone matrices, skipping');
+            return;
+        }
+
+        // DEBUG: Log first frame values
+        if (!cpuSkinData._logged) {
+            cpuSkinData._logged = true;
+            console.log('[cpuSkin] bindMatrix:', JSON.stringify(bindMatrix.elements.slice(0,4)));
+            console.log('[cpuSkin] bindMatrixInverse:', JSON.stringify(bindMatrixInverse.elements.slice(0,4)));
+            console.log('[cpuSkin] boneMatrices[0..15]:', JSON.stringify(Array.from(bm).slice(0,16)));
+            console.log('[cpuSkin] srcPos[0]:', srcPos.getX(0), srcPos.getY(0), srcPos.getZ(0));
+            console.log('[cpuSkin] vertexCount:', srcPos.count);
+            // Check first vertex skin data
+            if (si && sw) {
+                console.log('[cpuSkin] skinIndex[0]:', si.getX(0), si.getY(0), si.getZ(0), si.getW(0));
+                console.log('[cpuSkin] skinWeight[0]:', sw.getX(0), sw.getY(0), sw.getZ(0), sw.getW(0));
+            }
+        }
 
         var bme = bindMatrix.elements;
         var bmie = bindMatrixInverse.elements;
         var count = srcPos.count;
+        var nanCount = 0;
+
         for (var i = 0; i < count; i++) {
-            // Read source vertex
             var vx = srcPos.getX(i), vy = srcPos.getY(i), vz = srcPos.getZ(i);
 
-            // Apply bindMatrix: transform vertex to skeleton space
+            // Step 1: bindMatrix * vertex
             var sx = bme[0]*vx + bme[4]*vy + bme[8]*vz + bme[12];
             var sy = bme[1]*vx + bme[5]*vy + bme[9]*vz + bme[13];
             var sz = bme[2]*vx + bme[6]*vy + bme[10]*vz + bme[14];
 
-            // Accumulate weighted bone transforms
+            // Step 2: Accumulate weighted bone transforms
             var rx = 0, ry = 0, rz = 0;
             var idx0 = si.getX(i), idx1 = si.getY(i), idx2 = si.getZ(i), idx3 = si.getW(i);
             var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
@@ -7245,18 +7264,30 @@ function cpuSkinUpdate(cpuSkinData) {
                 rz += (bm[o3+2]*sx + bm[o3+6]*sy + bm[o3+10]*sz + bm[o3+14]) * w3;
             }
 
-            // Apply bindMatrixInverse: transform back to mesh local space
+            // Step 3: bindMatrixInverse * result
             var fx = bmie[0]*rx + bmie[4]*ry + bmie[8]*rz + bmie[12];
             var fy = bmie[1]*rx + bmie[5]*ry + bmie[9]*rz + bmie[13];
             var fz = bmie[2]*rx + bmie[6]*ry + bmie[10]*rz + bmie[14];
 
-            // NaN guard: skip this vertex if result is invalid
-            if (fx !== fx || fy !== fy || fz !== fz) continue;
+            // NaN/Infinity guard
+            if (fx !== fx || fy !== fy || fz !== fz ||
+                Math.abs(fx) > 1000 || Math.abs(fy) > 1000 || Math.abs(fz) > 1000) {
+                nanCount++;
+                continue;
+            }
             dstPos.setXYZ(i, fx, fy, fz);
         }
+
+        // Log first frame result
+        if (!cpuSkinData._loggedResult) {
+            cpuSkinData._loggedResult = true;
+            console.log('[cpuSkin] Result vertex[0]:', dstPos.getX(0), dstPos.getY(0), dstPos.getZ(0));
+            console.log('[cpuSkin] NaN/overflow count:', nanCount, '/', count);
+        }
+
         dstPos.needsUpdate = true;
     } catch(e) {
-        console.error('[cpuSkin] Error:', e.message);
+        console.error('[cpuSkin] Error:', e.message, e.stack);
     }
 }
 
@@ -7939,16 +7970,13 @@ function updateOniAI(delta) {
             setCharacterAnimation(oni.group, oniAnimState);
         }
 
-        // ─── CPU Skinning update DISABLED for debugging ───
-        // TODO: re-enable after T-pose body visibility confirmed
-        /*
+        // ─── CPU Skinning update ───
         if (oni.group.userData.cpuSkin) {
             oni.group.userData.cpuSkin.frameCount++;
             if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
                 cpuSkinUpdate(oni.group.userData.cpuSkin);
             }
         }
-        */
     });
 }
 
