@@ -7247,13 +7247,53 @@ function loadOniGLB(group, charId, stageId) {
             group.add(diagCube);
             console.log('[ONI] STEP-3: Yellow diag cube added');
 
-            // Count meshes in GLB
+            // Count meshes and log skeleton state
             var meshInfo = [];
             glbModel.traverse(function(child) {
                 if (child.isMesh) {
                     meshInfo.push(child.name + '(' + child.type + ')');
                     child.frustumCulled = false;
                     child.visible = true;
+
+                    // Log skeleton details for SkinnedMesh
+                    if (child.isSkinnedMesh) {
+                        var sk = child.skeleton;
+                        console.log('[ONI] SkinnedMesh:', child.name,
+                            'skeleton:', sk ? 'exists' : 'NULL',
+                            'bones:', sk ? sk.bones.length : 0,
+                            'boneMatrices:', sk && sk.boneMatrices ? sk.boneMatrices.length : 0,
+                            'bindMatrix:', child.bindMatrix ? 'exists' : 'NULL',
+                            'geometry.skinIndex:', child.geometry.attributes.skinIndex ? 'exists' : 'MISSING',
+                            'geometry.skinWeight:', child.geometry.attributes.skinWeight ? 'exists' : 'MISSING');
+
+                        // TEST: Create a REGULAR Mesh from the same geometry
+                        // This tests if the geometry is valid without skinning
+                        var testGeo = child.geometry.clone();
+                        var testMesh = new THREE.Mesh(
+                            testGeo,
+                            new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true })
+                        );
+                        testMesh.frustumCulled = false;
+                        // The bind-pose vertices are at Armature scale (0.01), scale up
+                        testMesh.scale.setScalar(100);
+                        testMesh.position.set(0, 0, 0);
+                        group.add(testMesh);
+                        console.log('[ONI] TEST: Cyan wireframe regular Mesh added (100x scale)');
+
+                        // Also try: rebind skeleton
+                        if (sk) {
+                            try {
+                                sk.calculateInverses();
+                                sk.update();
+                                child.bind(sk, child.bindMatrix);
+                                console.log('[ONI] Skeleton rebound successfully');
+                            } catch(e2) {
+                                console.error('[ONI] Skeleton rebind error:', e2.message);
+                            }
+                        }
+                    }
+
+                    // Replace material with MeshBasicMaterial + wireframe + skinning
                     child.material = new THREE.MeshBasicMaterial({
                         color: 0xff0000,
                         wireframe: true,
