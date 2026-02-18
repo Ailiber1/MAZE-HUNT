@@ -7247,12 +7247,74 @@ function cpuSkinUpdate(cpuSkinData) {
             dbg.innerHTML = lines.join('<br>');
         }
 
-        // TEST: Simple pass-through copy (no transform)
-        // If body stays visible = buffer writing works, issue is in math
-        // If body disappears = buffer writing itself is broken
+        // Step-by-step CPU skinning test
+        // Mode 1: bind → unbind roundtrip (no bone matrices)
+        // Mode 2: full skinning with bone matrices
+        var TEST_MODE = 2;
         var count = srcPos.count;
-        for (var i = 0; i < count; i++) {
-            dstPos.setXYZ(i, srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i));
+        var _v = new THREE.Vector4();
+
+        if (TEST_MODE === 1) {
+            // Roundtrip test: bind then unbind - should produce original positions
+            for (var i = 0; i < count; i++) {
+                _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
+                _v.applyMatrix4(bindMatrix);
+                _v.applyMatrix4(bindMatrixInverse);
+                dstPos.setXYZ(i, _v.x, _v.y, _v.z);
+            }
+        } else if (TEST_MODE === 2) {
+            // Full CPU skinning with bone matrices
+            var _boneMat = new THREE.Matrix4();
+            var _temp = new THREE.Vector4();
+            var _result = new THREE.Vector4();
+
+            for (var i = 0; i < count; i++) {
+                _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
+                _v.applyMatrix4(bindMatrix);
+
+                _result.set(0, 0, 0, 0);
+                var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
+                var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
+
+                if (w0 > 0) {
+                    _boneMat.fromArray(bm, i0 * 16);
+                    _temp.copy(_v).applyMatrix4(_boneMat);
+                    _result.x += _temp.x * w0; _result.y += _temp.y * w0; _result.z += _temp.z * w0;
+                }
+                if (w1 > 0) {
+                    _boneMat.fromArray(bm, i1 * 16);
+                    _temp.copy(_v).applyMatrix4(_boneMat);
+                    _result.x += _temp.x * w1; _result.y += _temp.y * w1; _result.z += _temp.z * w1;
+                }
+                if (w2 > 0) {
+                    _boneMat.fromArray(bm, i2 * 16);
+                    _temp.copy(_v).applyMatrix4(_boneMat);
+                    _result.x += _temp.x * w2; _result.y += _temp.y * w2; _result.z += _temp.z * w2;
+                }
+                if (w3 > 0) {
+                    _boneMat.fromArray(bm, i3 * 16);
+                    _temp.copy(_v).applyMatrix4(_boneMat);
+                    _result.x += _temp.x * w3; _result.y += _temp.y * w3; _result.z += _temp.z * w3;
+                }
+
+                _result.w = 1;
+                _result.applyMatrix4(bindMatrixInverse);
+
+                // Debug first vertex on first frame
+                if (i === 0 && !cpuSkinData._finalLogged) {
+                    cpuSkinData._finalLogged = true;
+                    var dbg = document.getElementById('cpuSkinDebug');
+                    if (dbg) {
+                        dbg.innerHTML += '<br><b style="color:yellow">MODE2 FINAL[0]: ' +
+                            _result.x.toFixed(4) + ', ' + _result.y.toFixed(4) + ', ' + _result.z.toFixed(4) + '</b>' +
+                            '<br>src[0]: ' + srcPos.getX(0).toFixed(4) + ', ' + srcPos.getY(0).toFixed(4) + ', ' + srcPos.getZ(0).toFixed(4) +
+                            '<br>ratio: ' + (_result.x/srcPos.getX(0)).toFixed(2) + 'x, ' +
+                            (_result.y/srcPos.getY(0)).toFixed(2) + 'x, ' + (_result.z/srcPos.getZ(0)).toFixed(2) + 'x';
+                    }
+                }
+
+                dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+            }
         }
         dstPos.needsUpdate = true;
     } catch(e) {
