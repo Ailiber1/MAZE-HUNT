@@ -6637,12 +6637,8 @@ function updatePlayerY() {
 function createOniModel() {
     const human = new THREE.Group();
     const SEG = 16;
-    const mat = new THREE.MeshStandardMaterial({
-        color: ONI_CONFIG.bodyColor,
-        roughness: 1.0,
-        metalness: 0.0,
-        emissive: new THREE.Color(ONI_CONFIG.fallbackEmissiveColor),
-        emissiveIntensity: ONI_CONFIG.fallbackEmissiveIntensity,
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0x330808,
         side: THREE.DoubleSide
     });
 
@@ -7232,14 +7228,19 @@ function setCharacterAnimation(group, state) {
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
     if (!enemy) return;
-    console.log('[ONI-DEBUG] loadOniGLB called for', charId, 'file:', enemy.file);
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
-        console.log('[ONI-DEBUG] GLB loaded OK for', charId);
-        var glbModel = gltf.scene;
+        // SkeletonUtils.clone — same pattern as working playCapturedDragAnimation.
+        // gltf.scene directly does NOT render SkinnedMesh correctly,
+        // but SkeletonUtils.clone creates a clean copy that works.
+        var source = gltf.scene;
+        source.updateMatrixWorld(true);
+        var glbModel = THREE.SkeletonUtils
+            ? THREE.SkeletonUtils.clone(source)
+            : source.clone();
         glbModel.updateMatrixWorld(true);
 
-        // Bone-based scaling (Armature is 0.01 so bones give true world height)
+        // Bone-based scaling
         var boneBox = new THREE.Box3();
         var bonePos = new THREE.Vector3();
         var hasBones = false;
@@ -7272,53 +7273,34 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.y = -box.min.y * scale;
             glbModel.position.z = -center.z * scale;
         }
-        console.log('[ONI-DEBUG] scale:', scale, 'pos:', glbModel.position.toArray());
 
-        // Keep original GLTFLoader materials — DO NOT replace.
-        // Same pattern as working playCapturedDragAnimation.
-        // Only set frustumCulled=false, visible=true.
-        var meshCount = 0;
+        // Set frustumCulled=false, visible=true on all meshes.
+        // Use MeshBasicMaterial with wireframe (PROVEN to render SkinnedMesh).
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-                meshCount++;
-                console.log('[ONI-DEBUG] Mesh:', child.name,
-                    'type:', child.type,
-                    'isSkinned:', child.isSkinnedMesh,
-                    'mat:', child.material ? child.material.type : 'null',
-                    'skinning:', child.material ? child.material.skinning : 'N/A',
-                    'visible:', child.visible,
-                    'geo-verts:', child.geometry && child.geometry.attributes.position
-                        ? child.geometry.attributes.position.count : 0);
+                child.material = new THREE.MeshBasicMaterial({
+                    color: 0xff0000,
+                    wireframe: true,
+                    skinning: true
+                });
             }
         });
-        console.log('[ONI-DEBUG] Total meshes:', meshCount);
 
-        // Remove ALL fallback children except eye meshes, then add GLB
+        // Remove fallback children except eye meshes, then add GLB
         var toRemove = [];
         group.children.forEach(function(child) {
             if (child === group.userData.eyeR || child === group.userData.eyeL) return;
             toRemove.push(child);
         });
-        console.log('[ONI-DEBUG] Removing', toRemove.length, 'fallback children, keeping eyes');
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
-
-        // Add a PointLight to illuminate MeshStandardMaterial
-        // (same approach as working playCapturedDragAnimation line 7479)
-        var oniBodyLight = new THREE.PointLight(0xff2020, 0.8, 5);
-        oniBodyLight.position.set(0, 1.0, 0);
-        group.add(oniBodyLight);
-        group.userData.oniBodyLight = oniBodyLight;
-
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
-        console.log('[ONI-DEBUG] Model added. group.children:', group.children.length,
-            'group.visible:', group.visible, 'group.parent:', group.parent ? 'in scene' : 'DETACHED');
 
-        // Setup animation
+        // Setup animation — use clips from the ORIGINAL gltf (clone has geometry only)
         var usedEmbedded = false;
         if (gltf.animations && gltf.animations.length > 0) {
             group.userData.animations = gltf.animations;
@@ -7337,16 +7319,13 @@ function loadOniGLB(group, charId, stageId) {
                 action.play();
                 group.userData.currentAction = action;
                 usedEmbedded = true;
-                console.log('[ONI-DEBUG] Embedded animation playing:', walkClip.name);
             }
         }
         if (!usedEmbedded) {
             if (sharedAnimationsLoaded) {
                 applySharedAnimation(group, glbModel);
-                console.log('[ONI-DEBUG] Shared animation applied');
             } else {
                 pendingAnimationGroups.push(group);
-                console.log('[ONI-DEBUG] Queued for shared animation');
             }
         }
 
@@ -7354,24 +7333,6 @@ function loadOniGLB(group, charId, stageId) {
             scene.remove(group.userData.sceneLight);
             group.userData.sceneLight = null;
         }
-
-        // Delayed verification
-        setTimeout(function() {
-            console.log('[ONI-DEBUG] 3s check: group.visible=', group.visible,
-                'glbModel.visible=', glbModel.visible,
-                'children:', group.children.length,
-                'inScene:', group.parent !== null);
-            // Check if any mesh is actually in renderer's frustum
-            glbModel.traverse(function(ch) {
-                if (ch.isMesh) {
-                    var wp = new THREE.Vector3();
-                    ch.getWorldPosition(wp);
-                    console.log('[ONI-DEBUG] 3s mesh:', ch.name,
-                        'worldPos:', wp.toArray().map(function(v){return v.toFixed(2);}),
-                        'visible:', ch.visible, 'mat:', ch.material.type);
-                }
-            });
-        }, 3000);
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] GLB load FAILED for', charId, ':', err);
         group.userData.glbLoaded = false;
