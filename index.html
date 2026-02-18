@@ -7227,115 +7227,129 @@ function setCharacterAnimation(group, state) {
 /* --- C4: Load GLB model into ONI group --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
-    if (!enemy) return;
+    if (!enemy) { console.error('[ONI] No enemy for', charId); return; }
+    console.log('[ONI] STEP-1: loadOniGLB called, file=' + enemy.file);
+
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
-        // SkeletonUtils.clone — same pattern as working playCapturedDragAnimation.
-        // gltf.scene directly does NOT render SkinnedMesh correctly,
-        // but SkeletonUtils.clone creates a clean copy that works.
-        var source = gltf.scene;
-        source.updateMatrixWorld(true);
-        var glbModel = THREE.SkeletonUtils
-            ? THREE.SkeletonUtils.clone(source)
-            : source.clone();
-        glbModel.updateMatrixWorld(true);
+        console.log('[ONI] STEP-2: SUCCESS callback fired for ' + charId);
+        try {
+            var glbModel = gltf.scene;
+            glbModel.updateMatrixWorld(true);
 
-        // Bone-based scaling
-        var boneBox = new THREE.Box3();
-        var bonePos = new THREE.Vector3();
-        var hasBones = false;
-        glbModel.traverse(function(child) {
-            if (child.isBone) {
-                child.getWorldPosition(bonePos);
-                boneBox.expandByPoint(bonePos);
-                hasBones = true;
+            // DIAGNOSTIC: Bright yellow cube — appears if callback fires
+            var diagCube = new THREE.Mesh(
+                new THREE.BoxGeometry(0.6, 1.8, 0.4),
+                new THREE.MeshBasicMaterial({ color: 0xffff00 })
+            );
+            diagCube.position.set(0, 0.9, 0);
+            diagCube.frustumCulled = false;
+            group.add(diagCube);
+            console.log('[ONI] STEP-3: Yellow diag cube added');
+
+            // Count meshes in GLB
+            var meshInfo = [];
+            glbModel.traverse(function(child) {
+                if (child.isMesh) {
+                    meshInfo.push(child.name + '(' + child.type + ')');
+                    child.frustumCulled = false;
+                    child.visible = true;
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0xff0000,
+                        wireframe: true,
+                        skinning: true
+                    });
+                }
+            });
+            console.log('[ONI] STEP-4: GLB meshes=' + meshInfo.length + ': ' + meshInfo.join(', '));
+
+            // Bone-based scaling
+            var boneBox = new THREE.Box3();
+            var bonePos = new THREE.Vector3();
+            var hasBones = false;
+            glbModel.traverse(function(child) {
+                if (child.isBone) {
+                    child.getWorldPosition(bonePos);
+                    boneBox.expandByPoint(bonePos);
+                    hasBones = true;
+                }
+            });
+            var scale = 1.0, center;
+            if (hasBones && !boneBox.isEmpty()) {
+                var boneSize = boneBox.getSize(new THREE.Vector3());
+                center = boneBox.getCenter(new THREE.Vector3());
+                var skeletonHeight = boneSize.y;
+                scale = (skeletonHeight > 0.01) ? (1.8 / skeletonHeight) : 1.0;
+            } else {
+                var box = new THREE.Box3().setFromObject(glbModel);
+                var size = box.getSize(new THREE.Vector3());
+                center = box.getCenter(new THREE.Vector3());
+                var maxDim = Math.max(size.x, size.y, size.z);
+                scale = (maxDim > 0.001) ? (1.8 / maxDim) : 1.0;
+                if (!hasBones) { center = box.getCenter(new THREE.Vector3()); }
             }
-        });
-
-        var scale = 1.0, center;
-        if (hasBones && !boneBox.isEmpty()) {
-            var boneSize = boneBox.getSize(new THREE.Vector3());
-            center = boneBox.getCenter(new THREE.Vector3());
-            var skeletonHeight = boneSize.y;
-            scale = (skeletonHeight > 0.01) ? (1.8 / skeletonHeight) : 1.0;
             glbModel.scale.setScalar(scale);
             glbModel.position.x = -center.x * scale;
-            glbModel.position.y = -boneBox.min.y * scale;
+            glbModel.position.y = -(hasBones ? boneBox.min.y : new THREE.Box3().setFromObject(glbModel).min.y / scale) * scale;
             glbModel.position.z = -center.z * scale;
-        } else {
-            var box = new THREE.Box3().setFromObject(glbModel);
-            var size = box.getSize(new THREE.Vector3());
-            center = box.getCenter(new THREE.Vector3());
-            var maxDim = Math.max(size.x, size.y, size.z);
-            scale = (maxDim > 0.001) ? (1.8 / maxDim) : 1.0;
-            glbModel.scale.setScalar(scale);
-            glbModel.position.x = -center.x * scale;
-            glbModel.position.y = -box.min.y * scale;
-            glbModel.position.z = -center.z * scale;
-        }
+            console.log('[ONI] STEP-5: scale=' + scale.toFixed(4));
 
-        // Set frustumCulled=false, visible=true on all meshes.
-        // Use MeshBasicMaterial with wireframe (PROVEN to render SkinnedMesh).
-        glbModel.traverse(function(child) {
-            if (child.isLight) { child.intensity = 0; child.visible = false; }
-            if (child.isMesh) {
-                child.frustumCulled = false;
-                child.visible = true;
-                child.material = new THREE.MeshBasicMaterial({
-                    color: 0xff0000,
-                    wireframe: true,
-                    skinning: true
-                });
-            }
-        });
+            // Do NOT remove fallback body — keep everything for now.
+            // Just add GLB model on top.
+            group.add(glbModel);
+            group.userData.glbLoaded = true;
+            group.userData.glbModel = glbModel;
+            console.log('[ONI] STEP-6: GLB added to group. children=' + group.children.length +
+                ' groupVisible=' + group.visible + ' inScene=' + (group.parent !== null));
 
-        // Remove fallback children except eye meshes, then add GLB
-        var toRemove = [];
-        group.children.forEach(function(child) {
-            if (child === group.userData.eyeR || child === group.userData.eyeL) return;
-            toRemove.push(child);
-        });
-        toRemove.forEach(function(child) { group.remove(child); });
-        group.add(glbModel);
-        group.userData.glbLoaded = true;
-        group.userData.glbModel = glbModel;
-
-        // Setup animation — use clips from the ORIGINAL gltf (clone has geometry only)
-        var usedEmbedded = false;
-        if (gltf.animations && gltf.animations.length > 0) {
-            group.userData.animations = gltf.animations;
-            var walkClip = null;
-            for (var i = 0; i < gltf.animations.length; i++) {
-                var name = gltf.animations[i].name.toLowerCase();
-                if (name.indexOf('walk') !== -1 || name.indexOf('run') !== -1) {
-                    walkClip = gltf.animations[i];
-                    break;
+            // Setup animation
+            var usedEmbedded = false;
+            if (gltf.animations && gltf.animations.length > 0) {
+                group.userData.animations = gltf.animations;
+                var walkClip = null;
+                for (var i = 0; i < gltf.animations.length; i++) {
+                    var aname = gltf.animations[i].name.toLowerCase();
+                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
+                        walkClip = gltf.animations[i];
+                        break;
+                    }
+                }
+                if (walkClip) {
+                    var mixer = new THREE.AnimationMixer(glbModel);
+                    group.userData.mixer = mixer;
+                    mixer.clipAction(walkClip).play();
+                    group.userData.currentAction = mixer.clipAction(walkClip);
+                    usedEmbedded = true;
+                    console.log('[ONI] STEP-7: Embedded anim: ' + walkClip.name);
                 }
             }
-            if (walkClip) {
-                var mixer = new THREE.AnimationMixer(glbModel);
-                group.userData.mixer = mixer;
-                var action = mixer.clipAction(walkClip);
-                action.play();
-                group.userData.currentAction = action;
-                usedEmbedded = true;
+            if (!usedEmbedded) {
+                if (sharedAnimationsLoaded) {
+                    applySharedAnimation(group, glbModel);
+                    console.log('[ONI] STEP-7: Shared anim applied');
+                } else {
+                    pendingAnimationGroups.push(group);
+                    console.log('[ONI] STEP-7: Queued for shared anim');
+                }
             }
-        }
-        if (!usedEmbedded) {
-            if (sharedAnimationsLoaded) {
-                applySharedAnimation(group, glbModel);
-            } else {
-                pendingAnimationGroups.push(group);
-            }
-        }
 
-        if (group.userData.sceneLight) {
-            scene.remove(group.userData.sceneLight);
-            group.userData.sceneLight = null;
+            if (group.userData.sceneLight) {
+                scene.remove(group.userData.sceneLight);
+                group.userData.sceneLight = null;
+            }
+            console.log('[ONI] STEP-8: loadOniGLB complete for ' + charId);
+        } catch(e) {
+            console.error('[ONI] EXCEPTION in success callback:', e.message, e.stack);
         }
     }, undefined, function(err) {
-        console.error('[MAZE-HUNT] GLB load FAILED for', charId, ':', err);
+        console.error('[ONI] LOAD-FAILED for ' + charId + ':', err);
         group.userData.glbLoaded = false;
+        // Make fallback body bright on failure
+        group.traverse(function(child) {
+            if (child.isMesh && child !== group.userData.eyeR && child !== group.userData.eyeL) {
+                child.material = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+            }
+        });
     });
 }
 
