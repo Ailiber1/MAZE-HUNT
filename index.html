@@ -4306,91 +4306,49 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
-        // Use gltf.scene directly — same simple pattern as working capture animation
-        var glbModel = gltf.scene;
-        glbModel.updateMatrixWorld(true);
+        try {
+            var glbModel = gltf.scene;
+            glbModel.updateMatrixWorld(true);
 
-        // Compute scale from skeleton bones (for Mixamo models) or bounding box
-        var boneBox = new THREE.Box3();
-        var bonePos = new THREE.Vector3();
-        var hasBones = false;
-        glbModel.traverse(function(child) {
-            if (child.isBone) {
-                child.getWorldPosition(bonePos);
-                boneBox.expandByPoint(bonePos);
-                hasBones = true;
-            }
-        });
-
-        var scale, center;
-        if (hasBones && !boneBox.isEmpty()) {
-            var boneSize = boneBox.getSize(new THREE.Vector3());
-            center = boneBox.getCenter(new THREE.Vector3());
-            var skeletonHeight = boneSize.y;
-            scale = (skeletonHeight > 0.01) ? (1.8 / skeletonHeight) : 1.0;
-            glbModel.scale.setScalar(scale);
-            glbModel.position.x = -center.x * scale;
-            glbModel.position.y = -boneBox.min.y * scale;
-            glbModel.position.z = -center.z * scale;
-        } else {
-            var box = new THREE.Box3().setFromObject(glbModel);
-            var size = box.getSize(new THREE.Vector3());
-            center = box.getCenter(new THREE.Vector3());
-            var maxDim = Math.max(size.x, size.y, size.z);
-            scale = (maxDim > 0.001) ? (1.8 / maxDim) : 1.0;
-            glbModel.scale.setScalar(scale);
-            glbModel.position.x = -center.x * scale;
-            glbModel.position.y = -box.min.y * scale;
-            glbModel.position.z = -center.z * scale;
-        }
-
-        // Minimal processing: strip lights, disable frustum culling
-        glbModel.traverse(function(child) {
-            if (child.isLight) { child.intensity = 0; child.visible = false; }
-            if (child.isMesh) {
-                child.frustumCulled = false;
-                child.visible = true;
-            }
-        });
-
-        // Remove fallback geometric meshes but keep nameSprite and speechBubble
-        var toRemove = [];
-        group.children.forEach(function(child) {
-            if (child === group.userData.nameSprite) return;
-            if (child.isSprite) return; // keep any sprites
-            toRemove.push(child);
-        });
-        toRemove.forEach(function(child) { group.remove(child); });
-        group.add(glbModel);
-        group.userData.glbLoaded = true;
-        group.userData.glbModel = glbModel;
-
-        // Setup animation: prefer embedded walk/run clips, fallback to shared animations
-        var usedEmbedded = false;
-        if (gltf.animations && gltf.animations.length > 0) {
-            group.userData.animations = gltf.animations;
-            var walkClip = null;
-            for (var i = 0; i < gltf.animations.length; i++) {
-                var name = gltf.animations[i].name.toLowerCase();
-                if (name.indexOf('walk') !== -1 || name.indexOf('run') !== -1) {
-                    walkClip = gltf.animations[i]; break;
+            // Extract geometry from SkinnedMesh → regular Mesh (skinning bypass)
+            var mat = isOni
+                ? new THREE.MeshBasicMaterial({ color: ONI_CONFIG.bodyEmissive, side: THREE.DoubleSide })
+                : new THREE.MeshStandardMaterial({ color: 0x4488cc, roughness: 0.6, side: THREE.DoubleSide });
+            var allGeo = [];
+            glbModel.traverse(function(child) {
+                if (child.isMesh && child.geometry) {
+                    allGeo.push(child.geometry);
                 }
+            });
+            if (allGeo.length > 0) {
+                var refGeo = allGeo[0];
+                refGeo.computeBoundingBox();
+                var bb = refGeo.boundingBox;
+                var geoHeight = bb.max.y - bb.min.y;
+                var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+                var bodyGroup = new THREE.Group();
+                for (var gi = 0; gi < allGeo.length; gi++) {
+                    var regularMesh = new THREE.Mesh(allGeo[gi].clone(), mat);
+                    regularMesh.frustumCulled = false;
+                    bodyGroup.add(regularMesh);
+                }
+                bodyGroup.scale.setScalar(meshScale);
+                bodyGroup.position.y = -bb.min.y * meshScale;
+
+                // Remove fallback meshes but keep nameSprite and sprites
+                var toRemove = [];
+                group.children.forEach(function(child) {
+                    if (child === group.userData.nameSprite) return;
+                    if (child.isSprite) return;
+                    toRemove.push(child);
+                });
+                toRemove.forEach(function(child) { group.remove(child); });
+                group.add(bodyGroup);
+                group.userData.glbLoaded = true;
+                group.userData.glbModel = bodyGroup;
             }
-            if (walkClip) {
-                var mixer = new THREE.AnimationMixer(glbModel);
-                group.userData.mixer = mixer;
-                var action = mixer.clipAction(walkClip);
-                action.play();
-                group.userData.currentAction = action;
-                usedEmbedded = true;
-            }
-        }
-        if (!usedEmbedded) {
-            if (sharedAnimationsLoaded) {
-                applySharedAnimation(group, glbModel);
-            } else {
-                pendingAnimationGroups.push(group);
-            }
+        } catch(e) {
+            console.error('[MAZE-HUNT] Remote GLB error:', e.message);
         }
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] Remote player GLB load failed:', charId, err);
@@ -7227,169 +7185,77 @@ function setCharacterAnimation(group, state) {
 /* --- C4: Load GLB model into ONI group --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
-    if (!enemy) { console.error('[ONI] No enemy for', charId); return; }
-    console.log('[ONI] STEP-1: loadOniGLB called, file=' + enemy.file);
-
+    if (!enemy) return;
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
-        console.log('[ONI] STEP-2: SUCCESS callback fired for ' + charId);
         try {
             var glbModel = gltf.scene;
             glbModel.updateMatrixWorld(true);
 
-            // DIAGNOSTIC: Bright yellow cube — appears if callback fires
-            var diagCube = new THREE.Mesh(
-                new THREE.BoxGeometry(0.6, 1.8, 0.4),
-                new THREE.MeshBasicMaterial({ color: 0xffff00 })
-            );
-            diagCube.position.set(0, 0.9, 0);
-            diagCube.frustumCulled = false;
-            group.add(diagCube);
-            console.log('[ONI] STEP-3: Yellow diag cube added');
+            // SkinnedMesh does NOT render in this environment (confirmed by diagnostic).
+            // Solution: extract geometry from SkinnedMesh, create regular Mesh.
+            // The bind-pose geometry is at Armature scale (0.01), needs ~100x scale.
+            var oniMat = new THREE.MeshBasicMaterial({
+                color: ONI_CONFIG.bodyEmissive,
+                side: THREE.DoubleSide
+            });
 
-            // Count meshes and log skeleton state
-            var meshInfo = [];
+            // Compute scale factor from bind-pose geometry bounding box
+            var allGeo = [];
             glbModel.traverse(function(child) {
-                if (child.isMesh) {
-                    meshInfo.push(child.name + '(' + child.type + ')');
-                    child.frustumCulled = false;
-                    child.visible = true;
-
-                    // Log skeleton details for SkinnedMesh
-                    if (child.isSkinnedMesh) {
-                        var sk = child.skeleton;
-                        console.log('[ONI] SkinnedMesh:', child.name,
-                            'skeleton:', sk ? 'exists' : 'NULL',
-                            'bones:', sk ? sk.bones.length : 0,
-                            'boneMatrices:', sk && sk.boneMatrices ? sk.boneMatrices.length : 0,
-                            'bindMatrix:', child.bindMatrix ? 'exists' : 'NULL',
-                            'geometry.skinIndex:', child.geometry.attributes.skinIndex ? 'exists' : 'MISSING',
-                            'geometry.skinWeight:', child.geometry.attributes.skinWeight ? 'exists' : 'MISSING');
-
-                        // TEST: Create a REGULAR Mesh from the same geometry
-                        // This tests if the geometry is valid without skinning
-                        var testGeo = child.geometry.clone();
-                        var testMesh = new THREE.Mesh(
-                            testGeo,
-                            new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true })
-                        );
-                        testMesh.frustumCulled = false;
-                        // The bind-pose vertices are at Armature scale (0.01), scale up
-                        testMesh.scale.setScalar(100);
-                        testMesh.position.set(0, 0, 0);
-                        group.add(testMesh);
-                        console.log('[ONI] TEST: Cyan wireframe regular Mesh added (100x scale)');
-
-                        // Also try: rebind skeleton
-                        if (sk) {
-                            try {
-                                sk.calculateInverses();
-                                sk.update();
-                                child.bind(sk, child.bindMatrix);
-                                console.log('[ONI] Skeleton rebound successfully');
-                            } catch(e2) {
-                                console.error('[ONI] Skeleton rebind error:', e2.message);
-                            }
-                        }
-                    }
-
-                    // Replace material with MeshBasicMaterial + wireframe + skinning
-                    child.material = new THREE.MeshBasicMaterial({
-                        color: 0xff0000,
-                        wireframe: true,
-                        skinning: true
-                    });
+                if (child.isMesh && child.geometry) {
+                    allGeo.push({ geo: child.geometry, mesh: child });
                 }
             });
-            console.log('[ONI] STEP-4: GLB meshes=' + meshInfo.length + ': ' + meshInfo.join(', '));
 
-            // Bone-based scaling
-            var boneBox = new THREE.Box3();
-            var bonePos = new THREE.Vector3();
-            var hasBones = false;
-            glbModel.traverse(function(child) {
-                if (child.isBone) {
-                    child.getWorldPosition(bonePos);
-                    boneBox.expandByPoint(bonePos);
-                    hasBones = true;
-                }
-            });
-            var scale = 1.0, center;
-            if (hasBones && !boneBox.isEmpty()) {
-                var boneSize = boneBox.getSize(new THREE.Vector3());
-                center = boneBox.getCenter(new THREE.Vector3());
-                var skeletonHeight = boneSize.y;
-                scale = (skeletonHeight > 0.01) ? (1.8 / skeletonHeight) : 1.0;
-            } else {
-                var box = new THREE.Box3().setFromObject(glbModel);
-                var size = box.getSize(new THREE.Vector3());
-                center = box.getCenter(new THREE.Vector3());
-                var maxDim = Math.max(size.x, size.y, size.z);
-                scale = (maxDim > 0.001) ? (1.8 / maxDim) : 1.0;
-                if (!hasBones) { center = box.getCenter(new THREE.Vector3()); }
-            }
-            glbModel.scale.setScalar(scale);
-            glbModel.position.x = -center.x * scale;
-            glbModel.position.y = -(hasBones ? boneBox.min.y : new THREE.Box3().setFromObject(glbModel).min.y / scale) * scale;
-            glbModel.position.z = -center.z * scale;
-            console.log('[ONI] STEP-5: scale=' + scale.toFixed(4));
+            if (allGeo.length > 0) {
+                // Use first mesh's geometry to compute scale
+                var refGeo = allGeo[0].geo;
+                refGeo.computeBoundingBox();
+                var bb = refGeo.boundingBox;
+                var geoHeight = bb.max.y - bb.min.y;
+                var targetHeight = 1.8;
+                var meshScale = (geoHeight > 0.001) ? (targetHeight / geoHeight) : 100;
 
-            // Do NOT remove fallback body — keep everything for now.
-            // Just add GLB model on top.
-            group.add(glbModel);
-            group.userData.glbLoaded = true;
-            group.userData.glbModel = glbModel;
-            console.log('[ONI] STEP-6: GLB added to group. children=' + group.children.length +
-                ' groupVisible=' + group.visible + ' inScene=' + (group.parent !== null));
+                // Create a container for the regular meshes
+                var bodyGroup = new THREE.Group();
 
-            // Setup animation
-            var usedEmbedded = false;
-            if (gltf.animations && gltf.animations.length > 0) {
-                group.userData.animations = gltf.animations;
-                var walkClip = null;
-                for (var i = 0; i < gltf.animations.length; i++) {
-                    var aname = gltf.animations[i].name.toLowerCase();
-                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
-                        walkClip = gltf.animations[i];
-                        break;
-                    }
+                for (var gi = 0; gi < allGeo.length; gi++) {
+                    var geo = allGeo[gi].geo.clone();
+                    var regularMesh = new THREE.Mesh(geo, oniMat);
+                    regularMesh.frustumCulled = false;
+                    bodyGroup.add(regularMesh);
                 }
-                if (walkClip) {
-                    var mixer = new THREE.AnimationMixer(glbModel);
-                    group.userData.mixer = mixer;
-                    mixer.clipAction(walkClip).play();
-                    group.userData.currentAction = mixer.clipAction(walkClip);
-                    usedEmbedded = true;
-                    console.log('[ONI] STEP-7: Embedded anim: ' + walkClip.name);
-                }
+
+                bodyGroup.scale.setScalar(meshScale);
+                // Center the model: offset Y so feet are at ground level
+                bodyGroup.position.y = -bb.min.y * meshScale;
+
+                // Remove ALL fallback children except eye meshes
+                var toRemove = [];
+                group.children.forEach(function(child) {
+                    if (child === group.userData.eyeR || child === group.userData.eyeL) return;
+                    toRemove.push(child);
+                });
+                toRemove.forEach(function(child) { group.remove(child); });
+
+                group.add(bodyGroup);
+                group.userData.glbLoaded = true;
+                group.userData.glbModel = bodyGroup;
             }
-            if (!usedEmbedded) {
-                if (sharedAnimationsLoaded) {
-                    applySharedAnimation(group, glbModel);
-                    console.log('[ONI] STEP-7: Shared anim applied');
-                } else {
-                    pendingAnimationGroups.push(group);
-                    console.log('[ONI] STEP-7: Queued for shared anim');
-                }
-            }
+
+            // No animation for regular Mesh (static body, group movement handles patrol)
 
             if (group.userData.sceneLight) {
                 scene.remove(group.userData.sceneLight);
                 group.userData.sceneLight = null;
             }
-            console.log('[ONI] STEP-8: loadOniGLB complete for ' + charId);
         } catch(e) {
-            console.error('[ONI] EXCEPTION in success callback:', e.message, e.stack);
+            console.error('[ONI] Error:', e.message);
         }
     }, undefined, function(err) {
-        console.error('[ONI] LOAD-FAILED for ' + charId + ':', err);
+        console.error('[ONI] GLB load failed:', err);
         group.userData.glbLoaded = false;
-        // Make fallback body bright on failure
-        group.traverse(function(child) {
-            if (child.isMesh && child !== group.userData.eyeR && child !== group.userData.eyeL) {
-                child.material = new THREE.MeshBasicMaterial({ color: 0xff4400 });
-            }
-        });
     });
 }
 
