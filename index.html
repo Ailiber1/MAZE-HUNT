@@ -4349,21 +4349,33 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
                 if (child.isMesh) {
                     child.frustumCulled = false;
-                    child.material = new THREE.MeshStandardMaterial({
-                        color: ONI_CONFIG.bodyColor,
-                        emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
-                        emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
-                        roughness: 1.0,
-                        metalness: 0.0,
-                        side: THREE.DoubleSide
+                    child.visible = true;
+                    // Modify existing material in-place (preserves GLTFLoader skinning setup)
+                    var mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(function(mat) {
+                        if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
+                        if (mat.emissive) mat.emissive.set(ONI_CONFIG.bodyEmissive);
+                        if ('emissiveIntensity' in mat) mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
+                        if ('roughness' in mat) mat.roughness = 1.0;
+                        if ('metalness' in mat) mat.metalness = 0.0;
+                        mat.side = THREE.DoubleSide;
+                        mat.transparent = false;
+                        mat.opacity = 1.0;
+                        mat.alphaTest = 0;
+                        mat.depthWrite = true;
+                        mat.depthTest = true;
+                        mat.visible = true;
+                        if (mat.map) { mat.map = null; }
+                        if (mat.normalMap) { mat.normalMap = null; }
+                        if (mat.roughnessMap) { mat.roughnessMap = null; }
+                        if (mat.metalnessMap) { mat.metalnessMap = null; }
+                        if (mat.emissiveMap) { mat.emissiveMap = null; }
+                        if (mat.aoMap) { mat.aoMap = null; }
+                        if (mat.envMap) { mat.envMap = null; }
+                        if (mat.alphaMap) { mat.alphaMap = null; }
+                        mat.skinning = true;
+                        mat.needsUpdate = true;
                     });
-                    // setValues() in r128 rejects skinning/morphTargets — set directly on instance
-                    if (child.isSkinnedMesh) {
-                        child.material.skinning = true;
-                        child.material.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
-                        child.material.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
-                    }
-                    child.material.needsUpdate = true;
                 }
             });
         } else {
@@ -7306,35 +7318,63 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Strip embedded lights; apply dark-red emissive self-glow material.
-        // Three.js r128 requires skinning:true on replacement materials for SkinnedMesh.
+        // Strip embedded lights; re-skin existing materials to dark-red emissive.
+        // IMPORTANT: Do NOT replace materials — GLTFLoader sets internal shader
+        // defines (USE_SKINNING etc.) that are lost when creating new materials.
+        // Instead, modify the existing materials in-place to preserve skinning.
+        var meshCount = 0, skinnedCount = 0;
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
                 child.visible = false;
             }
             if (child.isMesh) {
+                meshCount++;
+                if (child.isSkinnedMesh) skinnedCount++;
                 child.frustumCulled = false;
                 child.visible = true;
                 child.castShadow = false;
                 child.receiveShadow = false;
-                child.material = new THREE.MeshStandardMaterial({
-                    color: ONI_CONFIG.bodyColor,
-                    emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
-                    emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
-                    roughness: 1.0,
-                    metalness: 0.0,
-                    side: THREE.DoubleSide
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(mat) {
+                    // Modify visual properties in-place
+                    if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
+                    if (mat.emissive) mat.emissive.set(ONI_CONFIG.bodyEmissive);
+                    if ('emissiveIntensity' in mat) mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
+                    if ('roughness' in mat) mat.roughness = 1.0;
+                    if ('metalness' in mat) mat.metalness = 0.0;
+                    mat.side = THREE.DoubleSide;
+                    // Force fully opaque
+                    mat.transparent = false;
+                    mat.opacity = 1.0;
+                    mat.alphaTest = 0;
+                    mat.depthWrite = true;
+                    mat.depthTest = true;
+                    mat.visible = true;
+                    // Remove texture maps so flat color/emissive shows through
+                    if (mat.map) { mat.map = null; }
+                    if (mat.normalMap) { mat.normalMap = null; }
+                    if (mat.roughnessMap) { mat.roughnessMap = null; }
+                    if (mat.metalnessMap) { mat.metalnessMap = null; }
+                    if (mat.emissiveMap) { mat.emissiveMap = null; }
+                    if (mat.aoMap) { mat.aoMap = null; }
+                    if (mat.envMap) { mat.envMap = null; }
+                    if (mat.alphaMap) { mat.alphaMap = null; }
+                    mat.skinning = true;
+                    mat.needsUpdate = true;
                 });
-                // setValues() in r128 rejects skinning/morphTargets — set directly on instance
-                if (child.isSkinnedMesh) {
-                    child.material.skinning = true;
-                    child.material.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
-                    child.material.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
-                }
-                child.material.needsUpdate = true;
             }
         });
+        console.log('[MAZE-HUNT] ONI GLB loaded:', charId,
+            '| meshes:', meshCount, '| skinned:', skinnedCount,
+            '| scale:', glbModel.scale.x.toFixed(3),
+            '| pos:', glbModel.position.x.toFixed(2), glbModel.position.y.toFixed(2), glbModel.position.z.toFixed(2));
+
+        // DEBUG: If no meshes found in GLB, log skeleton structure
+        if (meshCount === 0) {
+            console.warn('[MAZE-HUNT] ONI GLB has NO meshes! Children:');
+            glbModel.traverse(function(c) { console.log('  ', c.type, c.name); });
+        }
 
         // Remove ALL fallback children except eye meshes, then add GLB
         var toRemove = [];
