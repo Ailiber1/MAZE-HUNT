@@ -4350,7 +4350,6 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (child.isMesh) {
                     child.frustumCulled = false;
                     child.visible = true;
-                    // Modify existing material in-place (preserves GLTFLoader skinning setup)
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
                     mats.forEach(function(mat) {
                         if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
@@ -4361,20 +4360,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                         mat.side = THREE.DoubleSide;
                         mat.transparent = false;
                         mat.opacity = 1.0;
-                        mat.alphaTest = 0;
-                        mat.depthWrite = true;
-                        mat.depthTest = true;
-                        mat.visible = true;
-                        if (mat.map) { mat.map = null; }
-                        if (mat.normalMap) { mat.normalMap = null; }
-                        if (mat.roughnessMap) { mat.roughnessMap = null; }
-                        if (mat.metalnessMap) { mat.metalnessMap = null; }
-                        if (mat.emissiveMap) { mat.emissiveMap = null; }
-                        if (mat.aoMap) { mat.aoMap = null; }
-                        if (mat.envMap) { mat.envMap = null; }
-                        if (mat.alphaMap) { mat.alphaMap = null; }
                         mat.skinning = true;
-                        mat.needsUpdate = true;
                     });
                 }
             });
@@ -7318,10 +7304,10 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Strip embedded lights; re-skin existing materials to dark-red emissive.
-        // IMPORTANT: Do NOT replace materials — GLTFLoader sets internal shader
-        // defines (USE_SKINNING etc.) that are lost when creating new materials.
-        // Instead, modify the existing materials in-place to preserve skinning.
+        // Apply dark-red tint to existing materials WITHOUT triggering shader recompile.
+        // needsUpdate=true after texture removal breaks skinning shader in r128.
+        // Instead: tint color/emissive in-place (mutates Color objects, no recompile needed)
+        // and keep original textures (they'll be tinted by the dark color).
         var meshCount = 0, skinnedCount = 0;
         glbModel.traverse(function(child) {
             if (child.isLight) {
@@ -7337,31 +7323,19 @@ function loadOniGLB(group, charId, stageId) {
                 child.receiveShadow = false;
                 var mats = Array.isArray(child.material) ? child.material : [child.material];
                 mats.forEach(function(mat) {
-                    // Modify visual properties in-place
+                    // Tint color/emissive in-place (no shader recompile)
                     if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
                     if (mat.emissive) mat.emissive.set(ONI_CONFIG.bodyEmissive);
                     if ('emissiveIntensity' in mat) mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
                     if ('roughness' in mat) mat.roughness = 1.0;
                     if ('metalness' in mat) mat.metalness = 0.0;
                     mat.side = THREE.DoubleSide;
-                    // Force fully opaque
                     mat.transparent = false;
                     mat.opacity = 1.0;
-                    mat.alphaTest = 0;
-                    mat.depthWrite = true;
-                    mat.depthTest = true;
-                    mat.visible = true;
-                    // Remove texture maps so flat color/emissive shows through
-                    if (mat.map) { mat.map = null; }
-                    if (mat.normalMap) { mat.normalMap = null; }
-                    if (mat.roughnessMap) { mat.roughnessMap = null; }
-                    if (mat.metalnessMap) { mat.metalnessMap = null; }
-                    if (mat.emissiveMap) { mat.emissiveMap = null; }
-                    if (mat.aoMap) { mat.aoMap = null; }
-                    if (mat.envMap) { mat.envMap = null; }
-                    if (mat.alphaMap) { mat.alphaMap = null; }
+                    // Set skinning for first-render shader compilation
                     mat.skinning = true;
-                    mat.needsUpdate = true;
+                    // DO NOT call needsUpdate — keep original shader program intact
+                    // DO NOT remove texture maps — triggers shader recompile which breaks skinning
                 });
             }
         });
