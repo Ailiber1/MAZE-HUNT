@@ -7351,6 +7351,17 @@ function loadOniGLB(group, charId, stageId) {
                 'bb:', JSON.stringify({minY: bb.min.y, maxY: bb.max.y}));
 
             // Setup CPU skinning data
+            // CRITICAL FIX: Recompute bindMatrixInverse from bindMatrix
+            // The GLTFLoader's stored bindMatrixInverse doesn't match bindMatrix
+            // (bindMatrix is a rotation but bindMatrixInverse has ~100x scale)
+            var correctBindInverse = new THREE.Matrix4().copy(origSkinned.bindMatrix).invert();
+            console.log('[ONI-DIAG] bindMatrix diag:', origSkinned.bindMatrix.elements[0].toFixed(4),
+                origSkinned.bindMatrix.elements[5].toFixed(4), origSkinned.bindMatrix.elements[10].toFixed(4));
+            console.log('[ONI-DIAG] STORED bindMatrixInverse diag:', origSkinned.bindMatrixInverse.elements[0].toFixed(4),
+                origSkinned.bindMatrixInverse.elements[5].toFixed(4), origSkinned.bindMatrixInverse.elements[10].toFixed(4));
+            console.log('[ONI-DIAG] CORRECT bindMatrixInverse diag:', correctBindInverse.elements[0].toFixed(4),
+                correctBindInverse.elements[5].toFixed(4), correctBindInverse.elements[10].toFixed(4));
+
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
@@ -7359,7 +7370,7 @@ function loadOniGLB(group, charId, stageId) {
                 skinIndex: srcGeo.attributes.skinIndex,
                 skinWeight: srcGeo.attributes.skinWeight,
                 bindMatrix: origSkinned.bindMatrix,
-                bindMatrixInverse: origSkinned.bindMatrixInverse,
+                bindMatrixInverse: correctBindInverse,
                 frameCount: 0
             };
 
