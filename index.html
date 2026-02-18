@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-analytics-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/SkeletonUtils.js"></script>
 <style>
 /* ============================================
    CSS Variables - Neon Theme
@@ -4342,33 +4343,20 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // If oni team, apply dark-red material; otherwise keep original appearance
+        // If oni team, apply dark-red emissive material; otherwise keep original appearance
         if (isOni) {
             glbModel.traverse(function(child) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
                 if (child.isMesh) {
                     child.frustumCulled = false;
-                    // Clone original material to preserve SkinnedMesh compatibility
-                    var mat = child.material.clone();
-                    if (mat.emissive !== undefined) {
-                        mat.color.setHex(ONI_CONFIG.bodyColor);
-                        mat.emissive.setHex(ONI_CONFIG.bodyEmissive);
-                        mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
-                        mat.roughness = 1.0;
-                        mat.metalness = 0.0;
-                        mat.side = THREE.DoubleSide;
-                        mat.transparent = false;
-                        mat.opacity = 1.0;
-                        mat.alphaTest = 0;
-                        mat.map = null;
-                        mat.normalMap = null;
-                        mat.emissiveMap = null;
-                        mat.aoMap = null;
-                        mat.needsUpdate = true;
-                    } else {
-                        mat = new THREE.MeshBasicMaterial({ color: 0x8b1a1a, side: THREE.DoubleSide });
-                    }
-                    child.material = mat;
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: ONI_CONFIG.bodyColor,
+                        emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
+                        emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
+                        roughness: 1.0,
+                        metalness: 0.0,
+                        side: THREE.DoubleSide
+                    });
                 }
             });
         } else {
@@ -4390,10 +4378,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
 
-        // Setup animation
+        // Setup animation: prefer embedded walk/run clips, fallback to shared animations
+        var usedEmbedded = false;
         if (gltf.animations && gltf.animations.length > 0) {
-            var mixer = new THREE.AnimationMixer(glbModel);
-            group.userData.mixer = mixer;
             group.userData.animations = gltf.animations;
             var walkClip = null;
             for (var i = 0; i < gltf.animations.length; i++) {
@@ -4402,17 +4389,20 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     walkClip = gltf.animations[i]; break;
                 }
             }
-            if (!walkClip) walkClip = gltf.animations[0];
-            var action = mixer.clipAction(walkClip);
-            action.play();
-            group.userData.currentAction = action;
-        } else if (sharedAnimationsLoaded) {
-            var mixer = new THREE.AnimationMixer(glbModel);
-            group.userData.mixer = mixer;
-            if (sharedAnimations.run) {
-                var action = mixer.clipAction(sharedAnimations.run);
+            if (walkClip) {
+                var mixer = new THREE.AnimationMixer(glbModel);
+                group.userData.mixer = mixer;
+                var action = mixer.clipAction(walkClip);
                 action.play();
                 group.userData.currentAction = action;
+                usedEmbedded = true;
+            }
+        }
+        if (!usedEmbedded) {
+            if (sharedAnimationsLoaded) {
+                applySharedAnimation(group, glbModel);
+            } else {
+                pendingAnimationGroups.push(group);
             }
         }
     }, undefined, function(err) {
@@ -4509,6 +4499,8 @@ function updateRemotePlayers(delta) {
                        Math.abs(rp.targetPosition.z - rp.position.z) > 0.05;
         if (rp.model.userData.glbLoaded && rp.model.userData.mixer) {
             rp.model.userData.mixer.update(delta);
+            // Switch animation state based on movement
+            setCharacterAnimation(rp.model, isMoving ? 'run' : 'idle');
         } else if (isMoving) {
             var legPhase = (Date.now() * 0.01) % (Math.PI * 2);
             if (rp.model.children[2]) rp.model.children[2].rotation.x = Math.sin(legPhase) * 0.3;
@@ -6256,7 +6248,7 @@ const ONI_CONFIG = {
     // Visual config — MeshStandardMaterial with emissive self-glow (compatible with SkinnedMesh)
     bodyColor: 0x1a0505,
     bodyEmissive: 0xff1a1a,
-    bodyEmissiveIntensity: 0.5,
+    bodyEmissiveIntensity: 2.0,
     fallbackEmissiveColor: 0xff1a1a,
     fallbackEmissiveIntensity: 1.0,
 };
@@ -7047,6 +7039,18 @@ function preloadSharedAnimations() {
                 var tracks = [];
                 gltf.animations.forEach(function(clip) {
                     clip.tracks.forEach(function(track) {
+                        // Normalize track names: strip root node prefix for cross-model compatibility
+                        // e.g. "Armature/mixamorigHips.position" → "mixamorigHips.position"
+                        var dotIdx = track.name.lastIndexOf('.');
+                        if (dotIdx !== -1) {
+                            var objectPath = track.name.substring(0, dotIdx);
+                            var property = track.name.substring(dotIdx + 1);
+                            var slashIdx = objectPath.lastIndexOf('/');
+                            if (slashIdx !== -1) {
+                                objectPath = objectPath.substring(slashIdx + 1);
+                            }
+                            track.name = objectPath + '.' + property;
+                        }
                         tracks.push(track);
                     });
                 });
@@ -7055,7 +7059,7 @@ function preloadSharedAnimations() {
             loaded++;
             if (loaded === animFiles.length) {
                 sharedAnimationsLoaded = true;
-                // Apply animations to any ONIs that loaded before animations were ready
+                // Apply animations to any models that loaded before animations were ready
                 applyPendingAnimations();
             }
         }, undefined, function(err) {
@@ -7081,13 +7085,36 @@ function applyPendingAnimations() {
 }
 
 function applySharedAnimation(group, glbModel) {
-    var clip = sharedAnimations.running || sharedAnimations.walking;
+    var clip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
     if (!clip) return;
     var mixer = new THREE.AnimationMixer(glbModel);
     var action = mixer.clipAction(clip);
     action.play();
     group.userData.mixer = mixer;
     group.userData.currentAction = action;
+    group.userData.currentAnimState = 'run';
+}
+
+/* Switch animation state: 'idle', 'walk', 'run' */
+function setCharacterAnimation(group, state) {
+    if (!group.userData.mixer || !sharedAnimationsLoaded) return;
+    if (group.userData.currentAnimState === state) return;
+
+    var clip = null;
+    if (state === 'idle') clip = sharedAnimations.idle;
+    else if (state === 'walk') clip = sharedAnimations.walking;
+    else clip = sharedAnimations.running;
+    if (!clip) clip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+    if (!clip) return;
+
+    var mixer = group.userData.mixer;
+    var newAction = mixer.clipAction(clip);
+    if (group.userData.currentAction) {
+        group.userData.currentAction.fadeOut(0.25);
+    }
+    newAction.reset().fadeIn(0.25).play();
+    group.userData.currentAction = newAction;
+    group.userData.currentAnimState = state;
 }
 
 /* --- C4: Load GLB model into ONI group --- */
@@ -7138,14 +7165,9 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Strip embedded lights; modify mesh materials for dark-red emissive self-glow.
-        // Previous approach: MeshBasicMaterial replacement — broke SkinnedMesh rendering
-        // in Three.js r128 (body invisible, only eyes showed). MeshBasicMaterial ignores
-        // lighting but may not correctly drive the skinning vertex shader on some GPUs.
-        // New approach: clone the ORIGINAL material (preserves SkinnedMesh compatibility)
-        // and set strong emissive self-glow. Emissive is lighting-independent, so the
-        // ghost body is always visible in the dark maze. Textures are stripped for a
-        // clean dark silhouette look.
+        // Strip embedded lights; apply dark-red emissive self-glow material.
+        // Use fresh MeshStandardMaterial (not clone) — Three.js r128 automatically
+        // includes skinning vertex shader for SkinnedMesh objects.
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -7156,32 +7178,14 @@ function loadOniGLB(group, charId, stageId) {
                 child.visible = true;
                 child.castShadow = false;
                 child.receiveShadow = false;
-                // Clone original material to preserve type (MeshStandardMaterial for SkinnedMesh)
-                var mat = child.material.clone();
-                if (mat.emissive !== undefined) {
-                    // MeshStandardMaterial / MeshPhysicalMaterial — use emissive self-glow
-                    mat.color.setHex(ONI_CONFIG.bodyColor);
-                    mat.emissive.setHex(ONI_CONFIG.bodyEmissive);
-                    mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
-                    mat.roughness = 1.0;
-                    mat.metalness = 0.0;
-                    mat.side = THREE.DoubleSide;
-                    mat.transparent = false;
-                    mat.opacity = 1.0;
-                    mat.alphaTest = 0;
-                    mat.map = null;
-                    mat.normalMap = null;
-                    mat.emissiveMap = null;
-                    mat.aoMap = null;
-                    mat.needsUpdate = true;
-                } else {
-                    // Fallback for MeshBasicMaterial (non-skinned / unlit GLB)
-                    mat = new THREE.MeshBasicMaterial({
-                        color: 0x8b1a1a,
-                        side: THREE.DoubleSide
-                    });
-                }
-                child.material = mat;
+                child.material = new THREE.MeshStandardMaterial({
+                    color: ONI_CONFIG.bodyColor,
+                    emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
+                    emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                    side: THREE.DoubleSide
+                });
             }
         });
 
@@ -7198,10 +7202,9 @@ function loadOniGLB(group, charId, stageId) {
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
 
-        // Setup animation: prefer embedded animations, fallback to shared
+        // Setup animation: prefer embedded walk/run clips, fallback to shared animations
+        var usedEmbedded = false;
         if (gltf.animations && gltf.animations.length > 0) {
-            var mixer = new THREE.AnimationMixer(glbModel);
-            group.userData.mixer = mixer;
             group.userData.animations = gltf.animations;
             var walkClip = null;
             for (var i = 0; i < gltf.animations.length; i++) {
@@ -7211,16 +7214,21 @@ function loadOniGLB(group, charId, stageId) {
                     break;
                 }
             }
-            if (!walkClip) walkClip = gltf.animations[0];
-            var action = mixer.clipAction(walkClip);
-            action.play();
-            group.userData.currentAction = action;
-        } else if (sharedAnimationsLoaded) {
-            // No embedded animations — use shared Running/Walking animation
-            applySharedAnimation(group, glbModel);
-        } else {
-            // Shared animations not yet loaded — queue for later
-            pendingAnimationGroups.push(group);
+            if (walkClip) {
+                var mixer = new THREE.AnimationMixer(glbModel);
+                group.userData.mixer = mixer;
+                var action = mixer.clipAction(walkClip);
+                action.play();
+                group.userData.currentAction = action;
+                usedEmbedded = true;
+            }
+        }
+        if (!usedEmbedded) {
+            if (sharedAnimationsLoaded) {
+                applySharedAnimation(group, glbModel);
+            } else {
+                pendingAnimationGroups.push(group);
+            }
         }
 
         // Remove scene-level light (causes red smoke on walls)
@@ -7301,18 +7309,32 @@ function playCapturedDragAnimation(oni, capturePos) {
 
     var dragPlayerMixer = null;
     if (GameState.playerGLBModel) {
-        // Use preloaded GLB model
+        // Use preloaded GLB model — SkeletonUtils.clone properly clones SkinnedMesh + skeleton
         var playerModel = THREE.SkeletonUtils
             ? THREE.SkeletonUtils.clone(GameState.playerGLBModel)
             : GameState.playerGLBModel.clone();
+        // Ensure all meshes are visible and not frustum-culled
+        playerModel.traverse(function(child) {
+            if (child.isMesh) {
+                child.frustumCulled = false;
+                child.visible = true;
+            }
+        });
         playerGroup.add(playerModel);
-        // Setup animation for player model during drag:
-        // prefer embedded animations, fall back to shared animations (Running/Walking/Idle)
-        // to avoid T-pose on characters without embedded clips (most Mixamo models).
+        // Setup animation: prefer embedded walk/idle clips, fall back to shared animations
         var dragClip = null;
         if (GameState.playerGLBAnimations && GameState.playerGLBAnimations.length > 0) {
-            dragClip = GameState.playerGLBAnimations[0];
-        } else if (sharedAnimationsLoaded) {
+            // Look for idle or walk clip among embedded animations
+            for (var di = 0; di < GameState.playerGLBAnimations.length; di++) {
+                var dname = GameState.playerGLBAnimations[di].name.toLowerCase();
+                if (dname.indexOf('idle') !== -1 || dname.indexOf('walk') !== -1) {
+                    dragClip = GameState.playerGLBAnimations[di];
+                    break;
+                }
+            }
+            if (!dragClip) dragClip = GameState.playerGLBAnimations[0];
+        }
+        if (!dragClip && sharedAnimationsLoaded) {
             dragClip = sharedAnimations.idle || sharedAnimations.walking || sharedAnimations.running;
         }
         if (dragClip) {
@@ -7322,7 +7344,7 @@ function playCapturedDragAnimation(oni, capturePos) {
     } else {
         // Fallback: simple humanoid silhouette
         var fallbackMat = new THREE.MeshStandardMaterial({
-            color: 0x2244aa, roughness: 0.5, emissive: 0x111133, emissiveIntensity: 0.2
+            color: 0x2244aa, roughness: 0.5, emissive: 0x223366, emissiveIntensity: 0.8
         });
         var body = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 1.0, 12), fallbackMat);
         body.position.y = 0.5;
@@ -7781,6 +7803,10 @@ function updateOniAI(delta) {
         // ─── Animation mixer ───
         if (oni.group.userData.mixer) {
             oni.group.userData.mixer.update(delta);
+            // Switch animation state based on AI state
+            var oniAnimState = (oni.aiState === 'chase' || oni.aiState === 'lunge') ? 'run' :
+                               (oni.aiState === 'patrol') ? 'walk' : 'idle';
+            setCharacterAnimation(oni.group, oniAnimState);
         }
     });
 }
