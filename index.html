@@ -7274,64 +7274,25 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // DIAGNOSTIC: Log original material properties, then replace with
-        // bright MeshBasicMaterial + skinning to test if SkinnedMesh renders at all.
+        // Replace material with fresh MeshStandardMaterial + skinning.
+        // The GLTFLoader's original MeshStandardMaterial (with texture map)
+        // fails to render on SkinnedMesh — confirmed by diagnostic that
+        // MeshBasicMaterial + skinning=true renders correctly.
+        // Creating a new material from scratch avoids the shader issue.
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-            }
-            if (child.isSkinnedMesh) {
-                var m = child.material;
-                console.log('[ONI-DIAG] SkinnedMesh:', child.name,
-                    '| matType:', m ? m.type : 'null',
-                    '| skinning:', m ? m.skinning : 'N/A',
-                    '| visible:', m ? m.visible : 'N/A',
-                    '| opacity:', m ? m.opacity : 'N/A',
-                    '| transparent:', m ? m.transparent : 'N/A',
-                    '| side:', m ? m.side : 'N/A',
-                    '| map:', m && m.map ? 'yes' : 'no',
-                    '| alphaTest:', m ? m.alphaTest : 'N/A',
-                    '| depthTest:', m ? m.depthTest : 'N/A',
-                    '| depthWrite:', m ? m.depthWrite : 'N/A');
-                // Log skeleton info
-                if (child.skeleton) {
-                    console.log('[ONI-DIAG] skeleton:',
-                        'bones:', child.skeleton.bones.length,
-                        '| boneInverses:', child.skeleton.boneInverses.length,
-                        '| bindMatrix[0]:', child.bindMatrix.elements[0].toFixed(4),
-                        '| bindMatrix[5]:', child.bindMatrix.elements[5].toFixed(4),
-                        '| bindMatrix[12]:', child.bindMatrix.elements[12].toFixed(4),
-                        '| bindMatrix[13]:', child.bindMatrix.elements[13].toFixed(4));
-                }
-                // Log geometry info
-                if (child.geometry) {
-                    var pos = child.geometry.attributes.position;
-                    var idx = child.geometry.index;
-                    console.log('[ONI-DIAG] geometry:',
-                        'vertices:', pos ? pos.count : 0,
-                        '| indexed:', !!idx,
-                        '| indices:', idx ? idx.count : 0,
-                        '| skinIndex:', !!child.geometry.attributes.skinIndex,
-                        '| skinWeight:', !!child.geometry.attributes.skinWeight);
-                }
-                // TEST A: Replace material with bright MeshBasicMaterial + skinning
-                child.material = new THREE.MeshBasicMaterial({
-                    color: 0xff0000,
-                    wireframe: true,
+                child.material = new THREE.MeshStandardMaterial({
+                    color: ONI_CONFIG.bodyColor,
+                    emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
+                    emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
+                    roughness: 1.0,
+                    metalness: 0.0,
+                    side: THREE.DoubleSide,
                     skinning: true
                 });
-                // TEST B: Also add a non-skinned copy of same geometry directly to group
-                // to verify the geometry itself is renderable
-                var testMesh = new THREE.Mesh(
-                    child.geometry,
-                    new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true })
-                );
-                testMesh.scale.setScalar(0.01); // Armature scale
-                testMesh.position.set(0.5, 0, 0); // Offset to the right
-                group.add(testMesh);
-                console.log('[ONI-DIAG] Added testMesh (non-skinned, cyan wireframe) offset right');
             }
         });
 
