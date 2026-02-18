@@ -7274,25 +7274,19 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Replace material with fresh MeshStandardMaterial + skinning.
-        // The GLTFLoader's original MeshStandardMaterial (with texture map)
-        // fails to render on SkinnedMesh — confirmed by diagnostic that
-        // MeshBasicMaterial + skinning=true renders correctly.
-        // Creating a new material from scratch avoids the shader issue.
+        // Use MeshBasicMaterial + skinning (proven working by diagnostic).
+        // MeshStandardMaterial + skinning fails to render on SkinnedMesh in r128.
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-                child.material = new THREE.MeshStandardMaterial({
-                    color: ONI_CONFIG.bodyColor,
-                    emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
-                    emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
-                    roughness: 1.0,
-                    metalness: 0.0,
-                    side: THREE.DoubleSide,
-                    skinning: true
+                child.material = new THREE.MeshBasicMaterial({
+                    color: ONI_CONFIG.bodyEmissive,
+                    skinning: true,
+                    side: THREE.DoubleSide
                 });
+                child.material.needsUpdate = true;
             }
         });
 
