@@ -7182,6 +7182,68 @@ function setCharacterAnimation(group, state) {
     group.userData.currentAnimState = state;
 }
 
+/* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
+function cpuSkinUpdate(cpuSkinData) {
+    var skeleton = cpuSkinData.skeleton;
+    var srcPos = cpuSkinData.srcPositions;
+    var dstPos = cpuSkinData.dstPositions;
+    var si = cpuSkinData.skinIndex;
+    var sw = cpuSkinData.skinWeight;
+    var bindMatrix = cpuSkinData.bindMatrix;
+    var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
+
+    // Update bone world matrices
+    cpuSkinData.sourceScene.updateMatrixWorld(true);
+    skeleton.update();
+    var bm = skeleton.boneMatrices;
+
+    var sv = new THREE.Vector4();
+    var tv = new THREE.Vector4();
+    var count = srcPos.count;
+    for (var i = 0; i < count; i++) {
+        sv.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
+        sv.applyMatrix4(bindMatrix);
+
+        var rx = 0, ry = 0, rz = 0;
+        var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
+        var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
+
+        if (w0 > 0) {
+            var o = i0 * 16;
+            var tx = bm[o]*sv.x + bm[o+4]*sv.y + bm[o+8]*sv.z + bm[o+12];
+            var ty = bm[o+1]*sv.x + bm[o+5]*sv.y + bm[o+9]*sv.z + bm[o+13];
+            var tz = bm[o+2]*sv.x + bm[o+6]*sv.y + bm[o+10]*sv.z + bm[o+14];
+            rx += tx*w0; ry += ty*w0; rz += tz*w0;
+        }
+        if (w1 > 0) {
+            var o1 = i1 * 16;
+            rx += (bm[o1]*sv.x + bm[o1+4]*sv.y + bm[o1+8]*sv.z + bm[o1+12])*w1;
+            ry += (bm[o1+1]*sv.x + bm[o1+5]*sv.y + bm[o1+9]*sv.z + bm[o1+13])*w1;
+            rz += (bm[o1+2]*sv.x + bm[o1+6]*sv.y + bm[o1+10]*sv.z + bm[o1+14])*w1;
+        }
+        if (w2 > 0) {
+            var o2 = i2 * 16;
+            rx += (bm[o2]*sv.x + bm[o2+4]*sv.y + bm[o2+8]*sv.z + bm[o2+12])*w2;
+            ry += (bm[o2+1]*sv.x + bm[o2+5]*sv.y + bm[o2+9]*sv.z + bm[o2+13])*w2;
+            rz += (bm[o2+2]*sv.x + bm[o2+6]*sv.y + bm[o2+10]*sv.z + bm[o2+14])*w2;
+        }
+        if (w3 > 0) {
+            var o3 = i3 * 16;
+            rx += (bm[o3]*sv.x + bm[o3+4]*sv.y + bm[o3+8]*sv.z + bm[o3+12])*w3;
+            ry += (bm[o3+1]*sv.x + bm[o3+5]*sv.y + bm[o3+9]*sv.z + bm[o3+13])*w3;
+            rz += (bm[o3+2]*sv.x + bm[o3+6]*sv.y + bm[o3+10]*sv.z + bm[o3+14])*w3;
+        }
+
+        // Apply bindMatrixInverse
+        var bmi = bindMatrixInverse.elements;
+        var fx = bmi[0]*rx + bmi[4]*ry + bmi[8]*rz + bmi[12];
+        var fy = bmi[1]*rx + bmi[5]*ry + bmi[9]*rz + bmi[13];
+        var fz = bmi[2]*rx + bmi[6]*ry + bmi[10]*rz + bmi[14];
+        dstPos.setXYZ(i, fx, fy, fz);
+    }
+    dstPos.needsUpdate = true;
+}
+
 /* --- C4: Load GLB model into ONI group --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
@@ -7189,69 +7251,107 @@ function loadOniGLB(group, charId, stageId) {
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
         try {
-            var glbModel = gltf.scene;
-            glbModel.updateMatrixWorld(true);
+            var sourceScene = gltf.scene;
+            sourceScene.updateMatrixWorld(true);
 
-            // SkinnedMesh does NOT render in this environment (confirmed by diagnostic).
-            // Solution: extract geometry from SkinnedMesh, create regular Mesh.
-            // The bind-pose geometry is at Armature scale (0.01), needs ~100x scale.
+            // Find first SkinnedMesh for CPU skinning
+            var origSkinned = null;
+            sourceScene.traverse(function(child) {
+                if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
+            });
+
+            if (!origSkinned || !origSkinned.geometry) return;
+
+            var srcGeo = origSkinned.geometry;
+            srcGeo.computeBoundingBox();
+            var bb = srcGeo.boundingBox;
+            var geoHeight = bb.max.y - bb.min.y;
+            var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+
+            // Create visible regular Mesh with cloned geometry
+            var dstGeo = srcGeo.clone();
             var oniMat = new THREE.MeshBasicMaterial({
                 color: ONI_CONFIG.bodyEmissive,
                 side: THREE.DoubleSide
             });
+            var bodyMesh = new THREE.Mesh(dstGeo, oniMat);
+            bodyMesh.frustumCulled = false;
 
-            // Compute scale factor from bind-pose geometry bounding box
-            var allGeo = [];
-            glbModel.traverse(function(child) {
-                if (child.isMesh && child.geometry) {
-                    allGeo.push({ geo: child.geometry, mesh: child });
-                }
+            var bodyGroup = new THREE.Group();
+            bodyGroup.add(bodyMesh);
+            bodyGroup.scale.setScalar(meshScale);
+            bodyGroup.position.y = -bb.min.y * meshScale;
+
+            // Keep sourceScene hidden in group (needed for bone updates)
+            sourceScene.traverse(function(child) {
+                if (child.isMesh) child.visible = false;
             });
+            group.add(sourceScene);
 
-            if (allGeo.length > 0) {
-                // Use first mesh's geometry to compute scale
-                var refGeo = allGeo[0].geo;
-                refGeo.computeBoundingBox();
-                var bb = refGeo.boundingBox;
-                var geoHeight = bb.max.y - bb.min.y;
-                var targetHeight = 1.8;
-                var meshScale = (geoHeight > 0.001) ? (targetHeight / geoHeight) : 100;
+            // Remove fallback children except eyes and sourceScene
+            var toRemove = [];
+            group.children.forEach(function(child) {
+                if (child === group.userData.eyeR || child === group.userData.eyeL) return;
+                if (child === sourceScene) return;
+                toRemove.push(child);
+            });
+            toRemove.forEach(function(child) { group.remove(child); });
 
-                // Create a container for the regular meshes
-                var bodyGroup = new THREE.Group();
+            group.add(bodyGroup);
+            group.userData.glbLoaded = true;
+            group.userData.glbModel = bodyGroup;
 
-                for (var gi = 0; gi < allGeo.length; gi++) {
-                    var geo = allGeo[gi].geo.clone();
-                    var regularMesh = new THREE.Mesh(geo, oniMat);
-                    regularMesh.frustumCulled = false;
-                    bodyGroup.add(regularMesh);
+            // Setup CPU skinning data
+            group.userData.cpuSkin = {
+                sourceScene: sourceScene,
+                skeleton: origSkinned.skeleton,
+                srcPositions: srcGeo.attributes.position,
+                dstPositions: dstGeo.attributes.position,
+                skinIndex: srcGeo.attributes.skinIndex,
+                skinWeight: srcGeo.attributes.skinWeight,
+                bindMatrix: origSkinned.bindMatrix,
+                bindMatrixInverse: origSkinned.bindMatrixInverse,
+                frameCount: 0
+            };
+
+            // Setup animation mixer on the ORIGINAL sourceScene
+            var mixer = null;
+            var usedEmbedded = false;
+            if (gltf.animations && gltf.animations.length > 0) {
+                group.userData.animations = gltf.animations;
+                var walkClip = null;
+                for (var i = 0; i < gltf.animations.length; i++) {
+                    var aname = gltf.animations[i].name.toLowerCase();
+                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
+                        walkClip = gltf.animations[i]; break;
+                    }
                 }
-
-                bodyGroup.scale.setScalar(meshScale);
-                // Center the model: offset Y so feet are at ground level
-                bodyGroup.position.y = -bb.min.y * meshScale;
-
-                // Remove ALL fallback children except eye meshes
-                var toRemove = [];
-                group.children.forEach(function(child) {
-                    if (child === group.userData.eyeR || child === group.userData.eyeL) return;
-                    toRemove.push(child);
-                });
-                toRemove.forEach(function(child) { group.remove(child); });
-
-                group.add(bodyGroup);
-                group.userData.glbLoaded = true;
-                group.userData.glbModel = bodyGroup;
+                if (walkClip) {
+                    mixer = new THREE.AnimationMixer(sourceScene);
+                    group.userData.mixer = mixer;
+                    mixer.clipAction(walkClip).play();
+                    usedEmbedded = true;
+                }
+            }
+            if (!usedEmbedded) {
+                if (sharedAnimationsLoaded) {
+                    applySharedAnimation(group, sourceScene);
+                } else {
+                    pendingAnimationGroups.push(group);
+                }
             }
 
-            // No animation for regular Mesh (static body, group movement handles patrol)
+            // Do initial CPU skin bake
+            if (group.userData.cpuSkin && group.userData.cpuSkin.skeleton) {
+                cpuSkinUpdate(group.userData.cpuSkin);
+            }
 
             if (group.userData.sceneLight) {
                 scene.remove(group.userData.sceneLight);
                 group.userData.sceneLight = null;
             }
         } catch(e) {
-            console.error('[ONI] Error:', e.message);
+            console.error('[ONI] Error:', e.message, e.stack);
         }
     }, undefined, function(err) {
         console.error('[ONI] GLB load failed:', err);
@@ -7819,6 +7919,14 @@ function updateOniAI(delta) {
             var oniAnimState = (oni.aiState === 'chase' || oni.aiState === 'lunge') ? 'run' :
                                (oni.aiState === 'patrol') ? 'walk' : 'idle';
             setCharacterAnimation(oni.group, oniAnimState);
+        }
+
+        // ─── CPU Skinning update (every 2nd frame for performance) ───
+        if (oni.group.userData.cpuSkin) {
+            oni.group.userData.cpuSkin.frameCount++;
+            if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
+                cpuSkinUpdate(oni.group.userData.cpuSkin);
+            }
         }
     });
 }
