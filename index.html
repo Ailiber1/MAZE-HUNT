@@ -588,9 +588,10 @@ body {
     position: absolute;
     bottom: 20px; left: 50%;
     transform: translateX(-50%);
-    width: 200px; height: 6px;
-    background: rgba(0,0,0,0.6);
-    border: 1px solid rgba(0,255,65,0.3);
+    width: 220px; height: 8px;
+    background: rgba(0,0,0,0.7);
+    border: 1px solid rgba(0,255,65,0.5);
+    border-radius: 4px;
 }
 #hud-stamina-bar {
     width: 100%; height: 100%;
@@ -601,27 +602,36 @@ body {
     position: absolute;
     top: 56px; right: 20px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 24px;
+    font-size: 26px;
     color: var(--neon-green);
     text-shadow: 0 0 10px var(--neon-green-glow);
+    background: rgba(0,0,0,0.55);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 #hud-stage-label {
     position: absolute;
     top: 16px; left: 20px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 14px;
-    color: var(--neon-green);
+    font-size: 15px;
+    color: #e0ffe0;
     text-shadow: 0 0 8px var(--neon-green-glow);
     letter-spacing: 2px;
+    background: rgba(0,0,0,0.55);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 #hud-floor-label {
     position: absolute;
-    top: 36px; left: 20px;
+    top: 38px; left: 20px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 18px;
-    color: var(--neon-green);
+    font-size: 20px;
+    color: #e0ffe0;
     text-shadow: 0 0 10px var(--neon-green-glow);
     letter-spacing: 2px;
+    background: rgba(0,0,0,0.55);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 #crosshair {
     position: absolute;
@@ -633,7 +643,7 @@ body {
 #crosshair::before, #crosshair::after {
     content: '';
     position: absolute;
-    background: rgba(0,255,65,0.5);
+    background: rgba(255,255,255,0.7);
 }
 #crosshair::before {
     width: 2px; height: 20px;
@@ -1090,7 +1100,7 @@ body {
    ============================================ */
 #quick-chat-hud {
     position: absolute;
-    bottom: 50px;
+    bottom: 210px;
     left: 20px;
     pointer-events: none;
     z-index: 26;
@@ -1108,7 +1118,7 @@ body {
 .chat-log-entry.fading { opacity: 0; }
 #quick-chat-keys {
     position: absolute;
-    bottom: 180px;
+    bottom: 280px;
     left: 20px;
     pointer-events: none;
     z-index: 26;
@@ -1357,46 +1367,59 @@ body {
    ============================================ */
 #hud-status {
     position: absolute;
-    top: 58px; left: 20px;
+    top: 64px; left: 20px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 12px;
-    color: var(--neon-green);
+    font-size: 13px;
+    color: #e0ffe0;
     text-shadow: 0 0 6px var(--neon-green-glow);
     letter-spacing: 1px;
+    background: rgba(0,0,0,0.55);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 #hud-objective {
     position: absolute;
-    top: 76px; left: 20px;
+    top: 86px; left: 20px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 11px;
-    color: var(--neon-green);
-    text-shadow: 0 0 6px var(--neon-green-glow);
+    font-size: 12px;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 6px rgba(0,255,255,0.5);
     letter-spacing: 1px;
+    background: rgba(0,0,0,0.55);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 #hud-enemy-dist {
     position: absolute;
     top: 16px; right: 20px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 13px;
+    font-size: 14px;
     text-shadow: 0 0 8px;
     letter-spacing: 1px;
     text-align: right;
+    background: rgba(0,0,0,0.55);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 #hud-bpm {
     position: absolute;
     top: 38px; right: 20px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--matrix-red);
     text-shadow: 0 0 6px var(--matrix-red-glow);
     letter-spacing: 1px;
+    background: rgba(0,0,0,0.55);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 #minimap-container {
     position: absolute;
     bottom: 20px; left: 20px;
-    width: 150px; height: 150px;
-    border: 1px solid rgba(0,255,65,0.3);
-    background: rgba(0,0,0,0.6);
+    width: 180px; height: 180px;
+    border: 1px solid rgba(0,255,65,0.5);
+    background: rgba(0,0,0,0.75);
+    border-radius: 4px;
 }
 #minimap-canvas {
     width: 100%; height: 100%;
@@ -1832,8 +1855,8 @@ body {
     #hud-stage-label { font-size: 12px; top: 12px; left: 12px; }
     #hud-floor-label { font-size: 14px; top: 28px; left: 12px; }
     #hud-stamina { width: 150px; bottom: 14px; }
-    #minimap-container { width: 100px; height: 100px; bottom: 140px; left: 12px; }
-    #minimap-canvas { width: 100px; height: 100px; }
+    #minimap-container { width: 120px; height: 120px; bottom: 140px; left: 12px; }
+    #minimap-canvas { width: 120px; height: 120px; }
     #navigator-bar { font-size: 11px; bottom: 160px; padding: 6px 12px; }
     #hud-status { font-size: 10px; top: 44px; left: 12px; }
     #hud-objective { font-size: 10px; top: 58px; left: 12px; }
@@ -2289,7 +2312,7 @@ body {
             <div id="hud-objective"></div>
             <div id="hud-enemy-dist"></div>
             <div id="hud-bpm"></div>
-            <div id="minimap-container"><canvas id="minimap-canvas" width="150" height="150"></canvas></div>
+            <div id="minimap-container"><canvas id="minimap-canvas" width="180" height="180"></canvas></div>
             <div id="quick-chat-hud"></div>
             <div id="quick-chat-keys"></div>
             <div id="spectator-badge"></div>
@@ -6543,7 +6566,8 @@ function createStairs(cellX, cellZ, fromFloor, toFloor, direction, stageId) {
     group.add(railR);
 
     // Arrow marker light
-    const arrowLight = new THREE.PointLight(0x00ff41, 1.5, 6);
+    const stairColors = CIRCUIT_COLORS[GameState.currentStage] || CIRCUIT_COLORS[1];
+    const arrowLight = new THREE.PointLight(stairColors.emissive, 1.5, 6);
     arrowLight.position.set(x + CL / 2, yBase + 0.5, z + CL / 2);
     group.add(arrowLight);
 
@@ -8158,7 +8182,7 @@ function drawMinimap() {
     var canvas = document.getElementById('minimap-canvas');
     if (!canvas) return;
     var ctx = canvas.getContext('2d');
-    var w = 150, h = 150;
+    var w = 180, h = 180;
     ctx.clearRect(0, 0, w, h);
 
     var floors = GameState.mazeFloors;
@@ -8172,8 +8196,8 @@ function drawMinimap() {
     var cellH = h / rows;
 
     // Draw walls
-    ctx.strokeStyle = 'rgba(0, 255, 65, 0.3)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0, 255, 65, 0.6)';
+    ctx.lineWidth = 1.5;
     for (var y = 0; y < rows; y++) {
         for (var x = 0; x < cols; x++) {
             var cell = grid[y][x];
@@ -8443,16 +8467,16 @@ function buildMaze3D(floors, cols, rows, stageId) {
     const wallMat = new THREE.MeshStandardMaterial({
         color: colors.baseColor,
         emissive: colors.emissive,
-        emissiveIntensity: colors.emissiveIntensity * 0.8,
-        roughness: 0.8,
-        metalness: 0.2,
+        emissiveIntensity: colors.emissiveIntensity,
+        roughness: 0.7,
+        metalness: 0.3,
     });
 
     // Wire material for edge glow
     const wireMat = new THREE.LineBasicMaterial({
         color: colors.emissive,
         transparent: true,
-        opacity: 0.25,
+        opacity: 0.35,
     });
 
     // If floors is a single grid (backward compat), wrap it
@@ -8466,11 +8490,11 @@ function buildMaze3D(floors, cols, rows, stageId) {
         // Floor plane
         const floorGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
         const floorMat = new THREE.MeshStandardMaterial({
-            color: 0x0a140c,
+            color: 0x08080a,
             emissive: colors.emissive,
-            emissiveIntensity: 0.08,
+            emissiveIntensity: 0.03,
             roughness: 0.95,
-            metalness: 0.1,
+            metalness: 0.05,
         });
         const floorMesh = new THREE.Mesh(floorGeo, floorMat);
         floorMesh.rotation.x = -Math.PI / 2;
@@ -8481,7 +8505,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
         wallMeshes.push(floorMesh);
 
         // Floor grid lines
-        const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.08 });
+        const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.05 });
         for (let i = 0; i <= cols; i++) {
             const lineGeo = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(i * CL, yOffset + 0.01, 0),
@@ -8506,9 +8530,9 @@ function buildMaze3D(floors, cols, rows, stageId) {
         // Ceiling (indoor stages only) - skip tiles above stair cells
         if (!theme.outdoor) {
             const ceilMat = new THREE.MeshStandardMaterial({
-                color: 0x080e08,
+                color: 0x060608,
                 emissive: colors.emissive,
-                emissiveIntensity: 0.05,
+                emissiveIntensity: 0.02,
                 roughness: 0.95,
                 metalness: 0.1,
                 side: THREE.BackSide,
@@ -8608,14 +8632,14 @@ function initThreeJS() {
     container.appendChild(renderer.domElement);
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x050f08);
+    scene.background = new THREE.Color(0x050508);
 
     camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 100);
     camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
     scene.add(camera);
 
     // Flashlight
-    flashlight = new THREE.SpotLight(0x00ff88, 3, 50, 0.6, 0.3, 1.5);
+    flashlight = new THREE.SpotLight(0xfff0e0, 4, 60, 0.7, 0.3, 1.2);
     flashlight.castShadow = true;
     flashlight.shadow.mapSize.width = 512;
     flashlight.shadow.mapSize.height = 512;
@@ -8650,16 +8674,16 @@ function setupLighting(stageId) {
     });
     pointLights = [];
 
-    // Ambient light
-    const ambient = new THREE.AmbientLight(colors.emissive, 0.3);
+    // Ambient light — use soft neutral white for base visibility
+    const ambient = new THREE.AmbientLight(0xccccdd, 0.35);
     scene.add(ambient);
     wallMeshes.push(ambient);
 
-    // Hemisphere light
+    // Hemisphere light — cooler sky, warmer ground for depth contrast
     const hemi = new THREE.HemisphereLight(
-        theme.outdoor ? 0x334455 : 0x1a2830,
-        0x0c100c,
-        0.5
+        theme.outdoor ? 0x445566 : 0x2a3040,
+        0x100c08,
+        0.6
     );
     scene.add(hemi);
     wallMeshes.push(hemi);
@@ -8695,7 +8719,7 @@ function setupLighting(stageId) {
         for (let i = 0; i < count; i++) {
             const cell = openCells[i];
             const color = theme.pointLightColors[i % theme.pointLightColors.length];
-            const pl = new THREE.PointLight(color, 1.2, 18, 1.2);
+            const pl = new THREE.PointLight(color, 1.8, 24, 1.0);
             pl.position.set(cell.x * CL + CL / 2, yOffset + WH * 0.8, cell.y * CL + CL / 2);
             scene.add(pl);
             pointLights.push({
