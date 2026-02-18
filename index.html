@@ -7274,12 +7274,22 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Minimal processing: strip lights, disable frustum culling
+        // Strip lights, disable frustum culling, add emissive self-glow.
+        // The original materials are MeshStandardMaterial (needs lighting).
+        // In the dark maze, without emissive the character is invisible.
+        // Modify emissive IN-PLACE on existing materials — this preserves
+        // the original textures AND keeps the skinning flag set by GLTFLoader.
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
+                // Add emissive self-glow so ONI is visible in the dark
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(m) {
+                    if (m.emissive) m.emissive.set(ONI_CONFIG.bodyEmissive);
+                    if ('emissiveIntensity' in m) m.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
+                });
             }
         });
 
@@ -7294,45 +7304,6 @@ function loadOniGLB(group, charId, stageId) {
         group.add(glbModel);
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
-
-        // DIAGNOSTIC: Add bright green cube directly to group to test rendering
-        var diagCube = new THREE.Mesh(
-            new THREE.BoxGeometry(0.3, 1.5, 0.3),
-            new THREE.MeshBasicMaterial({ color: 0x00ff00 })
-        );
-        diagCube.position.set(0, 0.75, 0);
-        group.add(diagCube);
-
-        // DIAGNOSTIC: Log state
-        var meshCount = 0, skinnedCount = 0, matSkinning = [];
-        glbModel.traverse(function(c) {
-            if (c.isMesh) meshCount++;
-            if (c.isSkinnedMesh) {
-                skinnedCount++;
-                var m = c.material;
-                matSkinning.push(c.name + ':skinning=' + (m ? m.skinning : 'no-mat'));
-            }
-        });
-        console.log('[ONI-DIAG] loaded:', enemy.file,
-            '| meshes:', meshCount, '| skinned:', skinnedCount,
-            '| scale:', scale.toFixed(3),
-            '| group.visible:', group.visible,
-            '| group.parent:', group.parent ? group.parent.type : 'NONE',
-            '| glbModel.type:', glbModel.type,
-            '| materials:', matSkinning.join(', '));
-
-        // DIAGNOSTIC: Check after 3s if model is still attached
-        setTimeout(function() {
-            var stillAttached = glbModel.parent === group;
-            var cubeAttached = diagCube.parent === group;
-            var groupInScene = !!group.parent;
-            console.log('[ONI-DIAG] 3s check:',
-                '| glbModel attached:', stillAttached,
-                '| diagCube attached:', cubeAttached,
-                '| group in scene:', groupInScene,
-                '| group.visible:', group.visible,
-                '| group.children:', group.children.length);
-        }, 3000);
 
         // Setup animation
         var usedEmbedded = false;
