@@ -7199,92 +7199,90 @@ function cpuSkinUpdate(cpuSkinData) {
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         skeleton.update();
         var bm = skeleton.boneMatrices;
+        if (!bm || bm.length === 0) return;
 
-        // Validate bone matrices
-        if (!bm || bm.length === 0 || isNaN(bm[0])) {
-            console.warn('[cpuSkin] Invalid bone matrices, skipping');
-            return;
-        }
-
-        // DEBUG: Log first frame values
-        if (!cpuSkinData._logged) {
-            cpuSkinData._logged = true;
-            console.log('[cpuSkin] bindMatrix:', JSON.stringify(bindMatrix.elements.slice(0,4)));
-            console.log('[cpuSkin] bindMatrixInverse:', JSON.stringify(bindMatrixInverse.elements.slice(0,4)));
-            console.log('[cpuSkin] boneMatrices[0..15]:', JSON.stringify(Array.from(bm).slice(0,16)));
-            console.log('[cpuSkin] srcPos[0]:', srcPos.getX(0), srcPos.getY(0), srcPos.getZ(0));
-            console.log('[cpuSkin] vertexCount:', srcPos.count);
-            // Check first vertex skin data
-            if (si && sw) {
-                console.log('[cpuSkin] skinIndex[0]:', si.getX(0), si.getY(0), si.getZ(0), si.getW(0));
-                console.log('[cpuSkin] skinWeight[0]:', sw.getX(0), sw.getY(0), sw.getZ(0), sw.getW(0));
+        // DEBUG overlay: show key values on first run
+        if (!cpuSkinData._debugShown) {
+            cpuSkinData._debugShown = true;
+            var dbg = document.getElementById('cpuSkinDebug');
+            if (!dbg) {
+                dbg = document.createElement('div');
+                dbg.id = 'cpuSkinDebug';
+                dbg.style.cssText = 'position:fixed;top:0;right:0;width:420px;background:rgba(0,0,0,0.9);color:#0f0;font:11px monospace;padding:8px;z-index:99999;max-height:50vh;overflow:auto;pointer-events:none;';
+                document.body.appendChild(dbg);
             }
-        }
-
-        var bme = bindMatrix.elements;
-        var bmie = bindMatrixInverse.elements;
-        var count = srcPos.count;
-        var nanCount = 0;
-
-        for (var i = 0; i < count; i++) {
-            var vx = srcPos.getX(i), vy = srcPos.getY(i), vz = srcPos.getZ(i);
-
-            // Step 1: bindMatrix * vertex
-            var sx = bme[0]*vx + bme[4]*vy + bme[8]*vz + bme[12];
-            var sy = bme[1]*vx + bme[5]*vy + bme[9]*vz + bme[13];
-            var sz = bme[2]*vx + bme[6]*vy + bme[10]*vz + bme[14];
-
-            // Step 2: Accumulate weighted bone transforms
-            var rx = 0, ry = 0, rz = 0;
-            var idx0 = si.getX(i), idx1 = si.getY(i), idx2 = si.getZ(i), idx3 = si.getW(i);
-            var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
-
-            if (w0 > 0) {
-                var o = idx0 * 16;
-                rx += (bm[o]*sx + bm[o+4]*sy + bm[o+8]*sz + bm[o+12]) * w0;
-                ry += (bm[o+1]*sx + bm[o+5]*sy + bm[o+9]*sz + bm[o+13]) * w0;
-                rz += (bm[o+2]*sx + bm[o+6]*sy + bm[o+10]*sz + bm[o+14]) * w0;
-            }
-            if (w1 > 0) {
-                var o1 = idx1 * 16;
-                rx += (bm[o1]*sx + bm[o1+4]*sy + bm[o1+8]*sz + bm[o1+12]) * w1;
-                ry += (bm[o1+1]*sx + bm[o1+5]*sy + bm[o1+9]*sz + bm[o1+13]) * w1;
-                rz += (bm[o1+2]*sx + bm[o1+6]*sy + bm[o1+10]*sz + bm[o1+14]) * w1;
-            }
-            if (w2 > 0) {
-                var o2 = idx2 * 16;
-                rx += (bm[o2]*sx + bm[o2+4]*sy + bm[o2+8]*sz + bm[o2+12]) * w2;
-                ry += (bm[o2+1]*sx + bm[o2+5]*sy + bm[o2+9]*sz + bm[o2+13]) * w2;
-                rz += (bm[o2+2]*sx + bm[o2+6]*sy + bm[o2+10]*sz + bm[o2+14]) * w2;
-            }
-            if (w3 > 0) {
-                var o3 = idx3 * 16;
-                rx += (bm[o3]*sx + bm[o3+4]*sy + bm[o3+8]*sz + bm[o3+12]) * w3;
-                ry += (bm[o3+1]*sx + bm[o3+5]*sy + bm[o3+9]*sz + bm[o3+13]) * w3;
-                rz += (bm[o3+2]*sx + bm[o3+6]*sy + bm[o3+10]*sz + bm[o3+14]) * w3;
-            }
-
-            // Step 3: bindMatrixInverse * result
+            var bme = bindMatrix.elements;
+            var bmie = bindMatrixInverse.elements;
+            var v0 = [srcPos.getX(0).toFixed(4), srcPos.getY(0).toFixed(4), srcPos.getZ(0).toFixed(4)];
+            // Compute step-by-step for vertex 0
+            var sx = bme[0]*srcPos.getX(0) + bme[4]*srcPos.getY(0) + bme[8]*srcPos.getZ(0) + bme[12];
+            var sy = bme[1]*srcPos.getX(0) + bme[5]*srcPos.getY(0) + bme[9]*srcPos.getZ(0) + bme[13];
+            var sz = bme[2]*srcPos.getX(0) + bme[6]*srcPos.getY(0) + bme[10]*srcPos.getZ(0) + bme[14];
+            var idx0 = si.getX(0), w0 = sw.getX(0);
+            var o = idx0 * 16;
+            var rx = (bm[o]*sx + bm[o+4]*sy + bm[o+8]*sz + bm[o+12]) * w0;
+            var ry = (bm[o+1]*sx + bm[o+5]*sy + bm[o+9]*sz + bm[o+13]) * w0;
+            var rz = (bm[o+2]*sx + bm[o+6]*sy + bm[o+10]*sz + bm[o+14]) * w0;
             var fx = bmie[0]*rx + bmie[4]*ry + bmie[8]*rz + bmie[12];
             var fy = bmie[1]*rx + bmie[5]*ry + bmie[9]*rz + bmie[13];
             var fz = bmie[2]*rx + bmie[6]*ry + bmie[10]*rz + bmie[14];
 
-            // NaN/Infinity guard
-            if (fx !== fx || fy !== fy || fz !== fz ||
-                Math.abs(fx) > 1000 || Math.abs(fy) > 1000 || Math.abs(fz) > 1000) {
-                nanCount++;
-                continue;
+            var lines = [
+                'CPU SKIN DEBUG',
+                'srcPos[0]: ' + v0.join(', '),
+                'bindMat diag: ' + [bme[0],bme[5],bme[10],bme[15]].map(function(v){return v.toFixed(4)}).join(', '),
+                'bindMat trans: ' + [bme[12],bme[13],bme[14]].map(function(v){return v.toFixed(4)}).join(', '),
+                'afterBind: ' + [sx,sy,sz].map(function(v){return v.toFixed(6)}).join(', '),
+                'skinIdx[0]: ' + [si.getX(0),si.getY(0),si.getZ(0),si.getW(0)].join(','),
+                'skinWgt[0]: ' + [sw.getX(0),sw.getY(0),sw.getZ(0),sw.getW(0)].map(function(v){return v.toFixed(3)}).join(','),
+                'boneMat['+idx0+'] diag: ' + [bm[o],bm[o+5],bm[o+10],bm[o+15]].map(function(v){return v.toFixed(4)}).join(', '),
+                'boneMat['+idx0+'] trans: ' + [bm[o+12],bm[o+13],bm[o+14]].map(function(v){return v.toFixed(4)}).join(', '),
+                'afterBone: ' + [rx,ry,rz].map(function(v){return v.toFixed(6)}).join(', '),
+                'bInvMat diag: ' + [bmie[0],bmie[5],bmie[10],bmie[15]].map(function(v){return v.toFixed(4)}).join(', '),
+                'bInvMat trans: ' + [bmie[12],bmie[13],bmie[14]].map(function(v){return v.toFixed(4)}).join(', '),
+                'FINAL: ' + [fx,fy,fz].map(function(v){return v.toFixed(6)}).join(', '),
+                'boneCount: ' + skeleton.bones.length,
+                'vertCount: ' + srcPos.count
+            ];
+            dbg.innerHTML = lines.join('<br>');
+        }
+
+        // Actual skinning - use Three.js Matrix4 for correctness
+        var _bindMat = bindMatrix;
+        var _bindInv = bindMatrixInverse;
+        var _boneMat = new THREE.Matrix4();
+        var _skinVert = new THREE.Vector4();
+        var _result = new THREE.Vector4();
+        var _temp = new THREE.Vector4();
+        var count = srcPos.count;
+
+        for (var i = 0; i < count; i++) {
+            // Read source vertex in bind pose
+            _skinVert.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
+            // Transform to skeleton space
+            _skinVert.applyMatrix4(_bindMat);
+
+            // Accumulate weighted bone transforms
+            _result.set(0, 0, 0, 0);
+            var weights = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
+            var indices = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)];
+
+            for (var j = 0; j < 4; j++) {
+                if (weights[j] > 0) {
+                    _boneMat.fromArray(bm, indices[j] * 16);
+                    _temp.copy(_skinVert).applyMatrix4(_boneMat);
+                    _result.x += _temp.x * weights[j];
+                    _result.y += _temp.y * weights[j];
+                    _result.z += _temp.z * weights[j];
+                }
             }
-            dstPos.setXYZ(i, fx, fy, fz);
-        }
 
-        // Log first frame result
-        if (!cpuSkinData._loggedResult) {
-            cpuSkinData._loggedResult = true;
-            console.log('[cpuSkin] Result vertex[0]:', dstPos.getX(0), dstPos.getY(0), dstPos.getZ(0));
-            console.log('[cpuSkin] NaN/overflow count:', nanCount, '/', count);
-        }
+            // Transform back to mesh local space
+            _result.w = 1;
+            _result.applyMatrix4(_bindInv);
 
+            dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+        }
         dstPos.needsUpdate = true;
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
