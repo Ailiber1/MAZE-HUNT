@@ -7132,11 +7132,13 @@ function setCharacterAnimation(group, state) {
     if (group.userData.currentAnimState === state) return;
 
     // Lazily retarget shared clips for this model (handles embedded-animation models too)
-    if (!group.userData.retargetedAnims && group.userData.glbModel && sharedAnimationsLoaded) {
+    // Use sourceScene (has bones) if available, otherwise fall back to glbModel
+    var retargetModel = group.userData.sourceScene || group.userData.glbModel;
+    if (!group.userData.retargetedAnims && retargetModel && sharedAnimationsLoaded) {
         var rt = {};
         ['running', 'walking', 'idle'].forEach(function(key) {
             if (sharedAnimations[key]) {
-                rt[key] = retargetClipForModel(sharedAnimations[key], group.userData.glbModel);
+                rt[key] = retargetClipForModel(sharedAnimations[key], retargetModel);
             }
         });
         group.userData.retargetedAnims = rt;
@@ -7184,64 +7186,78 @@ function setCharacterAnimation(group, state) {
 
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
 function cpuSkinUpdate(cpuSkinData) {
-    var skeleton = cpuSkinData.skeleton;
-    var srcPos = cpuSkinData.srcPositions;
-    var dstPos = cpuSkinData.dstPositions;
-    var si = cpuSkinData.skinIndex;
-    var sw = cpuSkinData.skinWeight;
-    var bindMatrix = cpuSkinData.bindMatrix;
-    var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
+    try {
+        var skeleton = cpuSkinData.skeleton;
+        var srcPos = cpuSkinData.srcPositions;
+        var dstPos = cpuSkinData.dstPositions;
+        var si = cpuSkinData.skinIndex;
+        var sw = cpuSkinData.skinWeight;
+        var bindMatrix = cpuSkinData.bindMatrix;
+        var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
 
-    // Update bone world matrices
-    cpuSkinData.sourceScene.updateMatrixWorld(true);
-    skeleton.update();
-    var bm = skeleton.boneMatrices;
+        // Update bone world matrices on DETACHED sourceScene (no parent contamination)
+        cpuSkinData.sourceScene.updateMatrixWorld(true);
+        skeleton.update();
+        var bm = skeleton.boneMatrices;
 
-    var sv = new THREE.Vector4();
-    var tv = new THREE.Vector4();
-    var count = srcPos.count;
-    for (var i = 0; i < count; i++) {
-        sv.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
-        sv.applyMatrix4(bindMatrix);
+        // Validate bone matrices exist and are not NaN
+        if (!bm || bm.length === 0 || isNaN(bm[0])) return;
 
-        var rx = 0, ry = 0, rz = 0;
-        var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
-        var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
+        var bme = bindMatrix.elements;
+        var bmie = bindMatrixInverse.elements;
+        var count = srcPos.count;
+        for (var i = 0; i < count; i++) {
+            // Read source vertex
+            var vx = srcPos.getX(i), vy = srcPos.getY(i), vz = srcPos.getZ(i);
 
-        if (w0 > 0) {
-            var o = i0 * 16;
-            var tx = bm[o]*sv.x + bm[o+4]*sv.y + bm[o+8]*sv.z + bm[o+12];
-            var ty = bm[o+1]*sv.x + bm[o+5]*sv.y + bm[o+9]*sv.z + bm[o+13];
-            var tz = bm[o+2]*sv.x + bm[o+6]*sv.y + bm[o+10]*sv.z + bm[o+14];
-            rx += tx*w0; ry += ty*w0; rz += tz*w0;
+            // Apply bindMatrix: transform vertex to skeleton space
+            var sx = bme[0]*vx + bme[4]*vy + bme[8]*vz + bme[12];
+            var sy = bme[1]*vx + bme[5]*vy + bme[9]*vz + bme[13];
+            var sz = bme[2]*vx + bme[6]*vy + bme[10]*vz + bme[14];
+
+            // Accumulate weighted bone transforms
+            var rx = 0, ry = 0, rz = 0;
+            var idx0 = si.getX(i), idx1 = si.getY(i), idx2 = si.getZ(i), idx3 = si.getW(i);
+            var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
+
+            if (w0 > 0) {
+                var o = idx0 * 16;
+                rx += (bm[o]*sx + bm[o+4]*sy + bm[o+8]*sz + bm[o+12]) * w0;
+                ry += (bm[o+1]*sx + bm[o+5]*sy + bm[o+9]*sz + bm[o+13]) * w0;
+                rz += (bm[o+2]*sx + bm[o+6]*sy + bm[o+10]*sz + bm[o+14]) * w0;
+            }
+            if (w1 > 0) {
+                var o1 = idx1 * 16;
+                rx += (bm[o1]*sx + bm[o1+4]*sy + bm[o1+8]*sz + bm[o1+12]) * w1;
+                ry += (bm[o1+1]*sx + bm[o1+5]*sy + bm[o1+9]*sz + bm[o1+13]) * w1;
+                rz += (bm[o1+2]*sx + bm[o1+6]*sy + bm[o1+10]*sz + bm[o1+14]) * w1;
+            }
+            if (w2 > 0) {
+                var o2 = idx2 * 16;
+                rx += (bm[o2]*sx + bm[o2+4]*sy + bm[o2+8]*sz + bm[o2+12]) * w2;
+                ry += (bm[o2+1]*sx + bm[o2+5]*sy + bm[o2+9]*sz + bm[o2+13]) * w2;
+                rz += (bm[o2+2]*sx + bm[o2+6]*sy + bm[o2+10]*sz + bm[o2+14]) * w2;
+            }
+            if (w3 > 0) {
+                var o3 = idx3 * 16;
+                rx += (bm[o3]*sx + bm[o3+4]*sy + bm[o3+8]*sz + bm[o3+12]) * w3;
+                ry += (bm[o3+1]*sx + bm[o3+5]*sy + bm[o3+9]*sz + bm[o3+13]) * w3;
+                rz += (bm[o3+2]*sx + bm[o3+6]*sy + bm[o3+10]*sz + bm[o3+14]) * w3;
+            }
+
+            // Apply bindMatrixInverse: transform back to mesh local space
+            var fx = bmie[0]*rx + bmie[4]*ry + bmie[8]*rz + bmie[12];
+            var fy = bmie[1]*rx + bmie[5]*ry + bmie[9]*rz + bmie[13];
+            var fz = bmie[2]*rx + bmie[6]*ry + bmie[10]*rz + bmie[14];
+
+            // NaN guard: skip this vertex if result is invalid
+            if (fx !== fx || fy !== fy || fz !== fz) continue;
+            dstPos.setXYZ(i, fx, fy, fz);
         }
-        if (w1 > 0) {
-            var o1 = i1 * 16;
-            rx += (bm[o1]*sv.x + bm[o1+4]*sv.y + bm[o1+8]*sv.z + bm[o1+12])*w1;
-            ry += (bm[o1+1]*sv.x + bm[o1+5]*sv.y + bm[o1+9]*sv.z + bm[o1+13])*w1;
-            rz += (bm[o1+2]*sv.x + bm[o1+6]*sv.y + bm[o1+10]*sv.z + bm[o1+14])*w1;
-        }
-        if (w2 > 0) {
-            var o2 = i2 * 16;
-            rx += (bm[o2]*sv.x + bm[o2+4]*sv.y + bm[o2+8]*sv.z + bm[o2+12])*w2;
-            ry += (bm[o2+1]*sv.x + bm[o2+5]*sv.y + bm[o2+9]*sv.z + bm[o2+13])*w2;
-            rz += (bm[o2+2]*sv.x + bm[o2+6]*sv.y + bm[o2+10]*sv.z + bm[o2+14])*w2;
-        }
-        if (w3 > 0) {
-            var o3 = i3 * 16;
-            rx += (bm[o3]*sv.x + bm[o3+4]*sv.y + bm[o3+8]*sv.z + bm[o3+12])*w3;
-            ry += (bm[o3+1]*sv.x + bm[o3+5]*sv.y + bm[o3+9]*sv.z + bm[o3+13])*w3;
-            rz += (bm[o3+2]*sv.x + bm[o3+6]*sv.y + bm[o3+10]*sv.z + bm[o3+14])*w3;
-        }
-
-        // Apply bindMatrixInverse
-        var bmi = bindMatrixInverse.elements;
-        var fx = bmi[0]*rx + bmi[4]*ry + bmi[8]*rz + bmi[12];
-        var fy = bmi[1]*rx + bmi[5]*ry + bmi[9]*rz + bmi[13];
-        var fz = bmi[2]*rx + bmi[6]*ry + bmi[10]*rz + bmi[14];
-        dstPos.setXYZ(i, fx, fy, fz);
+        dstPos.needsUpdate = true;
+    } catch(e) {
+        console.error('[cpuSkin] Error:', e.message);
     }
-    dstPos.needsUpdate = true;
 }
 
 /* --- C4: Load GLB model into ONI group --- */
@@ -7282,17 +7298,15 @@ function loadOniGLB(group, charId, stageId) {
             bodyGroup.scale.setScalar(meshScale);
             bodyGroup.position.y = -bb.min.y * meshScale;
 
-            // Keep sourceScene hidden in group (needed for bone updates)
-            sourceScene.traverse(function(child) {
-                if (child.isMesh) child.visible = false;
-            });
-            group.add(sourceScene);
+            // Keep sourceScene DETACHED (not added to group) to prevent
+            // parent transform contamination in bone world matrices.
+            // Store reference in userData for animation mixer updates.
+            group.userData.sourceScene = sourceScene;
 
-            // Remove fallback children except eyes and sourceScene
+            // Remove fallback children except eyes
             var toRemove = [];
             group.children.forEach(function(child) {
                 if (child === group.userData.eyeR || child === group.userData.eyeL) return;
-                if (child === sourceScene) return;
                 toRemove.push(child);
             });
             toRemove.forEach(function(child) { group.remove(child); });
@@ -7341,10 +7355,8 @@ function loadOniGLB(group, charId, stageId) {
                 }
             }
 
-            // Do initial CPU skin bake
-            if (group.userData.cpuSkin && group.userData.cpuSkin.skeleton) {
-                cpuSkinUpdate(group.userData.cpuSkin);
-            }
+            // Skip initial CPU skin bake - the cloned geometry already has
+            // correct T-pose positions. CPU skinning starts on first animation frame.
 
             if (group.userData.sceneLight) {
                 scene.remove(group.userData.sceneLight);
