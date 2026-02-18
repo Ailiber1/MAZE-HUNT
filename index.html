@@ -4306,7 +4306,17 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
-        var glbModel = gltf.scene;
+        var srcModel = gltf.scene;
+        srcModel.updateMatrixWorld(true);
+
+        // Clone with SkeletonUtils (same fix as loadOniGLB — gltf.scene added
+        // directly as child fails to render in r128)
+        var glbModel;
+        if (THREE.SkeletonUtils) {
+            glbModel = THREE.SkeletonUtils.clone(srcModel);
+        } else {
+            glbModel = srcModel.clone();
+        }
         glbModel.updateMatrixWorld(true);
 
         // Compute scale from skeleton bones (for Mixamo models) or bounding box
@@ -4343,13 +4353,22 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // If oni team, apply dark-red emissive material; otherwise keep original appearance
-        if (isOni) {
-            glbModel.traverse(function(child) {
-                if (child.isLight) { child.intensity = 0; child.visible = false; }
-                if (child.isMesh) {
-                    child.frustumCulled = false;
-                    child.visible = true;
+        // Apply appearance based on team
+        glbModel.traverse(function(child) {
+            if (child.isLight) { child.intensity = 0; child.visible = false; }
+            if (child.isMesh) {
+                child.frustumCulled = false;
+                child.visible = true;
+                // Ensure skinning on SkinnedMesh materials
+                if (child.isSkinnedMesh && child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(function(m) { m.skinning = true; });
+                    } else {
+                        child.material.skinning = true;
+                    }
+                }
+                // If oni team, tint dark-red
+                if (isOni) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
                     mats.forEach(function(mat) {
                         if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
@@ -4360,26 +4379,10 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                         mat.side = THREE.DoubleSide;
                         mat.transparent = false;
                         mat.opacity = 1.0;
-                        mat.skinning = true;
                     });
                 }
-            });
-        } else {
-            glbModel.traverse(function(child) {
-                if (child.isLight) { child.intensity = 0; child.visible = false; }
-                if (child.isMesh) {
-                    child.frustumCulled = false;
-                    // Ensure skinning flag is set on original materials for SkinnedMesh
-                    if (child.isSkinnedMesh && child.material) {
-                        if (Array.isArray(child.material)) {
-                            child.material.forEach(function(m) { m.skinning = true; });
-                        } else {
-                            child.material.skinning = true;
-                        }
-                    }
-                }
-            });
-        }
+            }
+        });
 
         // Remove fallback geometric meshes but keep nameSprite and speechBubble
         var toRemove = [];
@@ -7262,14 +7265,21 @@ function loadOniGLB(group, charId, stageId) {
     if (!enemy) return;
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
-        var glbModel = gltf.scene;
+        var srcModel = gltf.scene;
+        srcModel.updateMatrixWorld(true);
+
+        // Clone with SkeletonUtils (preserves SkinnedMesh + skeleton binding).
+        // Adding gltf.scene directly as a child of another Group fails to render
+        // in Three.js r128. SkeletonUtils.clone() creates a proper independent copy.
+        var glbModel;
+        if (THREE.SkeletonUtils) {
+            glbModel = THREE.SkeletonUtils.clone(srcModel);
+        } else {
+            glbModel = srcModel.clone();
+        }
         glbModel.updateMatrixWorld(true);
 
-        // For SkinnedMesh (Mixamo models): Box3.setFromObject() is broken
-        // because it uses raw geometry positions (tiny after Armature 0.01 scale),
-        // but skinning already places vertices at correct world positions (~1.8m).
-        // Using Box3 gives scale=66x, making the skinned character ~60m tall.
-        // Instead, compute the skeleton extent from bone world positions.
+        // Compute scale from skeleton bone world positions
         var boneBox = new THREE.Box3();
         var bonePos = new THREE.Vector3();
         var hasBones = false;
@@ -7292,7 +7302,6 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.y = -boneBox.min.y * scale;
             glbModel.position.z = -center.z * scale;
         } else {
-            // Fallback for non-skinned models
             var box = new THREE.Box3().setFromObject(glbModel);
             var size = box.getSize(new THREE.Vector3());
             center = box.getCenter(new THREE.Vector3());
@@ -7304,54 +7313,41 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // === DIAGNOSTIC: Log full SkinnedMesh state ===
-        var meshCount = 0, skinnedCount = 0;
+        // Apply dark-red oni appearance to cloned materials
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
                 child.visible = false;
             }
             if (child.isMesh) {
-                meshCount++;
-                var isSkinned = !!child.isSkinnedMesh;
-                if (isSkinned) skinnedCount++;
-                var geo = child.geometry;
-                var mat = Array.isArray(child.material) ? child.material[0] : child.material;
-                console.log('[MAZE-HUNT] ONI mesh:', child.name,
-                    '| type:', child.type,
-                    '| skinned:', isSkinned,
-                    '| mat.type:', mat.type,
-                    '| mat.skinning:', mat.skinning,
-                    '| mat.visible:', mat.visible,
-                    '| mat.transparent:', mat.transparent,
-                    '| mat.opacity:', mat.opacity,
-                    '| geo.index:', geo.index ? geo.index.count : 'null',
-                    '| geo.position:', geo.attributes.position ? geo.attributes.position.count : 'null',
-                    '| geo.skinWeight:', geo.attributes.skinWeight ? 'yes' : 'NO',
-                    '| geo.skinIndex:', geo.attributes.skinIndex ? 'yes' : 'NO',
-                    '| skeleton.bones:', isSkinned && child.skeleton ? child.skeleton.bones.length : 'N/A',
-                    '| child.visible:', child.visible,
-                    '| child.frustumCulled:', child.frustumCulled
-                );
-                // === DO NOT modify materials — test raw GLB rendering ===
                 child.frustumCulled = false;
                 child.visible = true;
+                child.castShadow = false;
+                child.receiveShadow = false;
+                // Set skinning on materials (same approach as working preloadPlayerGLB)
+                if (child.isSkinnedMesh && child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(function(m) { m.skinning = true; });
+                    } else {
+                        child.material.skinning = true;
+                    }
+                }
+                // Apply dark-red tint in-place (no needsUpdate, no texture removal)
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(mat) {
+                    if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
+                    if (mat.emissive) mat.emissive.set(ONI_CONFIG.bodyEmissive);
+                    if ('emissiveIntensity' in mat) mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
+                    if ('roughness' in mat) mat.roughness = 1.0;
+                    if ('metalness' in mat) mat.metalness = 0.0;
+                    mat.side = THREE.DoubleSide;
+                    mat.transparent = false;
+                    mat.opacity = 1.0;
+                });
             }
         });
-        console.log('[MAZE-HUNT] ONI GLB:', charId,
-            '| meshes:', meshCount, '| skinned:', skinnedCount,
-            '| scale:', glbModel.scale.x.toFixed(4),
-            '| pos:', glbModel.position.x.toFixed(3), glbModel.position.y.toFixed(3), glbModel.position.z.toFixed(3));
 
-        // === DIAGNOSTIC: Add bright green debug box to confirm model is in scene ===
-        var debugGeo = new THREE.BoxGeometry(0.3, 1.8, 0.3);
-        var debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-        var debugBox = new THREE.Mesh(debugGeo, debugMat);
-        debugBox.position.set(0, 0.9, 0);
-        glbModel.add(debugBox);
-        console.log('[MAZE-HUNT] DEBUG green wireframe box added to glbModel');
-
-        // Remove ALL fallback children except eye meshes, then add GLB
+        // Remove ALL fallback children except eye meshes, then add cloned GLB
         var toRemove = [];
         group.children.forEach(function(child) {
             if (child === group.userData.eyeR || child === group.userData.eyeL) return;
@@ -7362,10 +7358,8 @@ function loadOniGLB(group, charId, stageId) {
         group.add(glbModel);
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
-        console.log('[MAZE-HUNT] group.children after GLB add:', group.children.length,
-            group.children.map(function(c) { return c.type + '(' + c.name + ')'; }).join(', '));
 
-        // Setup animation: prefer embedded walk/run clips, fallback to shared animations
+        // Setup animation
         var usedEmbedded = false;
         if (gltf.animations && gltf.animations.length > 0) {
             group.userData.animations = gltf.animations;
@@ -7394,15 +7388,12 @@ function loadOniGLB(group, charId, stageId) {
             }
         }
 
-        // Remove scene-level light (causes red smoke on walls)
-        // Oni visibility is now handled by emissive materials (self-glow)
         if (group.userData.sceneLight) {
             scene.remove(group.userData.sceneLight);
             group.userData.sceneLight = null;
         }
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] GLB load failed for', charId, ':', err);
-        // Keep fallback geometric model — it's already displayed
         group.userData.glbLoaded = false;
     });
 }
