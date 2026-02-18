@@ -7247,41 +7247,12 @@ function cpuSkinUpdate(cpuSkinData) {
             dbg.innerHTML = lines.join('<br>');
         }
 
-        // Actual skinning - use Three.js Matrix4 for correctness
-        var _bindMat = bindMatrix;
-        var _bindInv = bindMatrixInverse;
-        var _boneMat = new THREE.Matrix4();
-        var _skinVert = new THREE.Vector4();
-        var _result = new THREE.Vector4();
-        var _temp = new THREE.Vector4();
+        // TEST: Simple pass-through copy (no transform)
+        // If body stays visible = buffer writing works, issue is in math
+        // If body disappears = buffer writing itself is broken
         var count = srcPos.count;
-
         for (var i = 0; i < count; i++) {
-            // Read source vertex in bind pose
-            _skinVert.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
-            // Transform to skeleton space
-            _skinVert.applyMatrix4(_bindMat);
-
-            // Accumulate weighted bone transforms
-            _result.set(0, 0, 0, 0);
-            var weights = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
-            var indices = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)];
-
-            for (var j = 0; j < 4; j++) {
-                if (weights[j] > 0) {
-                    _boneMat.fromArray(bm, indices[j] * 16);
-                    _temp.copy(_skinVert).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * weights[j];
-                    _result.y += _temp.y * weights[j];
-                    _result.z += _temp.z * weights[j];
-                }
-            }
-
-            // Transform back to mesh local space
-            _result.w = 1;
-            _result.applyMatrix4(_bindInv);
-
-            dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+            dstPos.setXYZ(i, srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i));
         }
         dstPos.needsUpdate = true;
     } catch(e) {
