@@ -4349,20 +4349,36 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
                 if (child.isMesh) {
                     child.frustumCulled = false;
-                    child.material = new THREE.MeshStandardMaterial({
+                    var matOpts = {
                         color: ONI_CONFIG.bodyColor,
                         emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
                         emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
                         roughness: 1.0,
                         metalness: 0.0,
                         side: THREE.DoubleSide
-                    });
+                    };
+                    if (child.isSkinnedMesh) {
+                        matOpts.skinning = true;
+                        matOpts.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
+                        matOpts.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
+                    }
+                    child.material = new THREE.MeshStandardMaterial(matOpts);
                 }
             });
         } else {
             glbModel.traverse(function(child) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
-                if (child.isMesh) { child.frustumCulled = false; }
+                if (child.isMesh) {
+                    child.frustumCulled = false;
+                    // Ensure skinning flag is set on original materials for SkinnedMesh
+                    if (child.isSkinnedMesh && child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(function(m) { m.skinning = true; });
+                        } else {
+                            child.material.skinning = true;
+                        }
+                    }
+                }
             });
         }
 
@@ -7084,10 +7100,100 @@ function applyPendingAnimations() {
     pendingAnimationGroups = [];
 }
 
+/* Retarget animation clip bone names to match model skeleton.
+   Handles common Mixamo naming variations:
+     mixamorigHips ↔ mixamorig:Hips ↔ Hips */
+function retargetClipForModel(clip, glbModel) {
+    // Build bone name lookup from model
+    var boneMap = {};       // normalized → actual bone name
+    var boneSet = {};       // actual bone names (for direct match check)
+    glbModel.traverse(function(child) {
+        if (child.isBone && child.name) {
+            boneSet[child.name] = true;
+            boneMap[child.name.toLowerCase()] = child.name;
+            // Strip common Mixamo prefixes for fuzzy matching
+            var stripped = child.name.replace(/^mixamorig[_:]?/i, '');
+            if (stripped) boneMap[stripped.toLowerCase()] = child.name;
+            // Also index concatenated form: mixamorig:Hips → mixamorigHips
+            var concat = child.name.replace(/^mixamorig:/i, 'mixamorig');
+            boneMap[concat.toLowerCase()] = child.name;
+        }
+    });
+
+    var needsRetarget = false;
+    var newTracks = [];
+    for (var i = 0; i < clip.tracks.length; i++) {
+        var track = clip.tracks[i];
+        var dotIdx = track.name.lastIndexOf('.');
+        if (dotIdx === -1) { newTracks.push(track); continue; }
+        var objectName = track.name.substring(0, dotIdx);
+        var property = track.name.substring(dotIdx + 1);
+
+        // Direct match — no retarget needed for this track
+        if (boneSet[objectName]) { newTracks.push(track); continue; }
+
+        // Try fuzzy match via boneMap
+        var lower = objectName.toLowerCase();
+        var actual = boneMap[lower];
+        if (!actual) {
+            // Try colon variant: mixamorigHips → mixamorig:Hips
+            var colonVar = objectName.replace(/^mixamorig(\w)/i, function(m, c) { return 'mixamorig:' + c.toUpperCase(); });
+            actual = boneMap[colonVar.toLowerCase()];
+        }
+        if (!actual) {
+            // Try no-colon variant: mixamorig:Hips → mixamorigHips
+            var nocolon = objectName.replace(/^mixamorig:/i, 'mixamorig');
+            actual = boneMap[nocolon.toLowerCase()];
+        }
+        if (!actual) {
+            // Try stripped: mixamorigHips → Hips
+            var stripped = objectName.replace(/^mixamorig[_:]?/i, '');
+            if (stripped) actual = boneMap[stripped.toLowerCase()];
+        }
+
+        if (actual && actual !== objectName) {
+            needsRetarget = true;
+            var newTrack = track.clone();
+            newTrack.name = actual + '.' + property;
+            newTracks.push(newTrack);
+        } else {
+            newTracks.push(track);
+        }
+    }
+
+    if (needsRetarget) {
+        return new THREE.AnimationClip(clip.name + '_retarget', clip.duration, newTracks);
+    }
+    return clip;
+}
+
 function applySharedAnimation(group, glbModel) {
     var clip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
     if (!clip) return;
+
+    // Retarget and cache all shared clips for this model's bone names
+    var retargeted = {};
+    ['running', 'walking', 'idle'].forEach(function(key) {
+        if (sharedAnimations[key]) {
+            retargeted[key] = retargetClipForModel(sharedAnimations[key], glbModel);
+        }
+    });
+    group.userData.retargetedAnims = retargeted;
+
+    clip = retargeted.running || retargeted.walking || retargeted.idle;
+    if (!clip) return;
+
     var mixer = new THREE.AnimationMixer(glbModel);
+    // Ensure skinning is enabled on all SkinnedMesh materials
+    glbModel.traverse(function(child) {
+        if (child.isSkinnedMesh && child.material) {
+            if (Array.isArray(child.material)) {
+                child.material.forEach(function(m) { m.skinning = true; });
+            } else {
+                child.material.skinning = true;
+            }
+        }
+    });
     var action = mixer.clipAction(clip);
     action.play();
     group.userData.mixer = mixer;
@@ -7097,14 +7203,48 @@ function applySharedAnimation(group, glbModel) {
 
 /* Switch animation state: 'idle', 'walk', 'run' */
 function setCharacterAnimation(group, state) {
-    if (!group.userData.mixer || !sharedAnimationsLoaded) return;
+    if (!group.userData.mixer) return;
     if (group.userData.currentAnimState === state) return;
 
+    // Lazily retarget shared clips for this model (handles embedded-animation models too)
+    if (!group.userData.retargetedAnims && group.userData.glbModel && sharedAnimationsLoaded) {
+        var rt = {};
+        ['running', 'walking', 'idle'].forEach(function(key) {
+            if (sharedAnimations[key]) {
+                rt[key] = retargetClipForModel(sharedAnimations[key], group.userData.glbModel);
+            }
+        });
+        group.userData.retargetedAnims = rt;
+    }
+
     var clip = null;
-    if (state === 'idle') clip = sharedAnimations.idle;
-    else if (state === 'walk') clip = sharedAnimations.walking;
-    else clip = sharedAnimations.running;
-    if (!clip) clip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+
+    // 1. Use cached retargeted shared animations if available
+    var retargeted = group.userData.retargetedAnims;
+    if (retargeted) {
+        if (state === 'idle') clip = retargeted.idle;
+        else if (state === 'walk') clip = retargeted.walking;
+        else clip = retargeted.running;
+    }
+
+    // 2. Fallback: try embedded animations from the model itself
+    if (!clip && group.userData.animations) {
+        for (var ai = 0; ai < group.userData.animations.length; ai++) {
+            var aname = group.userData.animations[ai].name.toLowerCase();
+            if (state === 'idle' && aname.indexOf('idle') !== -1) { clip = group.userData.animations[ai]; break; }
+            if (state === 'walk' && aname.indexOf('walk') !== -1) { clip = group.userData.animations[ai]; break; }
+            if (state === 'run' && (aname.indexOf('run') !== -1 || aname.indexOf('walk') !== -1)) { clip = group.userData.animations[ai]; break; }
+        }
+    }
+
+    // 3. Fallback: use raw shared animations (no retarget)
+    if (!clip && sharedAnimationsLoaded) {
+        if (state === 'idle') clip = sharedAnimations.idle;
+        else if (state === 'walk') clip = sharedAnimations.walking;
+        else clip = sharedAnimations.running;
+        if (!clip) clip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+    }
+
     if (!clip) return;
 
     var mixer = group.userData.mixer;
@@ -7166,8 +7306,7 @@ function loadOniGLB(group, charId, stageId) {
         }
 
         // Strip embedded lights; apply dark-red emissive self-glow material.
-        // Use fresh MeshStandardMaterial (not clone) — Three.js r128 automatically
-        // includes skinning vertex shader for SkinnedMesh objects.
+        // Three.js r128 requires skinning:true on replacement materials for SkinnedMesh.
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -7178,14 +7317,20 @@ function loadOniGLB(group, charId, stageId) {
                 child.visible = true;
                 child.castShadow = false;
                 child.receiveShadow = false;
-                child.material = new THREE.MeshStandardMaterial({
+                var matOpts = {
                     color: ONI_CONFIG.bodyColor,
                     emissive: new THREE.Color(ONI_CONFIG.bodyEmissive),
                     emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
                     roughness: 1.0,
                     metalness: 0.0,
                     side: THREE.DoubleSide
-                });
+                };
+                if (child.isSkinnedMesh) {
+                    matOpts.skinning = true;
+                    matOpts.morphTargets = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.position);
+                    matOpts.morphNormals = !!(child.geometry && child.geometry.morphAttributes && child.geometry.morphAttributes.normal);
+                }
+                child.material = new THREE.MeshStandardMaterial(matOpts);
             }
         });
 
@@ -7292,6 +7437,21 @@ function preloadPlayerGLB() {
             model.position.z = -center.z * scale;
         }
 
+        // Ensure skinning is enabled on all SkinnedMesh materials
+        model.traverse(function(child) {
+            if (child.isSkinnedMesh && child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(function(m) { m.skinning = true; });
+                } else {
+                    child.material.skinning = true;
+                }
+            }
+            if (child.isMesh) {
+                child.frustumCulled = false;
+                child.visible = true;
+            }
+        });
+
         GameState.playerGLBModel = model;
         if (gltf.animations && gltf.animations.length > 0) {
             GameState.playerGLBAnimations = gltf.animations;
@@ -7313,13 +7473,21 @@ function playCapturedDragAnimation(oni, capturePos) {
         var playerModel = THREE.SkeletonUtils
             ? THREE.SkeletonUtils.clone(GameState.playerGLBModel)
             : GameState.playerGLBModel.clone();
-        // Ensure all meshes are visible and not frustum-culled
+        // Ensure all meshes are visible, not frustum-culled, and skinning is enabled
         playerModel.traverse(function(child) {
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
             }
+            if (child.isSkinnedMesh && child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach(function(m) { m.skinning = true; });
+                } else {
+                    child.material.skinning = true;
+                }
+            }
         });
+        playerModel.updateMatrixWorld(true);
         playerGroup.add(playerModel);
         // Setup animation: prefer embedded walk/idle clips, fall back to shared animations
         var dragClip = null;
