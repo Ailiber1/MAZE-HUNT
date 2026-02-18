@@ -4262,9 +4262,9 @@ function createOniPlayerModel(playerIndex) {
     var group = createPlayerModel(playerIndex);
     // Oni team player — dark red self-glow + responds to flashlight
     var oniMat = new THREE.MeshStandardMaterial({
-        color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
-        emissive: 0xff0000, emissiveIntensity: 0.35,
-        side: THREE.FrontSide
+        color: ONI_CONFIG.bodyColor, roughness: 1.0, metalness: 0.0,
+        emissive: new THREE.Color(ONI_CONFIG.bodyEmissive), emissiveIntensity: ONI_CONFIG.bodyEmissiveIntensity,
+        side: THREE.DoubleSide
     });
     group.traverse(function(child) {
         if (child.isMesh && child.material) {
@@ -4321,14 +4321,32 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
         // If oni team, apply dark-red material; otherwise keep original appearance
         if (isOni) {
-            var oniBodyMat = new THREE.MeshStandardMaterial({
-                color: 0x4a0a0a, roughness: 0.8, metalness: 0.1,
-                emissive: 0xff0000, emissiveIntensity: 0.35,
-                side: THREE.FrontSide
-            });
             glbModel.traverse(function(child) {
                 if (child.isLight) { child.intensity = 0; child.visible = false; }
-                if (child.isMesh) { child.frustumCulled = false; child.material = oniBodyMat.clone(); }
+                if (child.isMesh) {
+                    child.frustumCulled = false;
+                    // Clone original material to preserve SkinnedMesh compatibility
+                    var mat = child.material.clone();
+                    if (mat.emissive !== undefined) {
+                        mat.color.setHex(ONI_CONFIG.bodyColor);
+                        mat.emissive.setHex(ONI_CONFIG.bodyEmissive);
+                        mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
+                        mat.roughness = 1.0;
+                        mat.metalness = 0.0;
+                        mat.side = THREE.DoubleSide;
+                        mat.transparent = false;
+                        mat.opacity = 1.0;
+                        mat.alphaTest = 0;
+                        mat.map = null;
+                        mat.normalMap = null;
+                        mat.emissiveMap = null;
+                        mat.aoMap = null;
+                        mat.needsUpdate = true;
+                    } else {
+                        mat = new THREE.MeshBasicMaterial({ color: 0x8b1a1a, side: THREE.DoubleSide });
+                    }
+                    child.material = mat;
+                }
             });
         } else {
             glbModel.traverse(function(child) {
@@ -6212,10 +6230,12 @@ const ONI_CONFIG = {
     alertDuration: 4.0,       // seconds before oni loses interest
     patrolPauseDuration: 1.5, // seconds to pause at patrol waypoint
     patrolSpeedMul: 0.6,     // speed multiplier while patrolling
-    // Visual config — MeshBasicMaterial for GLB (always visible in dark), MeshStandardMaterial for fallback
-    bodyColor: 0x3a0808,
-    fallbackEmissiveColor: 0xff0000,
-    fallbackEmissiveIntensity: 0.8,
+    // Visual config — MeshStandardMaterial with emissive self-glow (compatible with SkinnedMesh)
+    bodyColor: 0x1a0505,
+    bodyEmissive: 0xff1a1a,
+    bodyEmissiveIntensity: 0.5,
+    fallbackEmissiveColor: 0xff1a1a,
+    fallbackEmissiveIntensity: 1.0,
 };
 
 // Detection range multiplier per stage (higher difficulty = farther detection)
@@ -6615,11 +6635,11 @@ function createOniModel() {
     const human = new THREE.Group();
     const SEG = 16;
     const mat = new THREE.MeshStandardMaterial({
-        color: 0x4a0a0a,
-        roughness: 0.8,
-        metalness: 0.1,
-        emissive: 0xff0000,
-        emissiveIntensity: 0.8,
+        color: ONI_CONFIG.bodyColor,
+        roughness: 1.0,
+        metalness: 0.0,
+        emissive: new THREE.Color(ONI_CONFIG.fallbackEmissiveColor),
+        emissiveIntensity: ONI_CONFIG.fallbackEmissiveIntensity,
         side: THREE.DoubleSide
     });
 
@@ -7094,17 +7114,14 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Strip embedded lights; replace ALL mesh materials with
-        // dark MeshBasicMaterial — guaranteed visible regardless of scene lighting.
-        // MeshStandardMaterial was invisible on SkinnedMesh in the dark maze because
-        // the diffuse component needs external light, and emissive alone was too faint.
-        // MeshBasicMaterial ignores lighting, so the set color always renders exactly.
-        // Using a very dark red to preserve horror atmosphere (eyes are still brightest).
-        var oniBodyMat = new THREE.MeshBasicMaterial({
-            color: 0x3a0808,
-            side: THREE.DoubleSide,
-            skinning: true
-        });
+        // Strip embedded lights; modify mesh materials for dark-red emissive self-glow.
+        // Previous approach: MeshBasicMaterial replacement — broke SkinnedMesh rendering
+        // in Three.js r128 (body invisible, only eyes showed). MeshBasicMaterial ignores
+        // lighting but may not correctly drive the skinning vertex shader on some GPUs.
+        // New approach: clone the ORIGINAL material (preserves SkinnedMesh compatibility)
+        // and set strong emissive self-glow. Emissive is lighting-independent, so the
+        // ghost body is always visible in the dark maze. Textures are stripped for a
+        // clean dark silhouette look.
         glbModel.traverse(function(child) {
             if (child.isLight) {
                 child.intensity = 0;
@@ -7115,7 +7132,32 @@ function loadOniGLB(group, charId, stageId) {
                 child.visible = true;
                 child.castShadow = false;
                 child.receiveShadow = false;
-                child.material = oniBodyMat.clone();
+                // Clone original material to preserve type (MeshStandardMaterial for SkinnedMesh)
+                var mat = child.material.clone();
+                if (mat.emissive !== undefined) {
+                    // MeshStandardMaterial / MeshPhysicalMaterial — use emissive self-glow
+                    mat.color.setHex(ONI_CONFIG.bodyColor);
+                    mat.emissive.setHex(ONI_CONFIG.bodyEmissive);
+                    mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
+                    mat.roughness = 1.0;
+                    mat.metalness = 0.0;
+                    mat.side = THREE.DoubleSide;
+                    mat.transparent = false;
+                    mat.opacity = 1.0;
+                    mat.alphaTest = 0;
+                    mat.map = null;
+                    mat.normalMap = null;
+                    mat.emissiveMap = null;
+                    mat.aoMap = null;
+                    mat.needsUpdate = true;
+                } else {
+                    // Fallback for MeshBasicMaterial (non-skinned / unlit GLB)
+                    mat = new THREE.MeshBasicMaterial({
+                        color: 0x8b1a1a,
+                        side: THREE.DoubleSide
+                    });
+                }
+                child.material = mat;
             }
         });
 
