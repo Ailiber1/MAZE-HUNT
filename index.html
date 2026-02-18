@@ -4306,17 +4306,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
-        var srcModel = gltf.scene;
-        srcModel.updateMatrixWorld(true);
-
-        // Clone with SkeletonUtils, then transfer children to a new Group.
-        // gltf.scene is a THREE.Scene — nested Scenes fail to render in r128.
-        var cloned = THREE.SkeletonUtils
-            ? THREE.SkeletonUtils.clone(srcModel)
-            : srcModel.clone();
-        var glbModel = new THREE.Group();
-        var cloneChildren = cloned.children.slice();
-        cloneChildren.forEach(function(c) { glbModel.add(c); });
+        // Use gltf.scene directly — same simple pattern as working capture animation
+        var glbModel = gltf.scene;
         glbModel.updateMatrixWorld(true);
 
         // Compute scale from skeleton bones (for Mixamo models) or bounding box
@@ -4353,16 +4344,12 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Set visibility + skinning flags (no bind yet — need parent first)
+        // Minimal processing: strip lights, disable frustum culling
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-            }
-            if (child.isSkinnedMesh && child.material) {
-                var mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach(function(m) { m.skinning = true; });
             }
         });
 
@@ -4375,14 +4362,6 @@ function loadRemotePlayerGLB(group, charId, isOni) {
         });
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
-
-        // NOW rebind skeletons — glbModel is parented to group (in scene)
-        group.updateMatrixWorld(true);
-        glbModel.traverse(function(child) {
-            if (child.isSkinnedMesh && child.skeleton) {
-                child.bind(child.skeleton);
-            }
-        });
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
 
@@ -7255,21 +7234,13 @@ function loadOniGLB(group, charId, stageId) {
     if (!enemy) return;
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
-        var srcModel = gltf.scene;
-        srcModel.updateMatrixWorld(true);
-
-        // Clone with SkeletonUtils, then transfer children to a new Group.
-        // gltf.scene is a THREE.Scene — nested Scenes fail to render in r128.
-        // Transferring children to a plain Group avoids this rendering bug.
-        var cloned = THREE.SkeletonUtils
-            ? THREE.SkeletonUtils.clone(srcModel)
-            : srcModel.clone();
-        var glbModel = new THREE.Group();
-        var cloneChildren = cloned.children.slice();
-        cloneChildren.forEach(function(c) { glbModel.add(c); });
+        // Use gltf.scene directly — no clone needed (each load is fresh).
+        // Do NOT wrap in Group, do NOT call bind(), do NOT replace materials.
+        // This matches the pattern used by playCapturedDragAnimation which works.
+        var glbModel = gltf.scene;
         glbModel.updateMatrixWorld(true);
 
-        // Compute scale from skeleton bone world positions
+        // Bone-based scaling (Armature is 0.01 so bones give true world height)
         var boneBox = new THREE.Box3();
         var bonePos = new THREE.Vector3();
         var hasBones = false;
@@ -7281,7 +7252,7 @@ function loadOniGLB(group, charId, stageId) {
             }
         });
 
-        var scale, center;
+        var scale = 1.0, center;
         if (hasBones && !boneBox.isEmpty()) {
             var boneSize = boneBox.getSize(new THREE.Vector3());
             center = boneBox.getCenter(new THREE.Vector3());
@@ -7303,18 +7274,12 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Set visibility + skinning flags (no bind yet — need parent first)
+        // Minimal processing: strip lights, disable frustum culling
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-                child.castShadow = false;
-                child.receiveShadow = false;
-            }
-            if (child.isSkinnedMesh && child.material) {
-                var mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach(function(m) { m.skinning = true; });
             }
         });
 
@@ -7327,17 +7292,47 @@ function loadOniGLB(group, charId, stageId) {
         });
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
-
-        // NOW rebind skeletons — glbModel is parented to group (which is in
-        // the scene) so matrixWorld includes the correct world position.
-        group.updateMatrixWorld(true);
-        glbModel.traverse(function(child) {
-            if (child.isSkinnedMesh && child.skeleton) {
-                child.bind(child.skeleton);
-            }
-        });
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
+
+        // DIAGNOSTIC: Add bright green cube directly to group to test rendering
+        var diagCube = new THREE.Mesh(
+            new THREE.BoxGeometry(0.3, 1.5, 0.3),
+            new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+        );
+        diagCube.position.set(0, 0.75, 0);
+        group.add(diagCube);
+
+        // DIAGNOSTIC: Log state
+        var meshCount = 0, skinnedCount = 0, matSkinning = [];
+        glbModel.traverse(function(c) {
+            if (c.isMesh) meshCount++;
+            if (c.isSkinnedMesh) {
+                skinnedCount++;
+                var m = c.material;
+                matSkinning.push(c.name + ':skinning=' + (m ? m.skinning : 'no-mat'));
+            }
+        });
+        console.log('[ONI-DIAG] loaded:', enemy.file,
+            '| meshes:', meshCount, '| skinned:', skinnedCount,
+            '| scale:', scale.toFixed(3),
+            '| group.visible:', group.visible,
+            '| group.parent:', group.parent ? group.parent.type : 'NONE',
+            '| glbModel.type:', glbModel.type,
+            '| materials:', matSkinning.join(', '));
+
+        // DIAGNOSTIC: Check after 3s if model is still attached
+        setTimeout(function() {
+            var stillAttached = glbModel.parent === group;
+            var cubeAttached = diagCube.parent === group;
+            var groupInScene = !!group.parent;
+            console.log('[ONI-DIAG] 3s check:',
+                '| glbModel attached:', stillAttached,
+                '| diagCube attached:', cubeAttached,
+                '| group in scene:', groupInScene,
+                '| group.visible:', group.visible,
+                '| group.children:', group.children.length);
+        }, 3000);
 
         // Setup animation
         var usedEmbedded = false;
@@ -7386,20 +7381,10 @@ function preloadPlayerGLB() {
     if (!charData || !charData.file) return;
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
-        var srcModel = gltf.scene;
-        srcModel.updateMatrixWorld(true);
-
-        // Clone with SkeletonUtils, then transfer children to a new Group.
-        // gltf.scene is a THREE.Scene — nested Scenes fail to render in r128.
-        var cloned = THREE.SkeletonUtils
-            ? THREE.SkeletonUtils.clone(srcModel)
-            : srcModel.clone();
-        var model = new THREE.Group();
-        var cloneChildren = cloned.children.slice();
-        cloneChildren.forEach(function(c) { model.add(c); });
+        var model = gltf.scene;
         model.updateMatrixWorld(true);
 
-        // Use bone-based scaling for SkinnedMesh (same approach as loadOniGLB).
+        // Bone-based scaling for SkinnedMesh
         var boneBox = new THREE.Box3();
         var bonePos = new THREE.Vector3();
         var hasBones = false;
@@ -7433,19 +7418,6 @@ function preloadPlayerGLB() {
             model.position.z = -center.z * scale;
         }
 
-        // Set visibility + skinning flags. Do NOT call bind() here — this model
-        // is stored standalone and cloned later; bind is done after adding to scene.
-        model.traverse(function(child) {
-            if (child.isMesh) {
-                child.frustumCulled = false;
-                child.visible = true;
-            }
-            if (child.isSkinnedMesh && child.material) {
-                var mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach(function(m) { m.skinning = true; });
-            }
-        });
-
         GameState.playerGLBModel = model;
         if (gltf.animations && gltf.animations.length > 0) {
             GameState.playerGLBAnimations = gltf.animations;
@@ -7463,28 +7435,15 @@ function playCapturedDragAnimation(oni, capturePos) {
 
     var dragPlayerMixer = null;
     if (GameState.playerGLBModel) {
-        // Clone with SkeletonUtils, then transfer children to a new Group
-        // to avoid nested Scene rendering issues in r128.
-        var clonedSrc = THREE.SkeletonUtils
+        // Use preloaded GLB model — SkeletonUtils.clone properly clones SkinnedMesh + skeleton
+        var playerModel = THREE.SkeletonUtils
             ? THREE.SkeletonUtils.clone(GameState.playerGLBModel)
             : GameState.playerGLBModel.clone();
-        var playerModel;
-        if (clonedSrc.isScene) {
-            playerModel = new THREE.Group();
-            var srcChildren = clonedSrc.children.slice();
-            srcChildren.forEach(function(c) { playerModel.add(c); });
-        } else {
-            playerModel = clonedSrc;
-        }
-        // Set visibility + skinning flags (no bind yet — need scene parent first)
+        // Ensure all meshes are visible and not frustum-culled
         playerModel.traverse(function(child) {
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-            }
-            if (child.isSkinnedMesh && child.material) {
-                var mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach(function(m) { m.skinning = true; });
             }
         });
         playerGroup.add(playerModel);
@@ -7505,10 +7464,8 @@ function playCapturedDragAnimation(oni, capturePos) {
             dragClip = sharedAnimations.idle || sharedAnimations.walking || sharedAnimations.running;
         }
         if (dragClip) {
-            // Retarget bone names so shared animations match this model's skeleton
-            var retargetedDragClip = retargetClipForModel(dragClip, playerModel);
             dragPlayerMixer = new THREE.AnimationMixer(playerModel);
-            dragPlayerMixer.clipAction(retargetedDragClip).play();
+            dragPlayerMixer.clipAction(dragClip).play();
         }
     } else {
         // Fallback: simple humanoid silhouette
@@ -7540,13 +7497,6 @@ function playCapturedDragAnimation(oni, capturePos) {
     playerGroup.rotation.x = Math.PI / 2;
     playerGroup.position.y = capturePos.y + 0.15; // Slightly above ground
     scene.add(playerGroup);
-
-    // Rebind skeletons AFTER adding to scene so matrixWorld is correct
-    playerGroup.updateMatrixWorld(true);
-    playerGroup.traverse(function(child) {
-        if (child.isSkinnedMesh && child.skeleton) {
-            child.bind(child.skeleton);
-        }
     });
 
     // Determine drag direction: oni drags player AWAY from player's original position
