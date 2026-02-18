@@ -4309,14 +4309,14 @@ function loadRemotePlayerGLB(group, charId, isOni) {
         var srcModel = gltf.scene;
         srcModel.updateMatrixWorld(true);
 
-        // Clone with SkeletonUtils (same fix as loadOniGLB — gltf.scene added
-        // directly as child fails to render in r128)
-        var glbModel;
-        if (THREE.SkeletonUtils) {
-            glbModel = THREE.SkeletonUtils.clone(srcModel);
-        } else {
-            glbModel = srcModel.clone();
-        }
+        // Clone with SkeletonUtils, then transfer children to a new Group.
+        // gltf.scene is a THREE.Scene — nested Scenes fail to render in r128.
+        var cloned = THREE.SkeletonUtils
+            ? THREE.SkeletonUtils.clone(srcModel)
+            : srcModel.clone();
+        var glbModel = new THREE.Group();
+        var cloneChildren = cloned.children.slice();
+        cloneChildren.forEach(function(c) { glbModel.add(c); });
         glbModel.updateMatrixWorld(true);
 
         // Compute scale from skeleton bones (for Mixamo models) or bounding box
@@ -4353,33 +4353,24 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Apply appearance based on team
+        // After scaling, update matrices and rebind skeletons
+        glbModel.updateMatrixWorld(true);
+
+        // Keep original character appearance — only set skinning + visibility
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
-                // Ensure skinning on SkinnedMesh materials
-                if (child.isSkinnedMesh && child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(function(m) { m.skinning = true; });
-                    } else {
-                        child.material.skinning = true;
-                    }
-                }
-                // If oni team, tint dark-red
-                if (isOni) {
+            }
+            if (child.isSkinnedMesh) {
+                if (child.material) {
                     var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    mats.forEach(function(mat) {
-                        if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
-                        if (mat.emissive) mat.emissive.set(ONI_CONFIG.bodyEmissive);
-                        if ('emissiveIntensity' in mat) mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
-                        if ('roughness' in mat) mat.roughness = 1.0;
-                        if ('metalness' in mat) mat.metalness = 0.0;
-                        mat.side = THREE.DoubleSide;
-                        mat.transparent = false;
-                        mat.opacity = 1.0;
-                    });
+                    mats.forEach(function(m) { m.skinning = true; });
+                }
+                // Rebind skeleton after scale/position change
+                if (child.skeleton) {
+                    child.bind(child.skeleton);
                 }
             }
         });
@@ -7268,15 +7259,15 @@ function loadOniGLB(group, charId, stageId) {
         var srcModel = gltf.scene;
         srcModel.updateMatrixWorld(true);
 
-        // Clone with SkeletonUtils (preserves SkinnedMesh + skeleton binding).
-        // Adding gltf.scene directly as a child of another Group fails to render
-        // in Three.js r128. SkeletonUtils.clone() creates a proper independent copy.
-        var glbModel;
-        if (THREE.SkeletonUtils) {
-            glbModel = THREE.SkeletonUtils.clone(srcModel);
-        } else {
-            glbModel = srcModel.clone();
-        }
+        // Clone with SkeletonUtils, then transfer children to a new Group.
+        // gltf.scene is a THREE.Scene — nested Scenes fail to render in r128.
+        // Transferring children to a plain Group avoids this rendering bug.
+        var cloned = THREE.SkeletonUtils
+            ? THREE.SkeletonUtils.clone(srcModel)
+            : srcModel.clone();
+        var glbModel = new THREE.Group();
+        var cloneChildren = cloned.children.slice();
+        cloneChildren.forEach(function(c) { glbModel.add(c); });
         glbModel.updateMatrixWorld(true);
 
         // Compute scale from skeleton bone world positions
@@ -7313,41 +7304,32 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // Apply dark-red oni appearance to cloned materials
+        // After scaling, update matrices and rebind skeletons so skinning
+        // uses correct bind pose for the new scale/position.
+        glbModel.updateMatrixWorld(true);
+
+        // Keep original character appearance — only set skinning + visibility
         glbModel.traverse(function(child) {
-            if (child.isLight) {
-                child.intensity = 0;
-                child.visible = false;
-            }
+            if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
                 child.castShadow = false;
                 child.receiveShadow = false;
-                // Set skinning on materials (same approach as working preloadPlayerGLB)
-                if (child.isSkinnedMesh && child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(function(m) { m.skinning = true; });
-                    } else {
-                        child.material.skinning = true;
-                    }
+            }
+            if (child.isSkinnedMesh) {
+                if (child.material) {
+                    var mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(function(m) { m.skinning = true; });
                 }
-                // Apply dark-red tint in-place (no needsUpdate, no texture removal)
-                var mats = Array.isArray(child.material) ? child.material : [child.material];
-                mats.forEach(function(mat) {
-                    if (mat.color) mat.color.set(ONI_CONFIG.bodyColor);
-                    if (mat.emissive) mat.emissive.set(ONI_CONFIG.bodyEmissive);
-                    if ('emissiveIntensity' in mat) mat.emissiveIntensity = ONI_CONFIG.bodyEmissiveIntensity;
-                    if ('roughness' in mat) mat.roughness = 1.0;
-                    if ('metalness' in mat) mat.metalness = 0.0;
-                    mat.side = THREE.DoubleSide;
-                    mat.transparent = false;
-                    mat.opacity = 1.0;
-                });
+                // Rebind skeleton after scale/position change
+                if (child.skeleton) {
+                    child.bind(child.skeleton);
+                }
             }
         });
 
-        // Remove ALL fallback children except eye meshes, then add cloned GLB
+        // Remove ALL fallback children except eye meshes, then add GLB
         var toRemove = [];
         group.children.forEach(function(child) {
             if (child === group.userData.eyeR || child === group.userData.eyeL) return;
@@ -7406,12 +7388,20 @@ function preloadPlayerGLB() {
     if (!charData || !charData.file) return;
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
-        var model = gltf.scene;
+        var srcModel = gltf.scene;
+        srcModel.updateMatrixWorld(true);
+
+        // Clone with SkeletonUtils, then transfer children to a new Group.
+        // gltf.scene is a THREE.Scene — nested Scenes fail to render in r128.
+        var cloned = THREE.SkeletonUtils
+            ? THREE.SkeletonUtils.clone(srcModel)
+            : srcModel.clone();
+        var model = new THREE.Group();
+        var cloneChildren = cloned.children.slice();
+        cloneChildren.forEach(function(c) { model.add(c); });
         model.updateMatrixWorld(true);
 
         // Use bone-based scaling for SkinnedMesh (same approach as loadOniGLB).
-        // Box3.setFromObject() is broken for SkinnedMesh because it reads raw
-        // geometry positions (tiny after Armature 0.01 scale), giving wrong scale.
         var boneBox = new THREE.Box3();
         var bonePos = new THREE.Vector3();
         var hasBones = false;
@@ -7434,7 +7424,6 @@ function preloadPlayerGLB() {
             model.position.y = -boneBox.min.y * scale;
             model.position.z = -center.z * scale;
         } else {
-            // Fallback for non-skinned models
             var box = new THREE.Box3().setFromObject(model);
             var size = box.getSize(new THREE.Vector3());
             center = box.getCenter(new THREE.Vector3());
@@ -7446,18 +7435,22 @@ function preloadPlayerGLB() {
             model.position.z = -center.z * scale;
         }
 
-        // Ensure skinning is enabled on all SkinnedMesh materials
+        // After scaling, update matrices and rebind skeletons
+        model.updateMatrixWorld(true);
+
         model.traverse(function(child) {
-            if (child.isSkinnedMesh && child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach(function(m) { m.skinning = true; });
-                } else {
-                    child.material.skinning = true;
-                }
-            }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
+            }
+            if (child.isSkinnedMesh) {
+                if (child.material) {
+                    var mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(function(m) { m.skinning = true; });
+                }
+                if (child.skeleton) {
+                    child.bind(child.skeleton);
+                }
             }
         });
 
@@ -7478,25 +7471,36 @@ function playCapturedDragAnimation(oni, capturePos) {
 
     var dragPlayerMixer = null;
     if (GameState.playerGLBModel) {
-        // Use preloaded GLB model — SkeletonUtils.clone properly clones SkinnedMesh + skeleton
-        var playerModel = THREE.SkeletonUtils
+        // Clone with SkeletonUtils, then transfer children to a new Group
+        // to avoid nested Scene rendering issues in r128.
+        var clonedSrc = THREE.SkeletonUtils
             ? THREE.SkeletonUtils.clone(GameState.playerGLBModel)
             : GameState.playerGLBModel.clone();
-        // Ensure all meshes are visible, not frustum-culled, and skinning is enabled
+        var playerModel;
+        if (clonedSrc.isScene) {
+            playerModel = new THREE.Group();
+            var srcChildren = clonedSrc.children.slice();
+            srcChildren.forEach(function(c) { playerModel.add(c); });
+        } else {
+            playerModel = clonedSrc;
+        }
+        // Ensure all meshes are visible, skinning enabled, and rebind skeleton
+        playerModel.updateMatrixWorld(true);
         playerModel.traverse(function(child) {
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
             }
-            if (child.isSkinnedMesh && child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach(function(m) { m.skinning = true; });
-                } else {
-                    child.material.skinning = true;
+            if (child.isSkinnedMesh) {
+                if (child.material) {
+                    var mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(function(m) { m.skinning = true; });
+                }
+                if (child.skeleton) {
+                    child.bind(child.skeleton);
                 }
             }
         });
-        playerModel.updateMatrixWorld(true);
         playerGroup.add(playerModel);
         // Setup animation: prefer embedded walk/idle clips, fall back to shared animations
         var dragClip = null;
@@ -7515,8 +7519,10 @@ function playCapturedDragAnimation(oni, capturePos) {
             dragClip = sharedAnimations.idle || sharedAnimations.walking || sharedAnimations.running;
         }
         if (dragClip) {
+            // Retarget bone names so shared animations match this model's skeleton
+            var retargetedDragClip = retargetClipForModel(dragClip, playerModel);
             dragPlayerMixer = new THREE.AnimationMixer(playerModel);
-            dragPlayerMixer.clipAction(dragClip).play();
+            dragPlayerMixer.clipAction(retargetedDragClip).play();
         }
     } else {
         // Fallback: simple humanoid silhouette
