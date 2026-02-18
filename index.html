@@ -7315,6 +7315,12 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
+            // Diagnostic: verify body mesh was created
+            console.log('[ONI-DIAG] bodyGroup added. children:', group.children.length,
+                'meshScale:', meshScale, 'geoHeight:', geoHeight,
+                'vertexCount:', dstGeo.attributes.position.count,
+                'bb:', JSON.stringify({minY: bb.min.y, maxY: bb.max.y}));
+
             // Setup CPU skinning data
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
@@ -7933,13 +7939,16 @@ function updateOniAI(delta) {
             setCharacterAnimation(oni.group, oniAnimState);
         }
 
-        // ─── CPU Skinning update (every 2nd frame for performance) ───
+        // ─── CPU Skinning update DISABLED for debugging ───
+        // TODO: re-enable after T-pose body visibility confirmed
+        /*
         if (oni.group.userData.cpuSkin) {
             oni.group.userData.cpuSkin.frameCount++;
             if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
                 cpuSkinUpdate(oni.group.userData.cpuSkin);
             }
         }
+        */
     });
 }
 
