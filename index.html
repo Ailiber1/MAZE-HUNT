@@ -4353,25 +4353,16 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // After scaling, update matrices and rebind skeletons
-        glbModel.updateMatrixWorld(true);
-
-        // Keep original character appearance — only set skinning + visibility
+        // Set visibility + skinning flags (no bind yet — need parent first)
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
             }
-            if (child.isSkinnedMesh) {
-                if (child.material) {
-                    var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    mats.forEach(function(m) { m.skinning = true; });
-                }
-                // Rebind skeleton after scale/position change
-                if (child.skeleton) {
-                    child.bind(child.skeleton);
-                }
+            if (child.isSkinnedMesh && child.material) {
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(m) { m.skinning = true; });
             }
         });
 
@@ -4384,6 +4375,14 @@ function loadRemotePlayerGLB(group, charId, isOni) {
         });
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
+
+        // NOW rebind skeletons — glbModel is parented to group (in scene)
+        group.updateMatrixWorld(true);
+        glbModel.traverse(function(child) {
+            if (child.isSkinnedMesh && child.skeleton) {
+                child.bind(child.skeleton);
+            }
+        });
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
 
@@ -7304,11 +7303,7 @@ function loadOniGLB(group, charId, stageId) {
             glbModel.position.z = -center.z * scale;
         }
 
-        // After scaling, update matrices and rebind skeletons so skinning
-        // uses correct bind pose for the new scale/position.
-        glbModel.updateMatrixWorld(true);
-
-        // Keep original character appearance — only set skinning + visibility
+        // Set visibility + skinning flags (no bind yet — need parent first)
         glbModel.traverse(function(child) {
             if (child.isLight) { child.intensity = 0; child.visible = false; }
             if (child.isMesh) {
@@ -7317,15 +7312,9 @@ function loadOniGLB(group, charId, stageId) {
                 child.castShadow = false;
                 child.receiveShadow = false;
             }
-            if (child.isSkinnedMesh) {
-                if (child.material) {
-                    var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    mats.forEach(function(m) { m.skinning = true; });
-                }
-                // Rebind skeleton after scale/position change
-                if (child.skeleton) {
-                    child.bind(child.skeleton);
-                }
+            if (child.isSkinnedMesh && child.material) {
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(m) { m.skinning = true; });
             }
         });
 
@@ -7338,6 +7327,15 @@ function loadOniGLB(group, charId, stageId) {
         });
         toRemove.forEach(function(child) { group.remove(child); });
         group.add(glbModel);
+
+        // NOW rebind skeletons — glbModel is parented to group (which is in
+        // the scene) so matrixWorld includes the correct world position.
+        group.updateMatrixWorld(true);
+        glbModel.traverse(function(child) {
+            if (child.isSkinnedMesh && child.skeleton) {
+                child.bind(child.skeleton);
+            }
+        });
         group.userData.glbLoaded = true;
         group.userData.glbModel = glbModel;
 
@@ -7435,22 +7433,16 @@ function preloadPlayerGLB() {
             model.position.z = -center.z * scale;
         }
 
-        // After scaling, update matrices and rebind skeletons
-        model.updateMatrixWorld(true);
-
+        // Set visibility + skinning flags. Do NOT call bind() here — this model
+        // is stored standalone and cloned later; bind is done after adding to scene.
         model.traverse(function(child) {
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
             }
-            if (child.isSkinnedMesh) {
-                if (child.material) {
-                    var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    mats.forEach(function(m) { m.skinning = true; });
-                }
-                if (child.skeleton) {
-                    child.bind(child.skeleton);
-                }
+            if (child.isSkinnedMesh && child.material) {
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(m) { m.skinning = true; });
             }
         });
 
@@ -7484,21 +7476,15 @@ function playCapturedDragAnimation(oni, capturePos) {
         } else {
             playerModel = clonedSrc;
         }
-        // Ensure all meshes are visible, skinning enabled, and rebind skeleton
-        playerModel.updateMatrixWorld(true);
+        // Set visibility + skinning flags (no bind yet — need scene parent first)
         playerModel.traverse(function(child) {
             if (child.isMesh) {
                 child.frustumCulled = false;
                 child.visible = true;
             }
-            if (child.isSkinnedMesh) {
-                if (child.material) {
-                    var mats = Array.isArray(child.material) ? child.material : [child.material];
-                    mats.forEach(function(m) { m.skinning = true; });
-                }
-                if (child.skeleton) {
-                    child.bind(child.skeleton);
-                }
+            if (child.isSkinnedMesh && child.material) {
+                var mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach(function(m) { m.skinning = true; });
             }
         });
         playerGroup.add(playerModel);
@@ -7554,6 +7540,14 @@ function playCapturedDragAnimation(oni, capturePos) {
     playerGroup.rotation.x = Math.PI / 2;
     playerGroup.position.y = capturePos.y + 0.15; // Slightly above ground
     scene.add(playerGroup);
+
+    // Rebind skeletons AFTER adding to scene so matrixWorld is correct
+    playerGroup.updateMatrixWorld(true);
+    playerGroup.traverse(function(child) {
+        if (child.isSkinnedMesh && child.skeleton) {
+            child.bind(child.skeleton);
+        }
+    });
 
     // Determine drag direction: oni drags player AWAY from player's original position
     var dragDir = new THREE.Vector3(
