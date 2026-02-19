@@ -7248,9 +7248,9 @@ function cpuSkinUpdate(cpuSkinData) {
         }
 
         // Step-by-step CPU skinning test
-        // Mode 1: bind → unbind roundtrip (no bone matrices)
+        // Mode 1: bind → unbind roundtrip (no bone matrices) - should produce T-pose
         // Mode 2: full skinning with bone matrices
-        var TEST_MODE = 2;
+        var TEST_MODE = 1;
         var count = srcPos.count;
         var _v = new THREE.Vector4();
 
