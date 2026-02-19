@@ -7361,23 +7361,20 @@ function loadOniGLB(group, charId, stageId) {
             // Store reference in userData for animation mixer updates.
             group.userData.sourceScene = sourceScene;
 
-            // Remove fallback children except eyes
+            // Remove ALL fallback children including eyes (GLB model has its own face)
             var toRemove = [];
             group.children.forEach(function(child) {
-                if (child === group.userData.eyeR || child === group.userData.eyeL) return;
                 toRemove.push(child);
             });
             toRemove.forEach(function(child) { group.remove(child); });
+            group.userData.eyeR = null;
+            group.userData.eyeL = null;
 
             group.add(bodyGroup);
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Diagnostic: verify body mesh was created
-            console.log('[ONI-DIAG] bodyGroup added. children:', group.children.length,
-                'meshScale:', meshScale, 'geoHeight:', geoHeight,
-                'vertexCount:', dstGeo.attributes.position.count,
-                'bb:', JSON.stringify({minY: bb.min.y, maxY: bb.max.y}));
+            console.log('[ONI] GLB body loaded. scale:', meshScale.toFixed(4));
 
             // Setup CPU skinning data
             // Use STORED bindMatrix and bindMatrixInverse (they are consistent
