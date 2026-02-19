@@ -4310,28 +4310,41 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             var glbModel = gltf.scene;
             glbModel.updateMatrixWorld(true);
 
-            // Extract geometry from SkinnedMesh → regular Mesh (skinning bypass)
-            var mat = isOni
-                ? new THREE.MeshBasicMaterial({ color: ONI_CONFIG.bodyEmissive, side: THREE.DoubleSide })
-                : new THREE.MeshStandardMaterial({ color: 0x4488cc, roughness: 0.6, side: THREE.DoubleSide });
-            var allGeo = [];
+            // Extract geometry from SkinnedMesh → regular Mesh with ORIGINAL materials
+            var allMeshData = [];
             glbModel.traverse(function(child) {
                 if (child.isMesh && child.geometry) {
-                    allGeo.push(child.geometry);
+                    // Clone material and disable skinning for regular Mesh
+                    var origMat = child.material;
+                    var clonedMat;
+                    if (Array.isArray(origMat)) {
+                        clonedMat = origMat.map(function(m) {
+                            var cm = m.clone(); cm.skinning = false; cm.side = THREE.DoubleSide; return cm;
+                        });
+                    } else if (origMat) {
+                        clonedMat = origMat.clone(); clonedMat.skinning = false; clonedMat.side = THREE.DoubleSide;
+                    } else {
+                        clonedMat = new THREE.MeshStandardMaterial({ color: 0x888888, side: THREE.DoubleSide });
+                    }
+                    allMeshData.push({ geometry: child.geometry, material: clonedMat });
                 }
             });
-            if (allGeo.length > 0) {
-                var refGeo = allGeo[0];
+            if (allMeshData.length > 0) {
+                var refGeo = allMeshData[0].geometry;
                 refGeo.computeBoundingBox();
                 var bb = refGeo.boundingBox;
                 var geoHeight = bb.max.y - bb.min.y;
                 var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
                 var bodyGroup = new THREE.Group();
-                for (var gi = 0; gi < allGeo.length; gi++) {
-                    var regularMesh = new THREE.Mesh(allGeo[gi].clone(), mat);
+                for (var gi = 0; gi < allMeshData.length; gi++) {
+                    var regularMesh = new THREE.Mesh(allMeshData[gi].geometry.clone(), allMeshData[gi].material);
                     regularMesh.frustumCulled = false;
                     bodyGroup.add(regularMesh);
                 }
+                // Add light for MeshStandardMaterial visibility
+                var pLight = new THREE.PointLight(0xffffff, 1.5, 8);
+                pLight.position.set(0, 1.2, 0);
+                bodyGroup.add(pLight);
                 bodyGroup.scale.setScalar(meshScale);
                 bodyGroup.position.y = -bb.min.y * meshScale;
 
@@ -7308,17 +7321,38 @@ function loadOniGLB(group, charId, stageId) {
             var geoHeight = bb.max.y - bb.min.y;
             var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
 
-            // Create visible regular Mesh with cloned geometry
+            // Create visible regular Mesh with cloned geometry and ORIGINAL materials
             var dstGeo = srcGeo.clone();
-            var oniMat = new THREE.MeshBasicMaterial({
-                color: ONI_CONFIG.bodyEmissive,
-                side: THREE.DoubleSide
-            });
-            var bodyMesh = new THREE.Mesh(dstGeo, oniMat);
+            // Use original material from GLB (clone and disable skinning for regular Mesh)
+            var origMat = origSkinned.material;
+            var bodyMat;
+            if (Array.isArray(origMat)) {
+                bodyMat = origMat.map(function(m) {
+                    var cm = m.clone();
+                    cm.skinning = false;
+                    cm.side = THREE.DoubleSide;
+                    return cm;
+                });
+            } else if (origMat) {
+                bodyMat = origMat.clone();
+                bodyMat.skinning = false;
+                bodyMat.side = THREE.DoubleSide;
+            } else {
+                bodyMat = new THREE.MeshBasicMaterial({
+                    color: ONI_CONFIG.bodyEmissive,
+                    side: THREE.DoubleSide
+                });
+            }
+            var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
+
+            // Add a light so MeshStandardMaterial is visible
+            var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
+            bodyLight.position.set(0, 1.2, 0);
 
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
+            bodyGroup.add(bodyLight);
             bodyGroup.scale.setScalar(meshScale);
             bodyGroup.position.y = -bb.min.y * meshScale;
 
@@ -7468,37 +7502,37 @@ function playCapturedDragAnimation(oni, capturePos) {
 
     var dragPlayerMixer = null;
     if (GameState.playerGLBModel) {
-        // Use preloaded GLB model — SkeletonUtils.clone properly clones SkinnedMesh + skeleton
-        var playerModel = THREE.SkeletonUtils
-            ? THREE.SkeletonUtils.clone(GameState.playerGLBModel)
-            : GameState.playerGLBModel.clone();
-        // Ensure all meshes are visible and not frustum-culled
-        playerModel.traverse(function(child) {
-            if (child.isMesh) {
-                child.frustumCulled = false;
-                child.visible = true;
+        // Extract geometry from SkinnedMesh → regular Mesh (GPU skinning broken)
+        var srcModel = GameState.playerGLBModel;
+        var meshesExtracted = false;
+        var playerBodyGroup = new THREE.Group();
+        srcModel.traverse(function(child) {
+            if (child.isMesh && child.geometry) {
+                var clonedGeo = child.geometry.clone();
+                var clonedMat;
+                if (Array.isArray(child.material)) {
+                    clonedMat = child.material.map(function(m) {
+                        var cm = m.clone(); cm.skinning = false; cm.side = THREE.DoubleSide; return cm;
+                    });
+                } else {
+                    clonedMat = child.material.clone();
+                    clonedMat.skinning = false;
+                    clonedMat.side = THREE.DoubleSide;
+                }
+                var regularMesh = new THREE.Mesh(clonedGeo, clonedMat);
+                regularMesh.frustumCulled = false;
+                playerBodyGroup.add(regularMesh);
+                meshesExtracted = true;
             }
         });
-        playerGroup.add(playerModel);
-        // Setup animation: prefer embedded walk/idle clips, fall back to shared animations
-        var dragClip = null;
-        if (GameState.playerGLBAnimations && GameState.playerGLBAnimations.length > 0) {
-            // Look for idle or walk clip among embedded animations
-            for (var di = 0; di < GameState.playerGLBAnimations.length; di++) {
-                var dname = GameState.playerGLBAnimations[di].name.toLowerCase();
-                if (dname.indexOf('idle') !== -1 || dname.indexOf('walk') !== -1) {
-                    dragClip = GameState.playerGLBAnimations[di];
-                    break;
-                }
-            }
-            if (!dragClip) dragClip = GameState.playerGLBAnimations[0];
-        }
-        if (!dragClip && sharedAnimationsLoaded) {
-            dragClip = sharedAnimations.idle || sharedAnimations.walking || sharedAnimations.running;
-        }
-        if (dragClip) {
-            dragPlayerMixer = new THREE.AnimationMixer(playerModel);
-            dragPlayerMixer.clipAction(dragClip).play();
+        if (meshesExtracted) {
+            // Copy scale/position from preloaded model
+            playerBodyGroup.scale.copy(srcModel.scale);
+            playerBodyGroup.position.copy(srcModel.position);
+            var pLight = new THREE.PointLight(0xffffff, 1.5, 8);
+            pLight.position.set(0, 1.2, 0);
+            playerBodyGroup.add(pLight);
+            playerGroup.add(playerBodyGroup);
         }
     } else {
         // Fallback: simple humanoid silhouette
