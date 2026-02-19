@@ -2318,6 +2318,7 @@ body {
             <div id="quick-chat-keys"></div>
             <div id="spectator-badge"></div>
             <div id="navigator-bar"></div>
+            <div id="anim-debug-panel" style="display:none;position:fixed;bottom:4px;left:4px;background:rgba(0,0,0,0.8);color:#0f0;font:10px monospace;padding:4px 8px;z-index:9999;max-width:50vw;pointer-events:none;border:1px solid #0f0;white-space:pre;"></div>
         </div>
         <!-- Phase 8: Touch Controls (Mobile) -->
         <div id="touch-controls">
@@ -5354,6 +5355,8 @@ function launchMultiGame(config) {
 
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
+    // Clear stale pending animation groups from previous game
+    pendingAnimationGroups = [];
     // Preload shared Mixamo animations (Running/Walking/Idle)
     preloadSharedAnimations();
 
@@ -7367,7 +7370,10 @@ function retargetClipForModel(clip, glbModel) {
 
 function applySharedAnimation(group, glbModel) {
     var clip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-    if (!clip) return;
+    if (!clip) {
+        console.warn('[applySharedAnim] No shared clips available!');
+        return;
+    }
 
     // Retarget and cache all shared clips for this model's bone names
     var retargeted = {};
@@ -7379,7 +7385,10 @@ function applySharedAnimation(group, glbModel) {
     group.userData.retargetedAnims = retargeted;
 
     clip = retargeted.running || retargeted.walking || retargeted.idle;
-    if (!clip) return;
+    if (!clip) {
+        console.warn('[applySharedAnim] Retarget produced no clips!');
+        return;
+    }
 
     var mixer = new THREE.AnimationMixer(glbModel);
     // Ensure skinning is enabled on all SkinnedMesh materials
@@ -7397,6 +7406,20 @@ function applySharedAnimation(group, glbModel) {
     group.userData.mixer = mixer;
     group.userData.currentAction = action;
     group.userData.currentAnimState = 'run';
+
+    // Build directAnim immediately (don't wait for cpuSkinUpdate recovery)
+    if (group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
+        group.userData.cpuSkin._directAnim = buildDirectAnimData(glbModel, clip);
+        console.log('[applySharedAnim] Built directAnim in applySharedAnimation:',
+            group.userData.cpuSkin._directAnim ? group.userData.cpuSkin._directAnim.bindings.length + ' bindings' : 'FAILED');
+    }
+
+    // Log bone names for debugging
+    var boneNames = [];
+    glbModel.traverse(function(c) { if (c.isBone) boneNames.push(c.name); });
+    console.log('[applySharedAnim] Mixer created. clip=' + clip.name +
+        ' tracks=' + clip.tracks.length + ' bones=' + boneNames.length +
+        ' first5=' + boneNames.slice(0, 5).join(','));
 }
 
 /* Switch animation state: 'idle', 'walk', 'run' */
@@ -7496,24 +7519,66 @@ function directBoneAnimUpdate(cpuSkinData) {
     }
 }
 
-/* Build direct animation data: bone map + interpolants for all tracks */
+/* Build direct animation data: bone map + interpolants for all tracks.
+   Uses aggressive fuzzy matching to handle Mixamo naming variants:
+   mixamorigHips, mixamorig:Hips, Hips, etc. */
 function buildDirectAnimData(sourceScene, clip) {
     if (!clip || !clip.tracks || clip.tracks.length === 0) return null;
 
-    var boneMap = {};
+    // Build multiple lookup maps for aggressive bone matching
+    var boneExact = {};   // exact name → bone
+    var boneLower = {};   // lowercase name → bone
+    var boneStripped = {};// stripped (no mixamorig prefix) lowercase → bone
+    var boneConcat = {};  // concatenated (no colon) lowercase → bone
+    var boneCount = 0;
     sourceScene.traverse(function(c) {
-        if (c.isBone) boneMap[c.name] = c;
+        if (c.isBone && c.name) {
+            boneCount++;
+            boneExact[c.name] = c;
+            boneLower[c.name.toLowerCase()] = c;
+            // Strip mixamorig prefix variants
+            var stripped = c.name.replace(/^mixamorig[_:]?/i, '');
+            if (stripped && stripped !== c.name) boneStripped[stripped.toLowerCase()] = c;
+            // Concatenated form (remove colon)
+            var concat = c.name.replace(/:/g, '');
+            if (concat !== c.name) boneConcat[concat.toLowerCase()] = c;
+        }
     });
 
     var bindings = [];
     var matched = 0;
+    var unmatched = [];
     for (var i = 0; i < clip.tracks.length; i++) {
         var track = clip.tracks[i];
         var dotIdx = track.name.lastIndexOf('.');
         if (dotIdx === -1) continue;
         var boneName = track.name.substring(0, dotIdx);
         var propName = track.name.substring(dotIdx + 1);
-        var bone = boneMap[boneName];
+
+        // 1. Exact match
+        var bone = boneExact[boneName];
+        // 2. Case-insensitive match
+        if (!bone) bone = boneLower[boneName.toLowerCase()];
+        // 3. Strip mixamorig prefix from track name and match
+        if (!bone) {
+            var trackStripped = boneName.replace(/^mixamorig[_:]?/i, '');
+            if (trackStripped && trackStripped !== boneName) {
+                bone = boneLower[trackStripped.toLowerCase()] || boneStripped[trackStripped.toLowerCase()];
+            }
+        }
+        // 4. Add mixamorig prefix to track name and match
+        if (!bone) bone = boneLower[('mixamorig' + boneName).toLowerCase()];
+        // 5. Try concatenated form (remove colon from track name)
+        if (!bone) {
+            var trackConcat = boneName.replace(/:/g, '');
+            if (trackConcat !== boneName) bone = boneLower[trackConcat.toLowerCase()];
+        }
+        // 6. Try matching stripped track name against stripped bone names
+        if (!bone) {
+            var ts = boneName.replace(/^mixamorig[_:]?/i, '');
+            if (ts) bone = boneStripped[ts.toLowerCase()];
+        }
+
         if (bone) {
             matched++;
             bindings.push({
@@ -7521,11 +7586,26 @@ function buildDirectAnimData(sourceScene, clip) {
                 propName: propName,
                 interpolant: track.createInterpolant()
             });
+        } else {
+            if (unmatched.length < 3) unmatched.push(boneName);
         }
     }
     console.log('[DirectAnim] Built: ' + matched + '/' + clip.tracks.length +
-        ' tracks matched, clip=' + clip.name + ' dur=' + clip.duration.toFixed(2));
-    if (matched === 0) return null;
+        ' tracks matched, bones=' + boneCount + ', clip=' + clip.name +
+        ' dur=' + clip.duration.toFixed(2) +
+        (unmatched.length > 0 ? ' unmatched: ' + unmatched.join(',') : ''));
+    if (matched === 0) {
+        // Log all bone names for debugging
+        var allBones = [];
+        sourceScene.traverse(function(c) { if (c.isBone) allBones.push(c.name); });
+        var trackNames = [];
+        for (var t = 0; t < Math.min(5, clip.tracks.length); t++) {
+            trackNames.push(clip.tracks[t].name);
+        }
+        console.error('[DirectAnim] ZERO matches! Bones:', allBones.slice(0, 10).join(','),
+            'Tracks:', trackNames.join(','));
+        return null;
+    }
     return { clip: clip, time: 0, bindings: bindings };
 }
 
@@ -7539,8 +7619,51 @@ function cpuSkinUpdate(cpuSkinData) {
         var bindMatrix = cpuSkinData.bindMatrix;
         var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
 
+        // Recovery: if _directAnim was never built (timing/race condition), try now
+        if (!cpuSkinData._directAnim && sharedAnimationsLoaded && cpuSkinData.sourceScene) {
+            var recClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+            if (recClip) {
+                var recRetargeted = retargetClipForModel(recClip, cpuSkinData.sourceScene);
+                cpuSkinData._directAnim = buildDirectAnimData(cpuSkinData.sourceScene, recRetargeted);
+                console.log('[cpuSkin] Recovery: directAnim built =',
+                    cpuSkinData._directAnim ? cpuSkinData._directAnim.bindings.length + ' bindings' : 'FAILED');
+            }
+        }
+
+        // Debug heartbeat: log animation state periodically (first 5 frames, then every 300)
+        if (!cpuSkinData._debugCount) cpuSkinData._debugCount = 0;
+        cpuSkinData._debugCount++;
+        if (cpuSkinData._debugCount <= 5 || cpuSkinData._debugCount % 300 === 0) {
+            var da = cpuSkinData._directAnim;
+            var sampleBone = null;
+            if (da && da.bindings.length > 0) sampleBone = da.bindings[0].bone;
+            console.log('[cpuSkin] #' + cpuSkinData._debugCount +
+                ' directAnim=' + (da ? da.bindings.length + ' bindings' : 'NULL') +
+                ' time=' + (da ? da.time.toFixed(2) : 'N/A') +
+                (sampleBone ? ' bone0=' + sampleBone.name +
+                    ' q=[' + sampleBone.quaternion.x.toFixed(3) + ',' +
+                    sampleBone.quaternion.y.toFixed(3) + ',' +
+                    sampleBone.quaternion.z.toFixed(3) + ',' +
+                    sampleBone.quaternion.w.toFixed(3) + ']' : ''));
+        }
+
         // Direct bone animation: bypass PropertyBinding, drive bones directly
         directBoneAnimUpdate(cpuSkinData);
+
+        // Post-animation bone check (first 3 frames only)
+        if (cpuSkinData._debugCount <= 3) {
+            var da2 = cpuSkinData._directAnim;
+            if (da2 && da2.bindings.length > 0) {
+                var sb = da2.bindings[0].bone;
+                console.log('[cpuSkin] POST-ANIM bone0=' + sb.name +
+                    ' q=[' + sb.quaternion.x.toFixed(4) + ',' +
+                    sb.quaternion.y.toFixed(4) + ',' +
+                    sb.quaternion.z.toFixed(4) + ',' +
+                    sb.quaternion.w.toFixed(4) + ']' +
+                    ' time=' + da2.time.toFixed(3) +
+                    ' dur=' + da2.clip.duration.toFixed(3));
+            }
+        }
 
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
@@ -11385,6 +11508,44 @@ function gameLoop() {
     // Floor visibility culling for performance
     updateFloorVisibility();
 
+    // Animation debug overlay (multiplayer only)
+    if (isMulti) {
+        if (!window._animDebugCounter) window._animDebugCounter = 0;
+        window._animDebugCounter++;
+        if (window._animDebugCounter % 60 === 1) { // Update every 60 frames
+            var dbg = document.getElementById('anim-debug-panel');
+            if (dbg) {
+                var lines = [];
+                lines.push('SharedAnim: ' + (sharedAnimationsLoaded ? 'LOADED' : 'NOT LOADED'));
+                if (sharedAnimationsLoaded) {
+                    lines.push('  run=' + (sharedAnimations.running ? sharedAnimations.running.tracks.length + 'trk' : 'null') +
+                        ' walk=' + (sharedAnimations.walking ? sharedAnimations.walking.tracks.length + 'trk' : 'null') +
+                        ' idle=' + (sharedAnimations.idle ? sharedAnimations.idle.tracks.length + 'trk' : 'null'));
+                }
+                Object.keys(GameState.remotePlayers).forEach(function(idx) {
+                    var rp = GameState.remotePlayers[idx];
+                    var ud = rp.model.userData;
+                    var cs = ud.cpuSkin;
+                    lines.push('P' + idx + ': glb=' + (ud.glbLoaded ? 'Y' : 'N') +
+                        ' mix=' + (ud.mixer ? 'Y' : 'N') +
+                        ' cpu=' + (cs ? 'Y' : 'N') +
+                        ' da=' + (cs && cs._directAnim ? cs._directAnim.bindings.length + 'b' : 'NULL') +
+                        ' st=' + (ud.currentAnimState || '?'));
+                });
+                GameState.onis.forEach(function(oni, oi) {
+                    var ud = oni.group.userData;
+                    var cs = ud.cpuSkin;
+                    lines.push('ONI' + oi + ': glb=' + (ud.glbLoaded ? 'Y' : 'N') +
+                        ' mix=' + (ud.mixer ? 'Y' : 'N') +
+                        ' cpu=' + (cs ? 'Y' : 'N') +
+                        ' da=' + (cs && cs._directAnim ? cs._directAnim.bindings.length + 'b' : 'NULL'));
+                });
+                dbg.textContent = lines.join('\n');
+                dbg.style.display = 'block';
+            }
+        }
+    }
+
     if (renderer && scene && camera) renderer.render(scene, camera);
     GameState.animationId = requestAnimationFrame(gameLoop);
 }
@@ -11561,6 +11722,8 @@ function startGame(stageId) {
 
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
+    // Clear stale pending animation groups from previous game
+    pendingAnimationGroups = [];
     // Preload shared Mixamo animations (Running/Walking/Idle)
     preloadSharedAnimations();
 
