@@ -4385,6 +4385,29 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 }
             });
 
+            // CRITICAL: Also sanitize embedded animation track names to match sanitized bones.
+            // Without this, tracks like "mixamorig:Hips.quaternion" can't find bone "mixamorigHips"
+            // Also strip "Armature/" path prefix for cross-model compatibility.
+            if (gltf.animations) {
+                gltf.animations.forEach(function(clip) {
+                    clip.tracks.forEach(function(track) {
+                        // Remove colons from bone name part
+                        track.name = track.name.replace(/:/g, '');
+                        // Strip "Armature/" or similar path prefixes
+                        var dotIdx = track.name.lastIndexOf('.');
+                        if (dotIdx !== -1) {
+                            var objectPath = track.name.substring(0, dotIdx);
+                            var property = track.name.substring(dotIdx + 1);
+                            var slashIdx = objectPath.lastIndexOf('/');
+                            if (slashIdx !== -1) {
+                                objectPath = objectPath.substring(slashIdx + 1);
+                            }
+                            track.name = objectPath + '.' + property;
+                        }
+                    });
+                });
+            }
+
             // Compute bone-based scale (reliable for all model types)
             var boneBox = new THREE.Box3();
             var bonePos = new THREE.Vector3();
@@ -7526,6 +7549,25 @@ function loadOniGLB(group, charId, stageId) {
                     child.name = child.name.replace(/:/g, '');
                 }
             });
+
+            // CRITICAL: Also sanitize embedded animation track names to match sanitized bones
+            if (gltf.animations) {
+                gltf.animations.forEach(function(clip) {
+                    clip.tracks.forEach(function(track) {
+                        track.name = track.name.replace(/:/g, '');
+                        var dotIdx = track.name.lastIndexOf('.');
+                        if (dotIdx !== -1) {
+                            var objectPath = track.name.substring(0, dotIdx);
+                            var property = track.name.substring(dotIdx + 1);
+                            var slashIdx = objectPath.lastIndexOf('/');
+                            if (slashIdx !== -1) {
+                                objectPath = objectPath.substring(slashIdx + 1);
+                            }
+                            track.name = objectPath + '.' + property;
+                        }
+                    });
+                });
+            }
 
             // Find first SkinnedMesh for CPU skinning
             var origSkinned = null;
