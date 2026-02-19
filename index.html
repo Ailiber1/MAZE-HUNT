@@ -2785,6 +2785,13 @@ function createCharCard(char) {
 }
 
 function selectCharacter(char) {
+    // Prevent selection if character is already taken by another player
+    var takenBy = getCharacterTakenBy(char.id);
+    if (takenBy !== null && takenBy !== GameState.playerIndex) {
+        refreshCharacterGrid();
+        return;
+    }
+
     GameState.selectedCharacter = char;
     SoundManager.playSE('charSelect');
 
@@ -2810,6 +2817,17 @@ function getCharacterTakenBy(charId) {
 }
 
 function refreshCharacterGrid() {
+    // Race condition: if local player's character was taken by someone else, deselect it
+    if (GameState.selectedCharacter) {
+        var myCharTaken = getCharacterTakenBy(GameState.selectedCharacter.id);
+        if (myCharTaken !== null && myCharTaken !== GameState.playerIndex) {
+            GameState.selectedCharacter = null;
+            if (firebaseReady && GameState.roomId && GameState.playerIndex !== null) {
+                database.ref('rooms/' + GameState.roomId + '/players/' + GameState.playerIndex + '/character').remove();
+            }
+        }
+    }
+
     var cards = document.querySelectorAll('.char-card');
     cards.forEach(function(card) {
         var charId = card.dataset.charId;
@@ -3860,6 +3878,7 @@ function proceedJoinRoom(roomId) {
                 if (GameState.multiMode === 'teamBattle') {
                     renderTeamAssignment();
                     buildCharacterGrid('teamBattle');
+                    refreshCharacterGrid();
                 }
             }
         });
@@ -5775,6 +5794,7 @@ function initRoleSelectButtons() {
 
             // Rebuild character grid with appropriate characters for chosen role
             buildCharacterGrid(GameState.multiMode);
+            refreshCharacterGrid();
             renderTeamAssignment();
         });
     });
