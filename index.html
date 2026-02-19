@@ -7550,18 +7550,54 @@ function loadOniGLB(group, charId, stageId) {
 function preloadPlayerGLB() {
     GameState.playerGLBModel = null;
     GameState.playerGLBAnimations = null;
+    GameState.playerGLBScale = 1.0;
+    GameState.playerGLBOffset = { x: 0, y: 0, z: 0 };
     var charData = GameState.selectedCharacter;
     if (!charData || !charData.file) return;
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
         var model = gltf.scene;
         model.updateMatrixWorld(true);
-        // Store raw scene without scale/position modifications
-        // CPU skinning in playCapturedDragAnimation needs the unmodified scene
+
+        // Compute display scale using bone bounding box (reliable for SkinnedMesh models)
+        var boneBox = new THREE.Box3();
+        var bonePos = new THREE.Vector3();
+        var hasBones = false;
+        model.traverse(function(child) {
+            if (child.isBone) {
+                child.getWorldPosition(bonePos);
+                boneBox.expandByPoint(bonePos);
+                hasBones = true;
+            }
+        });
+
+        var scale, offsetX = 0, offsetY = 0, offsetZ = 0;
+        if (hasBones && !boneBox.isEmpty()) {
+            var boneSize = boneBox.getSize(new THREE.Vector3());
+            var center = boneBox.getCenter(new THREE.Vector3());
+            scale = (boneSize.y > 0.01) ? (1.7 / boneSize.y) : 1.0;
+            offsetX = -center.x * scale;
+            offsetY = -boneBox.min.y * scale;
+            offsetZ = -center.z * scale;
+        } else {
+            var box = new THREE.Box3().setFromObject(model);
+            var size = box.getSize(new THREE.Vector3());
+            var center = box.getCenter(new THREE.Vector3());
+            var maxDim = Math.max(size.x, size.y, size.z);
+            scale = (maxDim > 0.001) ? (1.7 / maxDim) : 1.0;
+            offsetX = -center.x * scale;
+            offsetY = -box.min.y * scale;
+            offsetZ = -center.z * scale;
+        }
+
         GameState.playerGLBModel = model;
+        GameState.playerGLBScale = scale;
+        GameState.playerGLBOffset = { x: offsetX, y: offsetY, z: offsetZ };
         if (gltf.animations && gltf.animations.length > 0) {
             GameState.playerGLBAnimations = gltf.animations;
         }
+        console.log('[PreloadPlayer] Loaded. scale:', scale.toFixed(4),
+            'hasBones:', hasBones, 'offset:', offsetY.toFixed(4));
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] Player GLB preload failed:', err);
     });
@@ -7573,138 +7609,53 @@ function playCapturedDragAnimation(oni, capturePos) {
     var playerGroup = new THREE.Group();
     playerGroup.position.set(capturePos.x, capturePos.y, capturePos.z);
 
-    var dragPlayerMixer = null;
-    var dragCpuSkin = null;
-
     try {
     if (GameState.playerGLBModel) {
-        // Use the preloaded model directly as detached sourceScene
-        // (game is ending on capture, so sharing is safe)
-        var sourceScene = GameState.playerGLBModel;
-        sourceScene.updateMatrixWorld(true);
+        // Extract ALL meshes from preloaded model → static regular Meshes
+        // Use pre-computed bone-based scaling from preloadPlayerGLB (reliable for any model)
+        var srcModel = GameState.playerGLBModel;
+        var meshesExtracted = false;
+        var playerBodyGroup = new THREE.Group();
 
-        // Find first SkinnedMesh for CPU skinning
-        var origSkinned = null;
-        sourceScene.traverse(function(child) {
-            if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
+        srcModel.traverse(function(child) {
+            if (child.isMesh && child.geometry) {
+                var clonedGeo = child.geometry.clone();
+                var clonedMat;
+                if (Array.isArray(child.material)) {
+                    clonedMat = child.material.map(function(m) {
+                        var cm = m.clone(); cm.skinning = false; cm.side = THREE.DoubleSide; return cm;
+                    });
+                } else if (child.material) {
+                    clonedMat = child.material.clone();
+                    clonedMat.skinning = false;
+                    clonedMat.side = THREE.DoubleSide;
+                } else {
+                    clonedMat = new THREE.MeshStandardMaterial({ color: 0x888888, side: THREE.DoubleSide });
+                }
+                var regularMesh = new THREE.Mesh(clonedGeo, clonedMat);
+                regularMesh.frustumCulled = false;
+                playerBodyGroup.add(regularMesh);
+                meshesExtracted = true;
+            }
         });
 
-        if (origSkinned && origSkinned.geometry) {
-            var srcGeo = origSkinned.geometry;
-            srcGeo.computeBoundingBox();
-            var bb = srcGeo.boundingBox;
-            var geoHeight = bb.max.y - bb.min.y;
-            var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+        if (meshesExtracted) {
+            // Use pre-computed bone-based scale (handles all model types reliably)
+            var preScale = GameState.playerGLBScale || 1.0;
+            var preOffset = GameState.playerGLBOffset || { x: 0, y: 0, z: 0 };
+            playerBodyGroup.scale.setScalar(preScale);
+            playerBodyGroup.position.set(preOffset.x, preOffset.y, preOffset.z);
 
-            // Create visible regular Mesh with cloned geometry and ORIGINAL materials
-            var dstGeo = srcGeo.clone();
-            var origMat = origSkinned.material;
-            var bodyMat;
-            if (Array.isArray(origMat)) {
-                bodyMat = origMat.map(function(m) {
-                    var cm = m.clone(); cm.skinning = false; cm.side = THREE.DoubleSide; return cm;
-                });
-            } else if (origMat) {
-                bodyMat = origMat.clone(); bodyMat.skinning = false; bodyMat.side = THREE.DoubleSide;
-            } else {
-                bodyMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, side: THREE.DoubleSide });
-            }
-            var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
-            bodyMesh.frustumCulled = false;
-
-            var playerBodyGroup = new THREE.Group();
-            playerBodyGroup.add(bodyMesh);
+            // Add light for MeshStandardMaterial visibility
             var pLight = new THREE.PointLight(0xffffff, 1.5, 8);
             pLight.position.set(0, 1.2, 0);
             playerBodyGroup.add(pLight);
-            playerBodyGroup.scale.setScalar(meshScale);
-            playerBodyGroup.position.y = -bb.min.y * meshScale;
             playerGroup.add(playerBodyGroup);
 
-            // Setup CPU skinning data (same pattern as ONI)
-            dragCpuSkin = {
-                sourceScene: sourceScene,
-                skeleton: origSkinned.skeleton,
-                srcPositions: srcGeo.attributes.position,
-                dstPositions: dstGeo.attributes.position,
-                skinIndex: srcGeo.attributes.skinIndex,
-                skinWeight: srcGeo.attributes.skinWeight,
-                bindMatrix: origSkinned.bindMatrix,
-                bindMatrixInverse: origSkinned.bindMatrixInverse,
-                srcHeight: geoHeight,
-                scaleFix: null,
-                frameCount: 0,
-                _scaleComputed: false
-            };
-
-            // Setup animation mixer on the sourceScene
-            if (GameState.playerGLBAnimations && GameState.playerGLBAnimations.length > 0) {
-                dragPlayerMixer = new THREE.AnimationMixer(sourceScene);
-                var idleClip = null;
-                for (var ai = 0; ai < GameState.playerGLBAnimations.length; ai++) {
-                    var aname = GameState.playerGLBAnimations[ai].name.toLowerCase();
-                    if (aname.indexOf('idle') !== -1) { idleClip = GameState.playerGLBAnimations[ai]; break; }
-                }
-                if (!idleClip) idleClip = GameState.playerGLBAnimations[0];
-                dragPlayerMixer.clipAction(idleClip).play();
-            } else if (sharedAnimationsLoaded) {
-                var shClip = sharedAnimations.idle || sharedAnimations.walking;
-                if (shClip) {
-                    var retargeted = retargetClipForModel(shClip, sourceScene);
-                    dragPlayerMixer = new THREE.AnimationMixer(sourceScene);
-                    dragPlayerMixer.clipAction(retargeted).play();
-                }
-            }
-
-            // Debug: add a bright marker sphere directly to playerGroup
-            var debugMarker = new THREE.Mesh(
-                new THREE.SphereGeometry(0.3, 12, 12),
-                new THREE.MeshBasicMaterial({ color: 0xff00ff })
-            );
-            debugMarker.position.y = 0.9;
-            playerGroup.add(debugMarker);
-
-            console.log('[CapturedDrag] Runner CPU skinning setup OK. geoH:', geoHeight.toFixed(4),
-                'scale:', meshScale.toFixed(4),
-                'bodyChildren:', playerBodyGroup.children.length,
-                'playerGroupChildren:', playerGroup.children.length,
-                'bb:', JSON.stringify({minY: bb.min.y.toFixed(4), maxY: bb.max.y.toFixed(4)}));
-        } else {
-            // No SkinnedMesh — extract regular meshes without CPU skinning
-            console.log('[CapturedDrag] No SkinnedMesh, using static mesh fallback');
-            var meshesExtracted = false;
-            var playerBodyGroup2 = new THREE.Group();
-            sourceScene.traverse(function(child) {
-                if (child.isMesh && child.geometry) {
-                    var clonedGeo = child.geometry.clone();
-                    var clonedMat;
-                    if (Array.isArray(child.material)) {
-                        clonedMat = child.material.map(function(m) {
-                            var cm = m.clone(); cm.skinning = false; cm.side = THREE.DoubleSide; return cm;
-                        });
-                    } else {
-                        clonedMat = child.material.clone();
-                        clonedMat.skinning = false; clonedMat.side = THREE.DoubleSide;
-                    }
-                    var rm = new THREE.Mesh(clonedGeo, clonedMat);
-                    rm.frustumCulled = false;
-                    playerBodyGroup2.add(rm);
-                    meshesExtracted = true;
-                }
-            });
-            if (meshesExtracted) {
-                var refGeo = playerBodyGroup2.children[0].geometry;
-                refGeo.computeBoundingBox();
-                var bbFb = refGeo.boundingBox;
-                var ghFb = bbFb.max.y - bbFb.min.y;
-                var msFb = (ghFb > 0.001) ? (1.8 / ghFb) : 100;
-                playerBodyGroup2.scale.setScalar(msFb);
-                playerBodyGroup2.position.y = -bbFb.min.y * msFb;
-                var plFb = new THREE.PointLight(0xffffff, 1.5, 8);
-                plFb.position.set(0, 1.2, 0);
-                playerBodyGroup2.add(plFb);
-                playerGroup.add(playerBodyGroup2);
-            }
+            console.log('[CapturedDrag] Runner mesh setup OK. meshCount:',
+                playerBodyGroup.children.length - 1,
+                'scale:', preScale.toFixed(4),
+                'offsetY:', preOffset.y.toFixed(4));
         }
     } else {
         // Fallback: simple humanoid silhouette
@@ -7731,8 +7682,7 @@ function playCapturedDragAnimation(oni, capturePos) {
         }
     }
     } catch(e) {
-        console.error('[CapturedDrag] Error setting up runner:', e.message, e.stack);
-        // Ensure at least a simple fallback is shown
+        console.error('[CapturedDrag] Error:', e.message, e.stack);
         if (playerGroup.children.length === 0) {
             var errMat = new THREE.MeshStandardMaterial({
                 color: 0x2244aa, roughness: 0.5, emissive: 0x223366, emissiveIntensity: 0.8
@@ -7760,9 +7710,9 @@ function playCapturedDragAnimation(oni, capturePos) {
     }
     dragDir.normalize();
 
-    // Add a dim spotlight following the drag scene
-    var dragLight = new THREE.PointLight(0xff2020, 0.3, 3);
-    dragLight.position.set(capturePos.x, capturePos.y + 2.5, capturePos.z);
+    // Add a light following the drag scene (bright enough to illuminate both characters)
+    var dragLight = new THREE.PointLight(0xffffff, 1.0, 10);
+    dragLight.position.set(capturePos.x, capturePos.y + 3.0, capturePos.z);
     scene.add(dragLight);
 
     // Animation state
@@ -7825,30 +7775,15 @@ function playCapturedDragAnimation(oni, capturePos) {
         playerGroup.rotation.z = Math.sin(elapsed * 6) * 0.15;
         playerGroup.rotation.y = Math.sin(elapsed * 3) * 0.1;
 
-        // Debug: log once at start of drag
-        if (elapsed < 0.05) {
-            console.log('[CapturedDrag] Frame0: playerPos=',
-                playerGroup.position.x.toFixed(2), playerGroup.position.y.toFixed(2), playerGroup.position.z.toFixed(2),
-                'oniPos=', oni.group.position.x.toFixed(2), oni.group.position.y.toFixed(2), oni.group.position.z.toFixed(2),
-                'children:', playerGroup.children.length,
-                'visible:', playerGroup.visible,
-                'inScene:', playerGroup.parent === scene);
-        }
-
         // Light follows the scene
         dragLight.position.set(
-            oni.group.position.x, oni.group.position.y + 2.5, oni.group.position.z
+            oni.group.position.x, oni.group.position.y + 3.0, oni.group.position.z
         );
 
-        // Update animation mixers and CPU skinning during drag
+        // Update ONI animation during drag
         var frameDelta = 1 / 60;
         if (oni.group.userData.mixer) oni.group.userData.mixer.update(frameDelta);
         if (oni.group.userData.cpuSkin) cpuSkinUpdate(oni.group.userData.cpuSkin);
-        if (dragPlayerMixer) dragPlayerMixer.update(frameDelta);
-        if (dragCpuSkin) {
-            dragCpuSkin.frameCount++;
-            cpuSkinUpdate(dragCpuSkin);
-        }
 
         // Camera looks at midpoint between oni and player
         var lookX = (oni.group.position.x + playerGroup.position.x) / 2;
