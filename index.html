@@ -7201,121 +7201,83 @@ function cpuSkinUpdate(cpuSkinData) {
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        // DEBUG overlay: show key values on first run
-        if (!cpuSkinData._debugShown) {
-            cpuSkinData._debugShown = true;
-            var dbg = document.getElementById('cpuSkinDebug');
-            if (!dbg) {
-                dbg = document.createElement('div');
-                dbg.id = 'cpuSkinDebug';
-                dbg.style.cssText = 'position:fixed;top:0;right:0;width:420px;background:rgba(0,0,0,0.9);color:#0f0;font:11px monospace;padding:8px;z-index:99999;max-height:50vh;overflow:auto;pointer-events:none;';
-                document.body.appendChild(dbg);
-            }
-            var bme = bindMatrix.elements;
-            var bmie = bindMatrixInverse.elements;
-            var v0 = [srcPos.getX(0).toFixed(4), srcPos.getY(0).toFixed(4), srcPos.getZ(0).toFixed(4)];
-            // Compute step-by-step for vertex 0
-            var sx = bme[0]*srcPos.getX(0) + bme[4]*srcPos.getY(0) + bme[8]*srcPos.getZ(0) + bme[12];
-            var sy = bme[1]*srcPos.getX(0) + bme[5]*srcPos.getY(0) + bme[9]*srcPos.getZ(0) + bme[13];
-            var sz = bme[2]*srcPos.getX(0) + bme[6]*srcPos.getY(0) + bme[10]*srcPos.getZ(0) + bme[14];
-            var idx0 = si.getX(0), w0 = sw.getX(0);
-            var o = idx0 * 16;
-            var rx = (bm[o]*sx + bm[o+4]*sy + bm[o+8]*sz + bm[o+12]) * w0;
-            var ry = (bm[o+1]*sx + bm[o+5]*sy + bm[o+9]*sz + bm[o+13]) * w0;
-            var rz = (bm[o+2]*sx + bm[o+6]*sy + bm[o+10]*sz + bm[o+14]) * w0;
-            var fx = bmie[0]*rx + bmie[4]*ry + bmie[8]*rz + bmie[12];
-            var fy = bmie[1]*rx + bmie[5]*ry + bmie[9]*rz + bmie[13];
-            var fz = bmie[2]*rx + bmie[6]*ry + bmie[10]*rz + bmie[14];
-
-            var lines = [
-                'CPU SKIN DEBUG',
-                'srcPos[0]: ' + v0.join(', '),
-                'bindMat diag: ' + [bme[0],bme[5],bme[10],bme[15]].map(function(v){return v.toFixed(4)}).join(', '),
-                'bindMat trans: ' + [bme[12],bme[13],bme[14]].map(function(v){return v.toFixed(4)}).join(', '),
-                'afterBind: ' + [sx,sy,sz].map(function(v){return v.toFixed(6)}).join(', '),
-                'skinIdx[0]: ' + [si.getX(0),si.getY(0),si.getZ(0),si.getW(0)].join(','),
-                'skinWgt[0]: ' + [sw.getX(0),sw.getY(0),sw.getZ(0),sw.getW(0)].map(function(v){return v.toFixed(3)}).join(','),
-                'boneMat['+idx0+'] diag: ' + [bm[o],bm[o+5],bm[o+10],bm[o+15]].map(function(v){return v.toFixed(4)}).join(', '),
-                'boneMat['+idx0+'] trans: ' + [bm[o+12],bm[o+13],bm[o+14]].map(function(v){return v.toFixed(4)}).join(', '),
-                'afterBone: ' + [rx,ry,rz].map(function(v){return v.toFixed(6)}).join(', '),
-                'bInvMat diag: ' + [bmie[0],bmie[5],bmie[10],bmie[15]].map(function(v){return v.toFixed(4)}).join(', '),
-                'bInvMat trans: ' + [bmie[12],bmie[13],bmie[14]].map(function(v){return v.toFixed(4)}).join(', '),
-                'FINAL: ' + [fx,fy,fz].map(function(v){return v.toFixed(6)}).join(', '),
-                'boneCount: ' + skeleton.bones.length,
-                'vertCount: ' + srcPos.count
-            ];
-            dbg.innerHTML = lines.join('<br>');
-        }
-
-        // Step-by-step CPU skinning test
-        // Mode 1: bind → unbind roundtrip (no bone matrices) - should produce T-pose
-        // Mode 2: full skinning with bone matrices
-        var TEST_MODE = 1;
-        var count = srcPos.count;
+        // Full CPU skinning with bone matrices
+        var _boneMat = new THREE.Matrix4();
         var _v = new THREE.Vector4();
+        var _temp = new THREE.Vector4();
+        var _result = new THREE.Vector4();
+        var count = srcPos.count;
+        var minY = Infinity, maxY = -Infinity;
 
-        if (TEST_MODE === 1) {
-            // Roundtrip test: bind then unbind - should produce original positions
-            for (var i = 0; i < count; i++) {
-                _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
-                _v.applyMatrix4(bindMatrix);
-                _v.applyMatrix4(bindMatrixInverse);
-                dstPos.setXYZ(i, _v.x, _v.y, _v.z);
+        for (var i = 0; i < count; i++) {
+            _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
+            _v.applyMatrix4(bindMatrix);
+
+            _result.set(0, 0, 0, 0);
+            var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
+            var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
+
+            if (w0 > 0) {
+                _boneMat.fromArray(bm, i0 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w0; _result.y += _temp.y * w0; _result.z += _temp.z * w0;
             }
-        } else if (TEST_MODE === 2) {
-            // Full CPU skinning with bone matrices
-            var _boneMat = new THREE.Matrix4();
-            var _temp = new THREE.Vector4();
-            var _result = new THREE.Vector4();
+            if (w1 > 0) {
+                _boneMat.fromArray(bm, i1 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w1; _result.y += _temp.y * w1; _result.z += _temp.z * w1;
+            }
+            if (w2 > 0) {
+                _boneMat.fromArray(bm, i2 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w2; _result.y += _temp.y * w2; _result.z += _temp.z * w2;
+            }
+            if (w3 > 0) {
+                _boneMat.fromArray(bm, i3 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w3; _result.y += _temp.y * w3; _result.z += _temp.z * w3;
+            }
 
-            for (var i = 0; i < count; i++) {
-                _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
-                _v.applyMatrix4(bindMatrix);
+            _result.w = 1;
+            _result.applyMatrix4(bindMatrixInverse);
 
-                _result.set(0, 0, 0, 0);
-                var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
-                var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
+            // NaN guard
+            if (_result.x !== _result.x) _result.x = srcPos.getX(i);
+            if (_result.y !== _result.y) _result.y = srcPos.getY(i);
+            if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
 
-                if (w0 > 0) {
-                    _boneMat.fromArray(bm, i0 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w0; _result.y += _temp.y * w0; _result.z += _temp.z * w0;
-                }
-                if (w1 > 0) {
-                    _boneMat.fromArray(bm, i1 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w1; _result.y += _temp.y * w1; _result.z += _temp.z * w1;
-                }
-                if (w2 > 0) {
-                    _boneMat.fromArray(bm, i2 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w2; _result.y += _temp.y * w2; _result.z += _temp.z * w2;
-                }
-                if (w3 > 0) {
-                    _boneMat.fromArray(bm, i3 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w3; _result.y += _temp.y * w3; _result.z += _temp.z * w3;
-                }
+            dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+            if (_result.y < minY) minY = _result.y;
+            if (_result.y > maxY) maxY = _result.y;
+        }
 
-                _result.w = 1;
-                _result.applyMatrix4(bindMatrixInverse);
-
-                // Debug first vertex on first frame
-                if (i === 0 && !cpuSkinData._finalLogged) {
-                    cpuSkinData._finalLogged = true;
-                    var dbg = document.getElementById('cpuSkinDebug');
-                    if (dbg) {
-                        dbg.innerHTML += '<br><b style="color:yellow">MODE2 FINAL[0]: ' +
-                            _result.x.toFixed(4) + ', ' + _result.y.toFixed(4) + ', ' + _result.z.toFixed(4) + '</b>' +
-                            '<br>src[0]: ' + srcPos.getX(0).toFixed(4) + ', ' + srcPos.getY(0).toFixed(4) + ', ' + srcPos.getZ(0).toFixed(4) +
-                            '<br>ratio: ' + (_result.x/srcPos.getX(0)).toFixed(2) + 'x, ' +
-                            (_result.y/srcPos.getY(0)).toFixed(2) + 'x, ' + (_result.z/srcPos.getZ(0)).toFixed(2) + 'x';
-                    }
-                }
-
-                dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+        // Auto-scale: compute scale ratio from output vs source bounding box
+        // The stored bindMatrixInverse includes ~100x scale from Armature,
+        // so output is ~100x larger than expected. Compensate via bodyGroup scale.
+        if (!cpuSkinData._scaleComputed) {
+            cpuSkinData._scaleComputed = true;
+            var outHeight = maxY - minY;
+            var srcHeight = cpuSkinData.srcHeight;
+            if (outHeight > 0.001 && srcHeight > 0.001) {
+                var scaleFix = srcHeight / outHeight;
+                cpuSkinData.scaleFix = scaleFix;
+                console.log('[cpuSkin] Auto-scale: outH=' + outHeight.toFixed(4) +
+                    ' srcH=' + srcHeight.toFixed(4) + ' fix=' + scaleFix.toFixed(6));
             }
         }
+
+        // Apply scale correction to all vertices
+        if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
+            var sf = cpuSkinData.scaleFix;
+            for (var i = 0; i < count; i++) {
+                dstPos.setXYZ(i,
+                    dstPos.getX(i) * sf,
+                    dstPos.getY(i) * sf,
+                    dstPos.getZ(i) * sf
+                );
+            }
+        }
+
         dstPos.needsUpdate = true;
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
@@ -7384,17 +7346,9 @@ function loadOniGLB(group, charId, stageId) {
                 'bb:', JSON.stringify({minY: bb.min.y, maxY: bb.max.y}));
 
             // Setup CPU skinning data
-            // CRITICAL FIX: Recompute bindMatrixInverse from bindMatrix
-            // The GLTFLoader's stored bindMatrixInverse doesn't match bindMatrix
-            // (bindMatrix is a rotation but bindMatrixInverse has ~100x scale)
-            var correctBindInverse = new THREE.Matrix4().copy(origSkinned.bindMatrix).invert();
-            console.log('[ONI-DIAG] bindMatrix diag:', origSkinned.bindMatrix.elements[0].toFixed(4),
-                origSkinned.bindMatrix.elements[5].toFixed(4), origSkinned.bindMatrix.elements[10].toFixed(4));
-            console.log('[ONI-DIAG] STORED bindMatrixInverse diag:', origSkinned.bindMatrixInverse.elements[0].toFixed(4),
-                origSkinned.bindMatrixInverse.elements[5].toFixed(4), origSkinned.bindMatrixInverse.elements[10].toFixed(4));
-            console.log('[ONI-DIAG] CORRECT bindMatrixInverse diag:', correctBindInverse.elements[0].toFixed(4),
-                correctBindInverse.elements[5].toFixed(4), correctBindInverse.elements[10].toFixed(4));
-
+            // Use STORED bindMatrix and bindMatrixInverse (they are consistent
+            // with boneInverses from the GLB file). The stored bindMatrixInverse
+            // includes ~100x Armature scale which is compensated by auto-scaling.
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
@@ -7403,7 +7357,9 @@ function loadOniGLB(group, charId, stageId) {
                 skinIndex: srcGeo.attributes.skinIndex,
                 skinWeight: srcGeo.attributes.skinWeight,
                 bindMatrix: origSkinned.bindMatrix,
-                bindMatrixInverse: correctBindInverse,
+                bindMatrixInverse: origSkinned.bindMatrixInverse,
+                srcHeight: geoHeight,
+                scaleFix: null,
                 frameCount: 0
             };
 
