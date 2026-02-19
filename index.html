@@ -4317,6 +4317,35 @@ function createOniPlayerModel(playerIndex) {
     return group;
 }
 
+/* Merge multiple per-bone animation clips into a single clip.
+   Mixamo exports create separate clips per bone (e.g., "mixamo.com", "mixamo.com.001").
+   This merges them into one clip with all tracks, deduplicating by bone.property. */
+function mergeAnimationClips(clips) {
+    if (!clips || clips.length === 0) return null;
+    // If single clip with many tracks, it's already a full animation
+    if (clips.length === 1 && clips[0].tracks.length > 5) return clips[0];
+
+    var tracks = [];
+    var seen = {};
+    var maxDuration = 0;
+
+    for (var ci = 0; ci < clips.length; ci++) {
+        var clip = clips[ci];
+        if (clip.duration > maxDuration) maxDuration = clip.duration;
+        for (var ti = 0; ti < clip.tracks.length; ti++) {
+            var track = clip.tracks[ti];
+            if (!seen[track.name]) {
+                seen[track.name] = true;
+                tracks.push(track);
+            }
+        }
+    }
+
+    if (tracks.length === 0) return null;
+    console.log('[mergeClips] Merged ' + clips.length + ' clips → ' + tracks.length + ' tracks');
+    return new THREE.AnimationClip('merged_animation', maxDuration > 0 ? maxDuration : -1, tracks);
+}
+
 function loadRemotePlayerGLB(group, charId, isOni) {
     // Find character in both runner and enemy lists
     var charData = CHARACTER_LIST.runners.find(function(c) { return c.id === charId; });
@@ -4520,34 +4549,28 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene
+            // Mixamo exports create per-bone clips ("mixamo.com", "mixamo.com.001"...)
+            // We MUST merge all clips into one to animate all bones.
             var mixer = null;
             var usedEmbedded = false;
+            var mergedClip = null;
             if (gltf.animations && gltf.animations.length > 0) {
                 group.userData.animations = gltf.animations;
-                // Look for walk/run/idle clips — try broader matching
-                var walkClip = null;
-                var anyClip = gltf.animations[0];
-                for (var i = 0; i < gltf.animations.length; i++) {
-                    var aname = gltf.animations[i].name.toLowerCase();
-                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1 ||
-                        aname.indexOf('locomotion') !== -1 || aname.indexOf('move') !== -1) {
-                        walkClip = gltf.animations[i]; break;
-                    }
-                }
-                // If no walk/run found, use any embedded animation
-                if (!walkClip && gltf.animations.length > 0) walkClip = anyClip;
-                if (walkClip) {
+                // Merge all per-bone clips into a single clip
+                mergedClip = mergeAnimationClips(gltf.animations);
+                if (mergedClip && mergedClip.tracks.length > 5) {
+                    // Merged clip has enough tracks — use as embedded animation
                     mixer = new THREE.AnimationMixer(sourceScene);
                     group.userData.mixer = mixer;
-                    var embAction = mixer.clipAction(walkClip);
+                    var embAction = mixer.clipAction(mergedClip);
                     embAction.play();
-                    // Store as currentAction so setCharacterAnimation can properly fade it out
-                    // when switching states (run→idle→run). Without this, embedded animation
-                    // would play at full weight forever, blending with shared animations.
                     group.userData.currentAction = embAction;
                     group.userData.currentAnimState = 'run';
                     usedEmbedded = true;
-                    console.log('[RemotePlayer] Using embedded anim:', walkClip.name, 'tracks:', walkClip.tracks.length);
+                    console.log('[RemotePlayer] Using MERGED embedded anim:', mergedClip.tracks.length, 'tracks from', gltf.animations.length, 'clips');
+                } else {
+                    console.log('[RemotePlayer] Embedded anims too few tracks (' +
+                        (mergedClip ? mergedClip.tracks.length : 0) + '), using shared animations');
                 }
             }
             if (!usedEmbedded) {
@@ -4560,7 +4583,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             }
 
             // Setup direct bone animation (bypasses PropertyBinding)
-            var animClipForDirect = walkClip; // embedded clip if available
+            var animClipForDirect = usedEmbedded ? mergedClip : null;
             if (!animClipForDirect && sharedAnimationsLoaded) {
                 // Use shared running animation for models without embedded anims
                 var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
@@ -7460,6 +7483,14 @@ function setCharacterAnimation(group, state) {
     newAction.reset().fadeIn(0.25).play();
     group.userData.currentAction = newAction;
     group.userData.currentAnimState = state;
+
+    // Update directAnim to match new clip for CPU skinning path
+    if (group.userData.cpuSkin) {
+        var ss = group.userData.sourceScene;
+        if (ss && clip) {
+            group.userData.cpuSkin._directAnim = buildDirectAnimData(ss, clip);
+        }
+    }
 }
 
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
@@ -7598,11 +7629,14 @@ function cpuSkinUpdate(cpuSkinData) {
         // Auto-scale: compute scale ratio from output vs source bounding box
         // The stored bindMatrixInverse includes ~100x scale from Armature,
         // so output is ~100x larger than expected. Compensate via bodyGroup scale.
-        if (!cpuSkinData._scaleComputed) {
-            cpuSkinData._scaleComputed = true;
-            var outHeight = maxY - minY;
+        // Allow recomputation for first few frames (animation may not be ready on frame 1)
+        var outHeight = maxY - minY;
+        if (!cpuSkinData._scaleComputed || (cpuSkinData._scaleRetries < 5 && outHeight < 0.01)) {
+            if (!cpuSkinData._scaleRetries) cpuSkinData._scaleRetries = 0;
+            cpuSkinData._scaleRetries++;
             var srcHeight = cpuSkinData.srcHeight;
-            if (outHeight > 0.001 && srcHeight > 0.001) {
+            if (outHeight > 0.01 && srcHeight > 0.001) {
+                cpuSkinData._scaleComputed = true;
                 var scaleFix = srcHeight / outHeight;
                 cpuSkinData.scaleFix = scaleFix;
                 console.log('[cpuSkin] Auto-scale: outH=' + outHeight.toFixed(4) +
@@ -7622,18 +7656,22 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Y-anchor: compute on first frame, anchor model feet at y=0
-        // Runs ALWAYS (regardless of scaleFix) to handle bone transform offsets
-        if (!cpuSkinData._yAnchorComputed) {
-            cpuSkinData._yAnchorComputed = true;
+        // Y-anchor: anchor model feet at y=0
+        // Allow recomputation for first few frames (animation may not be ready on frame 1)
+        if (!cpuSkinData._yAnchorComputed || cpuSkinData._yAnchorRetries < 5) {
+            if (!cpuSkinData._yAnchorRetries) cpuSkinData._yAnchorRetries = 0;
+            cpuSkinData._yAnchorRetries++;
             var anchorMinY = Infinity;
             for (var i = 0; i < count; i++) {
                 var ay = dstPos.getY(i);
                 if (ay < anchorMinY) anchorMinY = ay;
             }
-            cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
-            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
-                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
+            if (isFinite(anchorMinY) && outHeight > 0.01) {
+                cpuSkinData._yAnchorComputed = true;
+                cpuSkinData._yAnchor = -anchorMinY;
+                if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
+                    console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
+                }
             }
         }
         if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
@@ -7777,25 +7815,22 @@ function loadOniGLB(group, charId, stageId) {
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene
+            // Merge per-bone clips into a single clip (same as remote players)
             var mixer = null;
             var usedEmbedded = false;
+            var mergedClip = null;
             if (gltf.animations && gltf.animations.length > 0) {
                 group.userData.animations = gltf.animations;
-                var walkClip = null;
-                for (var i = 0; i < gltf.animations.length; i++) {
-                    var aname = gltf.animations[i].name.toLowerCase();
-                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
-                        walkClip = gltf.animations[i]; break;
-                    }
-                }
-                if (walkClip) {
+                mergedClip = mergeAnimationClips(gltf.animations);
+                if (mergedClip && mergedClip.tracks.length > 5) {
                     mixer = new THREE.AnimationMixer(sourceScene);
                     group.userData.mixer = mixer;
-                    var embAction = mixer.clipAction(walkClip);
+                    var embAction = mixer.clipAction(mergedClip);
                     embAction.play();
                     group.userData.currentAction = embAction;
                     group.userData.currentAnimState = 'run';
                     usedEmbedded = true;
+                    console.log('[ONI] Using MERGED embedded anim:', mergedClip.tracks.length, 'tracks');
                 }
             }
             if (!usedEmbedded) {
@@ -7807,7 +7842,7 @@ function loadOniGLB(group, charId, stageId) {
             }
 
             // Setup direct bone animation (bypasses PropertyBinding)
-            var animClipForDirect = walkClip;
+            var animClipForDirect = usedEmbedded ? mergedClip : null;
             if (!animClipForDirect && sharedAnimationsLoaded) {
                 var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
                 if (sharedClip) {
@@ -11283,6 +11318,22 @@ function gameLoop() {
         if (GameState.multiMode !== 'teamBattle' || !isMulti) {
             updateOniAI(delta);
         }
+    }
+
+    // Guest ONI animation update: guests don't run updateOniAI but still
+    // need to update mixer + cpuSkin so ONI models are animated (not T-pose)
+    if (isMulti && !GameState.isHost && GameState.multiMode !== 'teamBattle') {
+        GameState.onis.forEach(function(oni) {
+            if (oni.group.userData.mixer) {
+                oni.group.userData.mixer.update(delta);
+            }
+            if (oni.group.userData.cpuSkin) {
+                oni.group.userData.cpuSkin.frameCount++;
+                if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
+                    cpuSkinUpdate(oni.group.userData.cpuSkin);
+                }
+            }
+        });
     }
 
     // Phase 7: Oni footstep manager
