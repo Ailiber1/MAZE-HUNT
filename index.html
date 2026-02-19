@@ -4559,6 +4559,19 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
             }
 
+            // Setup direct bone animation (bypasses PropertyBinding)
+            var animClipForDirect = walkClip; // embedded clip if available
+            if (!animClipForDirect && sharedAnimationsLoaded) {
+                // Use shared running animation for models without embedded anims
+                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+                if (sharedClip) {
+                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+                }
+            }
+            if (animClipForDirect && group.userData.cpuSkin) {
+                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
+            }
+
             // Log bone names for debug
             var boneNames = [];
             sourceScene.traverse(function(c) { if (c.isBone) boneNames.push(c.name); });
@@ -7206,10 +7219,10 @@ function preloadSharedAnimations() {
             if (gltf.animations && gltf.animations.length > 0) {
                 // Merge per-bone clips into a single AnimationClip
                 var tracks = [];
+                var seen = {};  // dedup: bone.property → true
                 gltf.animations.forEach(function(clip) {
                     clip.tracks.forEach(function(track) {
                         // Normalize track names: remove colons and strip root node prefix
-                        // e.g. "Armature/mixamorig:Hips.position" → "mixamorigHips.position"
                         track.name = track.name.replace(/:/g, '');
                         var dotIdx = track.name.lastIndexOf('.');
                         if (dotIdx !== -1) {
@@ -7219,11 +7232,24 @@ function preloadSharedAnimations() {
                             if (slashIdx !== -1) {
                                 objectPath = objectPath.substring(slashIdx + 1);
                             }
+                            // Handle $AssimpFbx$ intermediate nodes:
+                            // Skip _Translation and _PreRotation variants (constant offsets)
+                            // Map _Rotation variant to base bone name
+                            if (objectPath.indexOf('$AssimpFbx$') !== -1) {
+                                if (objectPath.indexOf('_$AssimpFbx$_Rotation') === -1) {
+                                    return; // skip Translation/PreRotation tracks
+                                }
+                                objectPath = objectPath.replace(/_\$AssimpFbx\$_Rotation$/, '');
+                            }
                             track.name = objectPath + '.' + property;
                         }
+                        // Dedup: keep first track for each bone.property
+                        if (seen[track.name]) return;
+                        seen[track.name] = true;
                         tracks.push(track);
                     });
                 });
+                console.log('[SharedAnim] ' + entry.key + ': ' + tracks.length + ' tracks merged');
                 sharedAnimations[entry.key] = new THREE.AnimationClip(entry.key, -1, tracks);
             }
             loaded++;
@@ -7252,6 +7278,17 @@ function applyPendingAnimations() {
             var animTarget = group.userData.sourceScene || group.userData.glbModel;
             if (animTarget) {
                 applySharedAnimation(group, animTarget);
+            }
+        }
+        // Also setup direct bone animation if cpuSkin exists but no directAnim yet
+        if (group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
+            var ss = group.userData.sourceScene || group.userData.glbModel;
+            if (ss) {
+                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+                if (sharedClip) {
+                    var retargeted = retargetClipForModel(sharedClip, ss);
+                    group.userData.cpuSkin._directAnim = buildDirectAnimData(ss, retargeted);
+                }
             }
         }
     });
@@ -7418,6 +7455,69 @@ function setCharacterAnimation(group, state) {
 }
 
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
+
+/* Direct bone animation: bypasses THREE.PropertyBinding entirely.
+   Evaluates animation tracks and sets bone transforms directly. */
+function directBoneAnimUpdate(cpuSkinData) {
+    var da = cpuSkinData._directAnim;
+    if (!da || !da.bindings || da.bindings.length === 0) return;
+
+    var now = performance.now() * 0.001;
+    if (!da._lastTime) da._lastTime = now;
+    var dt = Math.min(now - da._lastTime, 0.1); // cap delta to prevent jumps
+    da._lastTime = now;
+    da.time += dt;
+    if (da.clip.duration > 0) {
+        da.time = da.time % da.clip.duration;
+    }
+
+    for (var i = 0; i < da.bindings.length; i++) {
+        var b = da.bindings[i];
+        if (!b.bone) continue;
+        var result = b.interpolant.evaluate(da.time);
+        if (b.propName === 'quaternion') {
+            b.bone.quaternion.set(result[0], result[1], result[2], result[3]);
+        } else if (b.propName === 'position') {
+            b.bone.position.set(result[0], result[1], result[2]);
+        } else if (b.propName === 'scale') {
+            b.bone.scale.set(result[0], result[1], result[2]);
+        }
+    }
+}
+
+/* Build direct animation data: bone map + interpolants for all tracks */
+function buildDirectAnimData(sourceScene, clip) {
+    if (!clip || !clip.tracks || clip.tracks.length === 0) return null;
+
+    var boneMap = {};
+    sourceScene.traverse(function(c) {
+        if (c.isBone) boneMap[c.name] = c;
+    });
+
+    var bindings = [];
+    var matched = 0;
+    for (var i = 0; i < clip.tracks.length; i++) {
+        var track = clip.tracks[i];
+        var dotIdx = track.name.lastIndexOf('.');
+        if (dotIdx === -1) continue;
+        var boneName = track.name.substring(0, dotIdx);
+        var propName = track.name.substring(dotIdx + 1);
+        var bone = boneMap[boneName];
+        if (bone) {
+            matched++;
+            bindings.push({
+                bone: bone,
+                propName: propName,
+                interpolant: track.createInterpolant()
+            });
+        }
+    }
+    console.log('[DirectAnim] Built: ' + matched + '/' + clip.tracks.length +
+        ' tracks matched, clip=' + clip.name + ' dur=' + clip.duration.toFixed(2));
+    if (matched === 0) return null;
+    return { clip: clip, time: 0, bindings: bindings };
+}
+
 function cpuSkinUpdate(cpuSkinData) {
     try {
         var srcPos = cpuSkinData.srcPositions;
@@ -7427,6 +7527,9 @@ function cpuSkinUpdate(cpuSkinData) {
         var sw = cpuSkinData.skinWeight;
         var bindMatrix = cpuSkinData.bindMatrix;
         var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
+
+        // Direct bone animation: bypass PropertyBinding, drive bones directly
+        directBoneAnimUpdate(cpuSkinData);
 
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
@@ -7693,6 +7796,18 @@ function loadOniGLB(group, charId, stageId) {
                 } else {
                     pendingAnimationGroups.push(group);
                 }
+            }
+
+            // Setup direct bone animation (bypasses PropertyBinding)
+            var animClipForDirect = walkClip;
+            if (!animClipForDirect && sharedAnimationsLoaded) {
+                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+                if (sharedClip) {
+                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+                }
+            }
+            if (animClipForDirect && group.userData.cpuSkin) {
+                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
             }
 
             // Skip initial CPU skin bake - the cloned geometry already has
