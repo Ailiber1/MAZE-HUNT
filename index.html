@@ -4548,51 +4548,23 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 frameCount: 0
             };
 
-            // Setup animation mixer on the ORIGINAL sourceScene
-            // Mixamo exports create per-bone clips ("mixamo.com", "mixamo.com.001"...)
-            // We MUST merge all clips into one to animate all bones.
-            var mixer = null;
-            var usedEmbedded = false;
-            var mergedClip = null;
-            if (gltf.animations && gltf.animations.length > 0) {
-                group.userData.animations = gltf.animations;
-                // Merge all per-bone clips into a single clip
-                mergedClip = mergeAnimationClips(gltf.animations);
-                if (mergedClip && mergedClip.tracks.length > 5) {
-                    // Merged clip has enough tracks — use as embedded animation
-                    mixer = new THREE.AnimationMixer(sourceScene);
-                    group.userData.mixer = mixer;
-                    var embAction = mixer.clipAction(mergedClip);
-                    embAction.play();
-                    group.userData.currentAction = embAction;
-                    group.userData.currentAnimState = 'run';
-                    usedEmbedded = true;
-                    console.log('[RemotePlayer] Using MERGED embedded anim:', mergedClip.tracks.length, 'tracks from', gltf.animations.length, 'clips');
-                } else {
-                    console.log('[RemotePlayer] Embedded anims too few tracks (' +
-                        (mergedClip ? mergedClip.tracks.length : 0) + '), using shared animations');
-                }
+            // ALWAYS use shared animations (Running/Walking/Idle.glb) for remote players.
+            // Embedded per-bone Mixamo clips cause vertex spike artifacts in CPU skinning.
+            // Shared animations are pre-sanitized and proven to work in solo mode.
+            if (sharedAnimationsLoaded) {
+                applySharedAnimation(group, sourceScene);
+            } else {
+                pendingAnimationGroups.push(group);
             }
-            if (!usedEmbedded) {
-                if (sharedAnimationsLoaded) {
-                    applySharedAnimation(group, sourceScene);
-                } else {
-                    pendingAnimationGroups.push(group);
-                }
-                console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
-            }
+            console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
 
-            // Setup direct bone animation (bypasses PropertyBinding)
-            var animClipForDirect = usedEmbedded ? mergedClip : null;
-            if (!animClipForDirect && sharedAnimationsLoaded) {
-                // Use shared running animation for models without embedded anims
+            // Setup direct bone animation (bypasses PropertyBinding for reliability)
+            if (sharedAnimationsLoaded) {
                 var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-                if (sharedClip) {
-                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+                if (sharedClip && group.userData.cpuSkin) {
+                    var retargeted = retargetClipForModel(sharedClip, sourceScene);
+                    group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, retargeted);
                 }
-            }
-            if (animClipForDirect && group.userData.cpuSkin) {
-                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
             }
 
             // Log bone names for debug
@@ -7616,14 +7588,20 @@ function cpuSkinUpdate(cpuSkinData) {
             _result.w = 1;
             _result.applyMatrix4(bindMatrixInverse);
 
-            // NaN guard
-            if (_result.x !== _result.x) _result.x = srcPos.getX(i);
-            if (_result.y !== _result.y) _result.y = srcPos.getY(i);
-            if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
+            // NaN and spike guard: clamp extreme values to source position
+            // Spike artifacts occur when bone matrices are bad (missing animation tracks)
+            var spikeLimit = cpuSkinData.srcHeight * 10;
+            var rx = _result.x, ry = _result.y, rz = _result.z;
+            if (rx !== rx || ry !== ry || rz !== rz ||
+                Math.abs(rx) > spikeLimit || Math.abs(ry) > spikeLimit || Math.abs(rz) > spikeLimit) {
+                rx = srcPos.getX(i);
+                ry = srcPos.getY(i);
+                rz = srcPos.getZ(i);
+            }
 
-            dstPos.setXYZ(i, _result.x, _result.y, _result.z);
-            if (_result.y < minY) minY = _result.y;
-            if (_result.y > maxY) maxY = _result.y;
+            dstPos.setXYZ(i, rx, ry, rz);
+            if (ry < minY) minY = ry;
+            if (ry > maxY) maxY = ry;
         }
 
         // Auto-scale: compute scale ratio from output vs source bounding box
@@ -7814,43 +7792,21 @@ function loadOniGLB(group, charId, stageId) {
                 frameCount: 0
             };
 
-            // Setup animation mixer on the ORIGINAL sourceScene
-            // Merge per-bone clips into a single clip (same as remote players)
-            var mixer = null;
-            var usedEmbedded = false;
-            var mergedClip = null;
-            if (gltf.animations && gltf.animations.length > 0) {
-                group.userData.animations = gltf.animations;
-                mergedClip = mergeAnimationClips(gltf.animations);
-                if (mergedClip && mergedClip.tracks.length > 5) {
-                    mixer = new THREE.AnimationMixer(sourceScene);
-                    group.userData.mixer = mixer;
-                    var embAction = mixer.clipAction(mergedClip);
-                    embAction.play();
-                    group.userData.currentAction = embAction;
-                    group.userData.currentAnimState = 'run';
-                    usedEmbedded = true;
-                    console.log('[ONI] Using MERGED embedded anim:', mergedClip.tracks.length, 'tracks');
-                }
-            }
-            if (!usedEmbedded) {
-                if (sharedAnimationsLoaded) {
-                    applySharedAnimation(group, sourceScene);
-                } else {
-                    pendingAnimationGroups.push(group);
-                }
+            // ALWAYS use shared animations (same approach as remote players).
+            // Embedded Mixamo per-bone clips cause vertex spike artifacts.
+            if (sharedAnimationsLoaded) {
+                applySharedAnimation(group, sourceScene);
+            } else {
+                pendingAnimationGroups.push(group);
             }
 
-            // Setup direct bone animation (bypasses PropertyBinding)
-            var animClipForDirect = usedEmbedded ? mergedClip : null;
-            if (!animClipForDirect && sharedAnimationsLoaded) {
+            // Setup direct bone animation (bypasses PropertyBinding for reliability)
+            if (sharedAnimationsLoaded) {
                 var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-                if (sharedClip) {
-                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+                if (sharedClip && group.userData.cpuSkin) {
+                    var retargeted = retargetClipForModel(sharedClip, sourceScene);
+                    group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, retargeted);
                 }
-            }
-            if (animClipForDirect && group.userData.cpuSkin) {
-                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
             }
 
             // Skip initial CPU skin bake - the cloned geometry already has
