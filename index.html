@@ -5179,22 +5179,28 @@ function startMultiplayerGame() {
     // Write game config and status to Firebase
     if (firebaseReady && GameState.roomId) {
         var roomRef = database.ref('rooms/' + GameState.roomId);
-        roomRef.update({
-            status: 'playing',
-            currentStage: GameState.multiCurrentStage,
-            gameConfig: {
-                cols: stageConfig.cols,
-                rows: stageConfig.rows,
-                floors: stageConfig.floors,
-                oni: stageConfig.oni,
-                time: stageConfig.time,
-                speedMul: stageConfig.speedMul,
-                mode: GameState.multiMode,
-                seed: Math.floor(Math.random() * 999999),
-                stage: GameState.multiCurrentStage,
-                teamAssignment: GameState.teamAssignment || {}
-            }
+        // Reset all player alive/escaped status before starting new game
+        var playerResets = {};
+        Object.keys(GameState.players).forEach(function(idx) {
+            playerResets['players/' + idx + '/alive'] = true;
+            playerResets['players/' + idx + '/escaped'] = false;
+            playerResets['players/' + idx + '/catchTimestamp'] = null;
         });
+        playerResets.status = 'playing';
+        playerResets.currentStage = GameState.multiCurrentStage;
+        playerResets.gameConfig = {
+            cols: stageConfig.cols,
+            rows: stageConfig.rows,
+            floors: stageConfig.floors,
+            oni: stageConfig.oni,
+            time: stageConfig.time,
+            speedMul: stageConfig.speedMul,
+            mode: GameState.multiMode,
+            seed: Math.floor(Math.random() * 999999),
+            stage: GameState.multiCurrentStage,
+            teamAssignment: GameState.teamAssignment || {}
+        };
+        roomRef.update(playerResets);
     }
 
     // Start locally
@@ -5383,6 +5389,8 @@ function launchMultiGame(config) {
     // Spawn remote player models
     spawnRemotePlayers();
 
+    // Clean up old listeners before reconnecting (prevents duplicate listeners on rematch)
+    SyncLayer.disconnect();
     // Start SyncLayer
     SyncLayer.connect(GameState.roomId);
     SyncLayer.setupDisconnect(GameState.playerIndex);
