@@ -7656,7 +7656,19 @@ function playCapturedDragAnimation(oni, capturePos) {
                 }
             }
 
-            console.log('[CapturedDrag] Runner CPU skinning setup OK. geoH:', geoHeight.toFixed(4), 'scale:', meshScale.toFixed(4));
+            // Debug: add a bright marker sphere directly to playerGroup
+            var debugMarker = new THREE.Mesh(
+                new THREE.SphereGeometry(0.3, 12, 12),
+                new THREE.MeshBasicMaterial({ color: 0xff00ff })
+            );
+            debugMarker.position.y = 0.9;
+            playerGroup.add(debugMarker);
+
+            console.log('[CapturedDrag] Runner CPU skinning setup OK. geoH:', geoHeight.toFixed(4),
+                'scale:', meshScale.toFixed(4),
+                'bodyChildren:', playerBodyGroup.children.length,
+                'playerGroupChildren:', playerGroup.children.length,
+                'bb:', JSON.stringify({minY: bb.min.y.toFixed(4), maxY: bb.max.y.toFixed(4)}));
         } else {
             // No SkinnedMesh — extract regular meshes without CPU skinning
             console.log('[CapturedDrag] No SkinnedMesh, using static mesh fallback');
@@ -7812,6 +7824,16 @@ function playCapturedDragAnimation(oni, capturePos) {
         // Player struggles: slight rotation wobble
         playerGroup.rotation.z = Math.sin(elapsed * 6) * 0.15;
         playerGroup.rotation.y = Math.sin(elapsed * 3) * 0.1;
+
+        // Debug: log once at start of drag
+        if (elapsed < 0.05) {
+            console.log('[CapturedDrag] Frame0: playerPos=',
+                playerGroup.position.x.toFixed(2), playerGroup.position.y.toFixed(2), playerGroup.position.z.toFixed(2),
+                'oniPos=', oni.group.position.x.toFixed(2), oni.group.position.y.toFixed(2), oni.group.position.z.toFixed(2),
+                'children:', playerGroup.children.length,
+                'visible:', playerGroup.visible,
+                'inScene:', playerGroup.parent === scene);
+        }
 
         // Light follows the scene
         dragLight.position.set(
