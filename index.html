@@ -4321,8 +4321,12 @@ function loadRemotePlayerGLB(group, charId, isOni) {
     // Find character in both runner and enemy lists
     var charData = CHARACTER_LIST.runners.find(function(c) { return c.id === charId; });
     if (!charData) charData = CHARACTER_LIST.enemies.find(function(c) { return c.id === charId; });
-    if (!charData || !charData.file) return;
+    if (!charData || !charData.file) {
+        console.warn('[RemotePlayer] Character not found:', charId);
+        return;
+    }
 
+    console.log('[RemotePlayer] Loading GLB:', charId, charData.file);
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
         try {
@@ -4335,105 +4339,139 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
             });
 
+            // Helper: clone material with emissive for visibility
+            function cloneMatForRemote(mat) {
+                if (Array.isArray(mat)) {
+                    return mat.map(function(m) {
+                        var cm = m.clone();
+                        cm.skinning = false;
+                        cm.side = THREE.DoubleSide;
+                        // Add emissive so model is visible even in dark areas
+                        if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
+                        if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
+                        return cm;
+                    });
+                } else if (mat) {
+                    var cm = mat.clone();
+                    cm.skinning = false;
+                    cm.side = THREE.DoubleSide;
+                    if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
+                    if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
+                    return cm;
+                }
+                return new THREE.MeshStandardMaterial({
+                    color: 0x888888, side: THREE.DoubleSide,
+                    emissive: new THREE.Color(0x222222), emissiveIntensity: 0.3
+                });
+            }
+
+            // Helper: remove fallback children (preserve nameSprite and sprites)
+            function removeFallbackChildren() {
+                var toRemove = [];
+                group.children.forEach(function(child) {
+                    if (child === group.userData.nameSprite) return;
+                    if (child.isSprite) return;
+                    toRemove.push(child);
+                });
+                toRemove.forEach(function(child) { group.remove(child); });
+            }
+
+            // Compute bone-based scale (reliable for all model types)
+            var boneBox = new THREE.Box3();
+            var bonePos = new THREE.Vector3();
+            var hasBones = false;
+            sourceScene.traverse(function(child) {
+                if (child.isBone) {
+                    child.getWorldPosition(bonePos);
+                    boneBox.expandByPoint(bonePos);
+                    hasBones = true;
+                }
+            });
+
+            var boneScale = 1.0, boneOffsetY = 0;
+            if (hasBones && !boneBox.isEmpty()) {
+                var boneSize = boneBox.getSize(new THREE.Vector3());
+                boneScale = (boneSize.y > 0.01) ? (1.8 / boneSize.y) : 1.0;
+                boneOffsetY = -boneBox.min.y * boneScale;
+            }
+
             if (!origSkinned || !origSkinned.geometry) {
                 // Fallback: extract regular meshes without CPU skinning
                 var allMeshData = [];
                 sourceScene.traverse(function(child) {
                     if (child.isMesh && child.geometry) {
-                        var origMat = child.material;
-                        var clonedMat;
-                        if (Array.isArray(origMat)) {
-                            clonedMat = origMat.map(function(m) {
-                                var cm = m.clone(); cm.skinning = false; cm.side = THREE.DoubleSide; return cm;
-                            });
-                        } else if (origMat) {
-                            clonedMat = origMat.clone(); clonedMat.skinning = false; clonedMat.side = THREE.DoubleSide;
-                        } else {
-                            clonedMat = new THREE.MeshStandardMaterial({ color: 0x888888, side: THREE.DoubleSide });
-                        }
-                        allMeshData.push({ geometry: child.geometry.clone(), material: clonedMat });
+                        allMeshData.push({ geometry: child.geometry.clone(), material: cloneMatForRemote(child.material) });
                     }
                 });
                 if (allMeshData.length > 0) {
-                    var refGeo = allMeshData[0].geometry;
-                    refGeo.computeBoundingBox();
-                    var bbFb = refGeo.boundingBox;
-                    var geoHeightFb = bbFb.max.y - bbFb.min.y;
-                    var meshScaleFb = (geoHeightFb > 0.001) ? (1.8 / geoHeightFb) : 100;
+                    // Use bone-based scale if available, else geometry-based
+                    var meshScaleFb, offsetYFb;
+                    if (hasBones) {
+                        meshScaleFb = boneScale;
+                        offsetYFb = boneOffsetY;
+                    } else {
+                        var refGeo = allMeshData[0].geometry;
+                        refGeo.computeBoundingBox();
+                        var bbFb = refGeo.boundingBox;
+                        var geoHeightFb = bbFb.max.y - bbFb.min.y;
+                        meshScaleFb = (geoHeightFb > 0.001) ? (1.8 / geoHeightFb) : 100;
+                        offsetYFb = -bbFb.min.y * meshScaleFb;
+                    }
                     var bodyGroupFb = new THREE.Group();
                     for (var gi = 0; gi < allMeshData.length; gi++) {
                         var rm = new THREE.Mesh(allMeshData[gi].geometry, allMeshData[gi].material);
                         rm.frustumCulled = false;
                         bodyGroupFb.add(rm);
                     }
+                    bodyGroupFb.scale.setScalar(meshScaleFb);
+                    bodyGroupFb.position.y = offsetYFb;
+                    removeFallbackChildren();
+                    group.add(bodyGroupFb);
+                    // Light on PARENT group (not inside scaled bodyGroup)
                     var pLightFb = new THREE.PointLight(0xffffff, 1.5, 8);
                     pLightFb.position.set(0, 1.2, 0);
-                    bodyGroupFb.add(pLightFb);
-                    bodyGroupFb.scale.setScalar(meshScaleFb);
-                    bodyGroupFb.position.y = -bbFb.min.y * meshScaleFb;
-                    var toRemoveFb = [];
-                    group.children.forEach(function(child) {
-                        if (child === group.userData.nameSprite) return;
-                        if (child.isSprite) return;
-                        toRemoveFb.push(child);
-                    });
-                    toRemoveFb.forEach(function(child) { group.remove(child); });
-                    group.add(bodyGroupFb);
+                    group.add(pLightFb);
                     group.userData.glbLoaded = true;
                     group.userData.glbModel = bodyGroupFb;
+                    console.log('[RemotePlayer] Static mesh loaded. charId:', charId, 'scale:', meshScaleFb.toFixed(4));
                 }
                 return;
             }
 
-            // SkinnedMesh found — setup CPU skinning (same pattern as loadOniGLB)
+            // SkinnedMesh found — setup CPU skinning
             var srcGeo = origSkinned.geometry;
             srcGeo.computeBoundingBox();
             var bb = srcGeo.boundingBox;
             var geoHeight = bb.max.y - bb.min.y;
+            // Use geometry-based scale for CPU skinning (compatible with auto-scale)
             var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+            var offsetY = -bb.min.y * meshScale;
 
-            // Create visible regular Mesh with cloned geometry and ORIGINAL materials
+            // Create visible regular Mesh with cloned geometry and materials
             var dstGeo = srcGeo.clone();
-            var origMat = origSkinned.material;
-            var bodyMat;
-            if (Array.isArray(origMat)) {
-                bodyMat = origMat.map(function(m) {
-                    var cm = m.clone(); cm.skinning = false; cm.side = THREE.DoubleSide; return cm;
-                });
-            } else if (origMat) {
-                bodyMat = origMat.clone(); bodyMat.skinning = false; bodyMat.side = THREE.DoubleSide;
-            } else {
-                bodyMat = new THREE.MeshStandardMaterial({ color: 0x888888, side: THREE.DoubleSide });
-            }
+            var bodyMat = cloneMatForRemote(origSkinned.material);
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
 
-            var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
-            bodyLight.position.set(0, 1.2, 0);
-
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
-            bodyGroup.add(bodyLight);
+            // NO light inside bodyGroup — light goes on parent group
             bodyGroup.scale.setScalar(meshScale);
-            bodyGroup.position.y = -bb.min.y * meshScale;
+            bodyGroup.position.y = offsetY;
 
             // Keep sourceScene DETACHED (not added to group)
             group.userData.sourceScene = sourceScene;
 
-            // Remove fallback meshes but keep nameSprite and sprites
-            var toRemove = [];
-            group.children.forEach(function(child) {
-                if (child === group.userData.nameSprite) return;
-                if (child.isSprite) return;
-                toRemove.push(child);
-            });
-            toRemove.forEach(function(child) { group.remove(child); });
-
+            removeFallbackChildren();
             group.add(bodyGroup);
+            // Light on PARENT group (always at correct world position)
+            var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
+            bodyLight.position.set(0, 1.2, 0);
+            group.add(bodyLight);
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Setup CPU skinning data (same structure as ONI)
+            // Setup CPU skinning data
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
@@ -4453,18 +4491,27 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             var usedEmbedded = false;
             if (gltf.animations && gltf.animations.length > 0) {
                 group.userData.animations = gltf.animations;
+                // Look for walk/run/idle clips — try broader matching
                 var walkClip = null;
+                var anyClip = gltf.animations[0];
                 for (var i = 0; i < gltf.animations.length; i++) {
                     var aname = gltf.animations[i].name.toLowerCase();
-                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
+                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1 ||
+                        aname.indexOf('locomotion') !== -1 || aname.indexOf('move') !== -1) {
                         walkClip = gltf.animations[i]; break;
                     }
                 }
+                // If no walk/run found, use any embedded animation
+                if (!walkClip && gltf.animations.length > 0) walkClip = anyClip;
                 if (walkClip) {
                     mixer = new THREE.AnimationMixer(sourceScene);
                     group.userData.mixer = mixer;
-                    mixer.clipAction(walkClip).play();
+                    var embAction = mixer.clipAction(walkClip);
+                    embAction.play();
+                    group.userData.currentAction = embAction;
+                    group.userData.currentAnimState = 'run';
                     usedEmbedded = true;
+                    console.log('[RemotePlayer] Using embedded anim:', walkClip.name, 'tracks:', walkClip.tracks.length);
                 }
             }
             if (!usedEmbedded) {
@@ -4473,14 +4520,21 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 } else {
                     pendingAnimationGroups.push(group);
                 }
+                console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
             }
 
-            console.log('[RemotePlayer] GLB loaded with CPU skinning. charId:', charId, 'scale:', meshScale.toFixed(4));
+            // Log bone names for debug
+            var boneNames = [];
+            sourceScene.traverse(function(c) { if (c.isBone) boneNames.push(c.name); });
+            console.log('[RemotePlayer] GLB loaded. charId:', charId,
+                'geoH:', geoHeight.toFixed(4), 'boneScale:', boneScale.toFixed(4),
+                'meshScale:', meshScale.toFixed(4), 'bones:', boneNames.length,
+                'firstBones:', boneNames.slice(0, 5).join(','));
         } catch(e) {
-            console.error('[MAZE-HUNT] Remote GLB error:', e.message);
+            console.error('[RemotePlayer] GLB error:', charId, e.message, e.stack);
         }
     }, undefined, function(err) {
-        console.error('[MAZE-HUNT] Remote player GLB load failed:', charId, err);
+        console.error('[RemotePlayer] GLB load failed:', charId, err);
     });
 }
 
@@ -7460,12 +7514,16 @@ function loadOniGLB(group, charId, stageId) {
                     var cm = m.clone();
                     cm.skinning = false;
                     cm.side = THREE.DoubleSide;
+                    if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
+                    if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
                     return cm;
                 });
             } else if (origMat) {
                 bodyMat = origMat.clone();
                 bodyMat.skinning = false;
                 bodyMat.side = THREE.DoubleSide;
+                if (bodyMat.emissive) bodyMat.emissive.setScalar(Math.max(bodyMat.emissive.r, 0.12));
+                if (bodyMat.emissiveIntensity !== undefined) bodyMat.emissiveIntensity = Math.max(bodyMat.emissiveIntensity, 0.2);
             } else {
                 bodyMat = new THREE.MeshBasicMaterial({
                     color: ONI_CONFIG.bodyEmissive,
@@ -7475,19 +7533,14 @@ function loadOniGLB(group, charId, stageId) {
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
 
-            // Add a light so MeshStandardMaterial is visible
-            var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
-            bodyLight.position.set(0, 1.2, 0);
-
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
-            bodyGroup.add(bodyLight);
+            // NO light inside bodyGroup (scale would move light too far)
             bodyGroup.scale.setScalar(meshScale);
             bodyGroup.position.y = -bb.min.y * meshScale;
 
             // Keep sourceScene DETACHED (not added to group) to prevent
             // parent transform contamination in bone world matrices.
-            // Store reference in userData for animation mixer updates.
             group.userData.sourceScene = sourceScene;
 
             // Remove ALL fallback children including eyes (GLB model has its own face)
@@ -7500,6 +7553,10 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.eyeL = null;
 
             group.add(bodyGroup);
+            // Light on PARENT group (always at correct world position)
+            var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
+            bodyLight.position.set(0, 1.2, 0);
+            group.add(bodyLight);
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
