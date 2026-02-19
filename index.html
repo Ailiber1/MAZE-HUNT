@@ -4376,6 +4376,15 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 toRemove.forEach(function(child) { group.remove(child); });
             }
 
+            // Sanitize bone names: remove ':' which is a reserved char in
+            // Three.js PropertyBinding (causes animation tracks to fail silently).
+            // e.g. "mixamorig:Hips" → "mixamorigHips" (matches shared animation tracks)
+            sourceScene.traverse(function(child) {
+                if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
+                    child.name = child.name.replace(/:/g, '');
+                }
+            });
+
             // Compute bone-based scale (reliable for all model types)
             var boneBox = new THREE.Box3();
             var bonePos = new THREE.Vector3();
@@ -7465,26 +7474,33 @@ function cpuSkinUpdate(cpuSkinData) {
         // Apply scale correction to all vertices
         if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
             var sf = cpuSkinData.scaleFix;
-            var postMinY = Infinity;
             for (var i = 0; i < count; i++) {
-                var sy = dstPos.getY(i) * sf;
-                dstPos.setXYZ(i, dstPos.getX(i) * sf, sy, dstPos.getZ(i) * sf);
-                if (sy < postMinY) postMinY = sy;
+                dstPos.setXYZ(i,
+                    dstPos.getX(i) * sf,
+                    dstPos.getY(i) * sf,
+                    dstPos.getZ(i) * sf
+                );
             }
-            // Compute Y-anchor on first frame to ground the model (feet at y=0)
-            if (!cpuSkinData._yAnchorComputed) {
-                cpuSkinData._yAnchorComputed = true;
-                cpuSkinData._yAnchor = isFinite(postMinY) ? -postMinY : 0;
-                if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
-                    console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
-                }
+        }
+
+        // Y-anchor: compute on first frame, anchor model feet at y=0
+        // Runs ALWAYS (regardless of scaleFix) to handle bone transform offsets
+        if (!cpuSkinData._yAnchorComputed) {
+            cpuSkinData._yAnchorComputed = true;
+            var anchorMinY = Infinity;
+            for (var i = 0; i < count; i++) {
+                var ay = dstPos.getY(i);
+                if (ay < anchorMinY) anchorMinY = ay;
             }
-            // Apply Y-anchor to keep model grounded
-            if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
-                var ya = cpuSkinData._yAnchor;
-                for (var i = 0; i < count; i++) {
-                    dstPos.setY(i, dstPos.getY(i) + ya);
-                }
+            cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
+            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
+                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
+            }
+        }
+        if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
+            var ya = cpuSkinData._yAnchor;
+            for (var i = 0; i < count; i++) {
+                dstPos.setY(i, dstPos.getY(i) + ya);
             }
         }
 
@@ -7503,6 +7519,13 @@ function loadOniGLB(group, charId, stageId) {
         try {
             var sourceScene = gltf.scene;
             sourceScene.updateMatrixWorld(true);
+
+            // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
+            sourceScene.traverse(function(child) {
+                if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
+                    child.name = child.name.replace(/:/g, '');
+                }
+            });
 
             // Find first SkinnedMesh for CPU skinning
             var origSkinned = null;
