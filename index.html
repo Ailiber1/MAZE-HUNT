@@ -4445,7 +4445,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             var geoHeight = bb.max.y - bb.min.y;
             // Use geometry-based scale for CPU skinning (compatible with auto-scale)
             var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
-            var offsetY = -bb.min.y * meshScale;
+            // Y-offset = 0 for CPU skinning path: cpuSkinUpdate Y-anchor handles grounding
+            var offsetY = 0;
 
             // Create visible regular Mesh with cloned geometry and materials
             var dstGeo = srcGeo.clone();
@@ -4506,10 +4507,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (walkClip) {
                     mixer = new THREE.AnimationMixer(sourceScene);
                     group.userData.mixer = mixer;
-                    var embAction = mixer.clipAction(walkClip);
-                    embAction.play();
-                    group.userData.currentAction = embAction;
-                    group.userData.currentAnimState = 'run';
+                    mixer.clipAction(walkClip).play();
+                    // DO NOT set currentAction — prevents setCharacterAnimation from fading out
+                    // the embedded animation when switching to idle/walk states
                     usedEmbedded = true;
                     console.log('[RemotePlayer] Using embedded anim:', walkClip.name, 'tracks:', walkClip.tracks.length);
                 }
@@ -7465,12 +7465,26 @@ function cpuSkinUpdate(cpuSkinData) {
         // Apply scale correction to all vertices
         if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
             var sf = cpuSkinData.scaleFix;
+            var postMinY = Infinity;
             for (var i = 0; i < count; i++) {
-                dstPos.setXYZ(i,
-                    dstPos.getX(i) * sf,
-                    dstPos.getY(i) * sf,
-                    dstPos.getZ(i) * sf
-                );
+                var sy = dstPos.getY(i) * sf;
+                dstPos.setXYZ(i, dstPos.getX(i) * sf, sy, dstPos.getZ(i) * sf);
+                if (sy < postMinY) postMinY = sy;
+            }
+            // Compute Y-anchor on first frame to ground the model (feet at y=0)
+            if (!cpuSkinData._yAnchorComputed) {
+                cpuSkinData._yAnchorComputed = true;
+                cpuSkinData._yAnchor = isFinite(postMinY) ? -postMinY : 0;
+                if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
+                    console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
+                }
+            }
+            // Apply Y-anchor to keep model grounded
+            if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
+                var ya = cpuSkinData._yAnchor;
+                for (var i = 0; i < count; i++) {
+                    dstPos.setY(i, dstPos.getY(i) + ya);
+                }
             }
         }
 
@@ -7537,7 +7551,8 @@ function loadOniGLB(group, charId, stageId) {
             bodyGroup.add(bodyMesh);
             // NO light inside bodyGroup (scale would move light too far)
             bodyGroup.scale.setScalar(meshScale);
-            bodyGroup.position.y = -bb.min.y * meshScale;
+            // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
+            bodyGroup.position.y = 0;
 
             // Keep sourceScene DETACHED (not added to group) to prevent
             // parent transform contamination in bone world matrices.
