@@ -7576,9 +7576,11 @@ function playCapturedDragAnimation(oni, capturePos) {
     var dragPlayerMixer = null;
     var dragCpuSkin = null;
 
+    try {
     if (GameState.playerGLBModel) {
-        // Clone the preloaded scene for independent animation
-        var sourceScene = THREE.SkeletonUtils.clone(GameState.playerGLBModel);
+        // Use the preloaded model directly as detached sourceScene
+        // (game is ending on capture, so sharing is safe)
+        var sourceScene = GameState.playerGLBModel;
         sourceScene.updateMatrixWorld(true);
 
         // Find first SkinnedMesh for CPU skinning
@@ -7619,7 +7621,7 @@ function playCapturedDragAnimation(oni, capturePos) {
             playerBodyGroup.position.y = -bb.min.y * meshScale;
             playerGroup.add(playerBodyGroup);
 
-            // Setup CPU skinning data
+            // Setup CPU skinning data (same pattern as ONI)
             dragCpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
@@ -7635,7 +7637,7 @@ function playCapturedDragAnimation(oni, capturePos) {
                 _scaleComputed: false
             };
 
-            // Setup animation mixer on the cloned sourceScene
+            // Setup animation mixer on the sourceScene
             if (GameState.playerGLBAnimations && GameState.playerGLBAnimations.length > 0) {
                 dragPlayerMixer = new THREE.AnimationMixer(sourceScene);
                 var idleClip = null;
@@ -7653,8 +7655,11 @@ function playCapturedDragAnimation(oni, capturePos) {
                     dragPlayerMixer.clipAction(retargeted).play();
                 }
             }
+
+            console.log('[CapturedDrag] Runner CPU skinning setup OK. geoH:', geoHeight.toFixed(4), 'scale:', meshScale.toFixed(4));
         } else {
             // No SkinnedMesh — extract regular meshes without CPU skinning
+            console.log('[CapturedDrag] No SkinnedMesh, using static mesh fallback');
             var meshesExtracted = false;
             var playerBodyGroup2 = new THREE.Group();
             sourceScene.traverse(function(child) {
@@ -7691,6 +7696,7 @@ function playCapturedDragAnimation(oni, capturePos) {
         }
     } else {
         // Fallback: simple humanoid silhouette
+        console.log('[CapturedDrag] No GLB model, using geometric fallback');
         var fallbackMat = new THREE.MeshStandardMaterial({
             color: 0x2244aa, roughness: 0.5, emissive: 0x223366, emissiveIntensity: 0.8
         });
@@ -7710,6 +7716,21 @@ function playCapturedDragAnimation(oni, capturePos) {
             var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 8), fallbackMat);
             leg.position.set(s2 * 0.1, 0.0, 0);
             playerGroup.add(leg);
+        }
+    }
+    } catch(e) {
+        console.error('[CapturedDrag] Error setting up runner:', e.message, e.stack);
+        // Ensure at least a simple fallback is shown
+        if (playerGroup.children.length === 0) {
+            var errMat = new THREE.MeshStandardMaterial({
+                color: 0x2244aa, roughness: 0.5, emissive: 0x223366, emissiveIntensity: 0.8
+            });
+            var errBody = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 1.0, 12), errMat);
+            errBody.position.y = 0.5;
+            playerGroup.add(errBody);
+            var errHead = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), errMat);
+            errHead.position.y = 1.15;
+            playerGroup.add(errHead);
         }
     }
 
@@ -7820,7 +7841,7 @@ function playCapturedDragAnimation(oni, capturePos) {
             // Cleanup drag scene objects
             scene.remove(playerGroup);
             scene.remove(dragLight);
-            // Dispose player group geometry
+            // Dispose player group geometry (only the cloned dst geometry)
             playerGroup.traverse(function(c) {
                 if (c.isMesh) {
                     if (c.geometry) c.geometry.dispose();
