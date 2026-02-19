@@ -4539,9 +4539,13 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (walkClip) {
                     mixer = new THREE.AnimationMixer(sourceScene);
                     group.userData.mixer = mixer;
-                    mixer.clipAction(walkClip).play();
-                    // DO NOT set currentAction — prevents setCharacterAnimation from fading out
-                    // the embedded animation when switching to idle/walk states
+                    var embAction = mixer.clipAction(walkClip);
+                    embAction.play();
+                    // Store as currentAction so setCharacterAnimation can properly fade it out
+                    // when switching states (run→idle→run). Without this, embedded animation
+                    // would play at full weight forever, blending with shared animations.
+                    group.userData.currentAction = embAction;
+                    group.userData.currentAnimState = 'run';
                     usedEmbedded = true;
                     console.log('[RemotePlayer] Using embedded anim:', walkClip.name, 'tracks:', walkClip.tracks.length);
                 }
@@ -7204,8 +7208,9 @@ function preloadSharedAnimations() {
                 var tracks = [];
                 gltf.animations.forEach(function(clip) {
                     clip.tracks.forEach(function(track) {
-                        // Normalize track names: strip root node prefix for cross-model compatibility
-                        // e.g. "Armature/mixamorigHips.position" → "mixamorigHips.position"
+                        // Normalize track names: remove colons and strip root node prefix
+                        // e.g. "Armature/mixamorig:Hips.position" → "mixamorigHips.position"
+                        track.name = track.name.replace(/:/g, '');
                         var dotIdx = track.name.lastIndexOf('.');
                         if (dotIdx !== -1) {
                             var objectPath = track.name.substring(0, dotIdx);
@@ -7675,7 +7680,10 @@ function loadOniGLB(group, charId, stageId) {
                 if (walkClip) {
                     mixer = new THREE.AnimationMixer(sourceScene);
                     group.userData.mixer = mixer;
-                    mixer.clipAction(walkClip).play();
+                    var embAction = mixer.clipAction(walkClip);
+                    embAction.play();
+                    group.userData.currentAction = embAction;
+                    group.userData.currentAnimState = 'run';
                     usedEmbedded = true;
                 }
             }
