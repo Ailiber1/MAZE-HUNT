@@ -7749,22 +7749,41 @@ function cpuSkinUpdate(cpuSkinData) {
                     sampleBone.quaternion.w.toFixed(3) + ']' : ''));
         }
 
-        // Direct bone animation: bypass PropertyBinding, drive bones directly
-        directBoneAnimUpdate(cpuSkinData);
+        // PRE-ANIM diagnostic: check bone values set by the mixer BEFORE directBoneAnimUpdate
+        // The mixer (root=sourceScene) runs in updateOniAI before cpuSkinUpdate,
+        // so bones already have mixer-driven values at this point.
+        if (cpuSkinData._debugCount <= 5 && skeleton.bones.length > 0) {
+            var preB = skeleton.bones[0];
+            // Also check a leg bone (more visible animation) - typically bone index 60-70
+            var legIdx = Math.min(Math.floor(skeleton.bones.length * 0.65), skeleton.bones.length - 1);
+            var legB = skeleton.bones[legIdx];
+            console.log('[cpuSkin] PRE-ANIM(mixer) bone0=' + preB.name +
+                ' q=[' + preB.quaternion._x.toFixed(4) + ',' + preB.quaternion._y.toFixed(4) + ',' +
+                preB.quaternion._z.toFixed(4) + ',' + preB.quaternion._w.toFixed(4) + ']' +
+                ' leg(' + legIdx + ')=' + legB.name +
+                ' q=[' + legB.quaternion._x.toFixed(4) + ',' + legB.quaternion._y.toFixed(4) + ',' +
+                legB.quaternion._z.toFixed(4) + ',' + legB.quaternion._w.toFixed(4) + ']');
+        }
 
-        // Post-animation bone check (first 3 frames only)
-        if (cpuSkinData._debugCount <= 3) {
+        // DISABLED: directBoneAnimUpdate was OVERRIDING the mixer's correct bone transforms
+        // with its own independent time tracking (often time=0 → bind-pose values).
+        // The mixer (AnimationMixer with root=sourceScene) already correctly drives bones
+        // via PropertyBinding in updateOniAI's mixer.update(delta).
+        // directBoneAnimUpdate(cpuSkinData);
+
+        // Post-animation bone check (first 5 frames only)
+        if (cpuSkinData._debugCount <= 5) {
             var da2 = cpuSkinData._directAnim;
-            if (da2 && da2.bindings.length > 0) {
-                var sb = da2.bindings[0].bone;
-                console.log('[cpuSkin] POST-ANIM bone0=' + sb.name +
-                    ' q=[' + sb.quaternion.x.toFixed(4) + ',' +
-                    sb.quaternion.y.toFixed(4) + ',' +
-                    sb.quaternion.z.toFixed(4) + ',' +
-                    sb.quaternion.w.toFixed(4) + ']' +
-                    ' time=' + da2.time.toFixed(3) +
-                    ' dur=' + da2.clip.duration.toFixed(3));
-            }
+            var sb = skeleton.bones[0];
+            var legIdx2 = Math.min(Math.floor(skeleton.bones.length * 0.65), skeleton.bones.length - 1);
+            var legB2 = skeleton.bones[legIdx2];
+            console.log('[cpuSkin] CURRENT bone0=' + sb.name +
+                ' q=[' + sb.quaternion._x.toFixed(4) + ',' + sb.quaternion._y.toFixed(4) + ',' +
+                sb.quaternion._z.toFixed(4) + ',' + sb.quaternion._w.toFixed(4) + ']' +
+                ' leg(' + legIdx2 + ')=' + legB2.name +
+                ' q=[' + legB2.quaternion._x.toFixed(4) + ',' + legB2.quaternion._y.toFixed(4) + ',' +
+                legB2.quaternion._z.toFixed(4) + ',' + legB2.quaternion._w.toFixed(4) + ']' +
+                (da2 ? ' daTime=' + da2.time.toFixed(3) : ' da=NULL'));
         }
 
         // === FULLY MANUAL bone matrix computation ===
