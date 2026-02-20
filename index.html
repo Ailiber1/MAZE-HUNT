@@ -7306,13 +7306,22 @@ function applyPendingAnimations() {
             }
         }
         // Also setup direct bone animation if cpuSkin exists but no directAnim yet
+        // Try all shared clips until one matches the model's bones
         if (group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
             var ss = group.userData.sourceScene || group.userData.glbModel;
             if (ss) {
-                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-                if (sharedClip) {
-                    var retargeted = retargetClipForModel(sharedClip, ss);
-                    group.userData.cpuSkin._directAnim = buildDirectAnimData(ss, retargeted);
+                var clipKeys = ['running', 'walking', 'idle'];
+                for (var ci = 0; ci < clipKeys.length; ci++) {
+                    var sharedClip = sharedAnimations[clipKeys[ci]];
+                    if (sharedClip) {
+                        var retargeted = retargetClipForModel(sharedClip, ss);
+                        var built = buildDirectAnimData(ss, retargeted);
+                        if (built) {
+                            group.userData.cpuSkin._directAnim = built;
+                            console.log('[applyPending] directAnim from ' + clipKeys[ci] + ': ' + built.bindings.length + ' bindings');
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -7499,10 +7508,14 @@ function setCharacterAnimation(group, state) {
     group.userData.currentAnimState = state;
 
     // Update directAnim to match new clip for CPU skinning path
+    // IMPORTANT: Only overwrite if new build succeeds — never nullify working animation
     if (group.userData.cpuSkin) {
         var ss = group.userData.sourceScene;
         if (ss && clip) {
-            group.userData.cpuSkin._directAnim = buildDirectAnimData(ss, clip);
+            var newDirectAnim = buildDirectAnimData(ss, clip);
+            if (newDirectAnim) {
+                group.userData.cpuSkin._directAnim = newDirectAnim;
+            }
         }
     }
 }
@@ -7639,13 +7652,23 @@ function cpuSkinUpdate(cpuSkinData) {
         var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
 
         // Recovery: if _directAnim was never built (timing/race condition), try now
+        // Try ALL shared clips (running, walking, idle) until one succeeds
         if (!cpuSkinData._directAnim && sharedAnimationsLoaded && cpuSkinData.sourceScene) {
-            var recClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-            if (recClip) {
-                var recRetargeted = retargetClipForModel(recClip, cpuSkinData.sourceScene);
-                cpuSkinData._directAnim = buildDirectAnimData(cpuSkinData.sourceScene, recRetargeted);
-                console.log('[cpuSkin] Recovery: directAnim built =',
-                    cpuSkinData._directAnim ? cpuSkinData._directAnim.bindings.length + ' bindings' : 'FAILED');
+            var clipKeys = ['running', 'walking', 'idle'];
+            for (var ci = 0; ci < clipKeys.length; ci++) {
+                var recClip = sharedAnimations[clipKeys[ci]];
+                if (recClip) {
+                    var recRetargeted = retargetClipForModel(recClip, cpuSkinData.sourceScene);
+                    var built = buildDirectAnimData(cpuSkinData.sourceScene, recRetargeted);
+                    if (built) {
+                        cpuSkinData._directAnim = built;
+                        console.log('[cpuSkin] Recovery: directAnim built from ' + clipKeys[ci] + ' = ' + built.bindings.length + ' bindings');
+                        break;
+                    }
+                }
+            }
+            if (!cpuSkinData._directAnim) {
+                console.warn('[cpuSkin] Recovery FAILED: no shared clip matched bones');
             }
         }
 
