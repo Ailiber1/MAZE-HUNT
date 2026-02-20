@@ -4547,15 +4547,11 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             bodyGroup.scale.setScalar(meshScale);
             bodyGroup.position.y = offsetY;
 
-            // Re-attach sourceScene to scene graph (hidden) so that
-            // updateMatrixWorld(true) correctly propagates bone world matrices.
-            sourceScene.traverse(function(child) {
-                if (child.isMesh) child.visible = false;
-            });
+            // Keep sourceScene DETACHED (not added to group) to prevent
+            // parent transform contamination in bone world matrices.
             group.userData.sourceScene = sourceScene;
 
             removeFallbackChildren();
-            group.add(sourceScene);
             group.add(bodyGroup);
             // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
@@ -7994,12 +7990,10 @@ function loadOniGLB(group, charId, stageId) {
             // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
             bodyGroup.position.y = 0;
 
-            // Re-attach sourceScene to scene graph (hidden) so that
-            // updateMatrixWorld(true) correctly propagates bone world matrices.
-            // This is essential for skeleton.update() in cpuSkinUpdate.
-            sourceScene.traverse(function(child) {
-                if (child.isMesh) child.visible = false;
-            });
+            // Keep sourceScene DETACHED (not added to group) to prevent
+            // parent transform contamination in bone world matrices.
+            // When attached, bone.matrixWorld includes group's world transform,
+            // but boneInverses were captured without it → boneMatrices become wrong.
             group.userData.sourceScene = sourceScene;
 
             // Remove ALL fallback children including eyes (GLB model has its own face)
@@ -8011,7 +8005,6 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.eyeR = null;
             group.userData.eyeL = null;
 
-            group.add(sourceScene);
             group.add(bodyGroup);
             // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
@@ -8038,73 +8031,49 @@ function loadOniGLB(group, charId, stageId) {
                 frameCount: 0
             };
 
-            // CRITICAL FIX: Capture bind-pose bone world matrix inverses ourselves.
-            // Uses forceUpdateAllMatrices (same function used in cpuSkinUpdate)
-            // to ensure 100% consistency between capture and animation time.
-            forceUpdateAllMatrices(sourceScene);
-            var skeletonBones = origSkinned.skeleton.bones;
-            var ownBoneInverses = [];
-            for (var obi = 0; obi < skeletonBones.length; obi++) {
-                var inv = new THREE.Matrix4();
-                if (skeletonBones[obi]) {
-                    inv.copy(skeletonBones[obi].matrixWorld).invert();
-                }
-                ownBoneInverses.push(inv);
-            }
-            group.userData.cpuSkin._ownBoneInverses = ownBoneInverses;
-            // Capture bind-pose quaternions BEFORE any animation is applied.
-            // Used by cpuSkinUpdate to verify animation is actually changing bone transforms.
-            var bindPoseQuats = [];
-            for (var bqi = 0; bqi < origSkinned.skeleton.bones.length; bqi++) {
-                bindPoseQuats.push(origSkinned.skeleton.bones[bqi].quaternion.clone());
-            }
-            group.userData.cpuSkin._bindPoseQuats = bindPoseQuats;
-            console.log('[ONI] Captured ' + ownBoneInverses.length + ' own bind-pose bone inverses + ' + bindPoseQuats.length + ' bind quaternions');
-            // DIAGNOSTIC: Compare our boneInverses with GLTF's.
-            // If they differ, skeleton.update() would produce wrong boneMatrices.
-            if (origSkinned.skeleton.boneInverses && origSkinned.skeleton.boneInverses.length > 0) {
-                var ours0 = ownBoneInverses[0].elements;
-                var theirs0 = origSkinned.skeleton.boneInverses[0].elements;
-                var invDiff = 0;
-                for (var dd = 0; dd < 16; dd++) invDiff += Math.abs(ours0[dd] - theirs0[dd]);
-                console.log('[ONI] boneInverse[0] diff=' + invDiff.toFixed(6) +
-                    (invDiff > 0.001 ? ' *** MISMATCH - THIS IS THE T-POSE CAUSE ***' : ' (match)'));
-                // Also test: does skeleton.update() give identity at bind time?
-                origSkinned.skeleton.update();
-                var tbm = origSkinned.skeleton.boneMatrices;
-                if (tbm && tbm.length >= 16) {
-                    var isId = Math.abs(tbm[0] - 1) < 0.01 && Math.abs(tbm[5] - 1) < 0.01 &&
-                               Math.abs(tbm[10] - 1) < 0.01;
-                    console.log('[ONI] skeleton.update() at bind-time: bm[0]diag=[' +
-                        tbm[0].toFixed(4) + ',' + tbm[5].toFixed(4) + ',' + tbm[10].toFixed(4) + ']' +
-                        (isId ? ' (identity=OK)' : ' *** NOT IDENTITY - CONFIRMS MISMATCH ***'));
-                }
-            }
-
-            // ALWAYS use shared animations (same approach as remote players).
-            // Embedded Mixamo per-bone clips cause vertex spike artifacts.
-            if (sharedAnimationsLoaded) {
-                applySharedAnimation(group, sourceScene);
-            } else {
-                pendingAnimationGroups.push(group);
-            }
-
-            // Ensure direct bone animation is set up (applySharedAnimation handles this,
-            // but as fallback, try building if it's still null — never overwrite a working one)
-            if (sharedAnimationsLoaded && group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
-                var clipKeys = ['running', 'walking', 'idle'];
-                for (var dci = 0; dci < clipKeys.length; dci++) {
-                    var sharedClip = sharedAnimations[clipKeys[dci]];
-                    if (sharedClip) {
-                        var retargeted = retargetClipForModel(sharedClip, sourceScene);
-                        var built = buildDirectAnimData(sourceScene, retargeted);
-                        if (built) {
-                            group.userData.cpuSkin._directAnim = built;
-                            console.log('[ONI] Fallback directAnim from ' + clipKeys[dci] + ': ' + built.bindings.length + ' bindings');
-                            break;
-                        }
+            // Setup animation: prefer embedded walkClip from GLB (exact bone name match),
+            // fall back to shared animations if no embedded clip found.
+            var walkClip = null;
+            var usedEmbedded = false;
+            if (gltf.animations && gltf.animations.length > 0) {
+                group.userData.animations = gltf.animations;
+                for (var i = 0; i < gltf.animations.length; i++) {
+                    var aname = gltf.animations[i].name.toLowerCase();
+                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
+                        walkClip = gltf.animations[i]; break;
                     }
                 }
+                if (walkClip) {
+                    var mixer = new THREE.AnimationMixer(sourceScene);
+                    group.userData.mixer = mixer;
+                    var embAction = mixer.clipAction(walkClip);
+                    embAction.play();
+                    group.userData.currentAction = embAction;
+                    group.userData.currentAnimState = 'run';
+                    usedEmbedded = true;
+                    console.log('[ONI] Using embedded walkClip: ' + walkClip.name +
+                        ' dur=' + walkClip.duration.toFixed(2) + ' tracks=' + walkClip.tracks.length);
+                }
+            }
+            if (!usedEmbedded) {
+                if (sharedAnimationsLoaded) {
+                    applySharedAnimation(group, sourceScene);
+                } else {
+                    pendingAnimationGroups.push(group);
+                }
+            }
+
+            // Setup direct bone animation (bypasses PropertyBinding)
+            // Prefer embedded walkClip (exact bone name match after sanitization)
+            var animClipForDirect = walkClip;
+            if (!animClipForDirect && sharedAnimationsLoaded) {
+                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+                if (sharedClip) {
+                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+                }
+            }
+            if (animClipForDirect && group.userData.cpuSkin) {
+                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
             }
 
             // Skip initial CPU skin bake - the cloned geometry already has
