@@ -4396,12 +4396,13 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 });
             }
 
-            // Helper: remove fallback children (preserve nameSprite and sprites)
+            // Helper: remove fallback children (preserve nameSprite, sprites, and sourceScene)
             function removeFallbackChildren() {
                 var toRemove = [];
                 group.children.forEach(function(child) {
                     if (child === group.userData.nameSprite) return;
                     if (child.isSprite) return;
+                    if (child === sourceScene) return; // protect sourceScene
                     toRemove.push(child);
                 });
                 toRemove.forEach(function(child) { group.remove(child); });
@@ -4541,10 +4542,14 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             bodyGroup.scale.setScalar(meshScale);
             bodyGroup.position.y = offsetY;
 
-            // Keep sourceScene DETACHED (not added to group)
+            // CRITICAL FIX: Keep sourceScene IN scene graph as hidden child.
+            sourceScene.traverse(function(child) {
+                if (child.isMesh) child.visible = false;
+            });
             group.userData.sourceScene = sourceScene;
 
             removeFallbackChildren();
+            group.add(sourceScene); // Add sourceScene to scene graph (hidden meshes)
             group.add(bodyGroup);
             // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
@@ -7761,21 +7766,27 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // CRITICAL FIX: Force recompose ALL matrices and propagate world matrices.
-        // Bypasses Three.js's updateMatrixWorld to eliminate matrixAutoUpdate issues.
-        forceUpdateAllMatrices(cpuSkinData.sourceScene);
+        // Update bone world matrices. sourceScene is now in the scene graph
+        // (as a hidden child of the group), so the renderer's scene.updateMatrixWorld()
+        // has already propagated matrices. But we force an update here too for safety.
+        cpuSkinData.sourceScene.updateMatrixWorld(true);
 
-        // CRITICAL FIX: Compute boneMatrices ourselves using our captured
-        // bind-pose bone world inverses instead of skeleton.update().
-        // This bypasses skeleton.boneInverses (from GLTF inverseBindMatrices)
-        // which may not match the actual bone matrixWorld values after
-        // matrixAutoUpdate changes cause matrix recomposition from TRS.
-        var ownInv = cpuSkinData._ownBoneInverses;
-        var _offsetMat = new THREE.Matrix4();
+        // Use skeleton.update() which computes boneMatrices from the GLTF's
+        // inverseBindMatrices. Since sourceScene is in the scene graph, bone
+        // world matrices include the group's world transform, but this is
+        // compensated by bindMatrix/bindMatrixInverse in the vertex deformation.
+        // Also try our own boneInverses as fallback if skeleton.update produces identity.
+        skeleton.update();
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        if (ownInv && ownInv.length > 0) {
+        // Fallback: if skeleton.update() produced identity boneMatrices,
+        // try our own captured bind-pose inverses instead.
+        var isIdentityCheck = Math.abs(bm[0] - 1) < 0.001 && Math.abs(bm[5] - 1) < 0.001 &&
+                              Math.abs(bm[10] - 1) < 0.001 && Math.abs(bm[1]) < 0.001;
+        var ownInv = cpuSkinData._ownBoneInverses;
+        if (isIdentityCheck && ownInv && ownInv.length > 0 && cpuSkinData._debugCount > 1) {
+            var _offsetMat = new THREE.Matrix4();
             for (var bi = 0; bi < skeleton.bones.length; bi++) {
                 if (skeleton.bones[bi] && ownInv[bi]) {
                     _offsetMat.multiplyMatrices(skeleton.bones[bi].matrixWorld, ownInv[bi]);
@@ -7784,8 +7795,6 @@ function cpuSkinUpdate(cpuSkinData) {
                 }
                 _offsetMat.toArray(bm, bi * 16);
             }
-        } else {
-            skeleton.update();
         }
 
         // Diagnostic: log boneMatrices for first 5 frames
@@ -8078,19 +8087,29 @@ function loadOniGLB(group, charId, stageId) {
             // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
             bodyGroup.position.y = 0;
 
-            // Keep sourceScene DETACHED (not added to group) to prevent
-            // parent transform contamination in bone world matrices.
+            // CRITICAL FIX: Keep sourceScene IN the scene graph as hidden child.
+            // This was the approach in the original working version (d8ab300).
+            // The renderer's scene.updateMatrixWorld() automatically propagates
+            // bone world matrices through the scene hierarchy. When sourceScene
+            // was detached (9c3e261), manual updateMatrixWorld(true) failed to
+            // properly propagate matrices, causing persistent T-pose.
+            sourceScene.traverse(function(child) {
+                if (child.isMesh) child.visible = false;
+            });
             group.userData.sourceScene = sourceScene;
 
             // Remove ALL fallback children including eyes (GLB model has its own face)
+            // BUT protect sourceScene from removal
             var toRemove = [];
             group.children.forEach(function(child) {
+                if (child === sourceScene) return; // protect sourceScene
                 toRemove.push(child);
             });
             toRemove.forEach(function(child) { group.remove(child); });
             group.userData.eyeR = null;
             group.userData.eyeL = null;
 
+            group.add(sourceScene); // Add sourceScene to scene graph (hidden meshes)
             group.add(bodyGroup);
             // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
