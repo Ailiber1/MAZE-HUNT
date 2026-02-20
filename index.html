@@ -4541,10 +4541,15 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             bodyGroup.scale.setScalar(meshScale);
             bodyGroup.position.y = offsetY;
 
-            // Keep sourceScene DETACHED from scene graph.
+            // Re-attach sourceScene to scene graph (hidden) so that
+            // updateMatrixWorld(true) correctly propagates bone world matrices.
+            sourceScene.traverse(function(child) {
+                if (child.isMesh) child.visible = false;
+            });
             group.userData.sourceScene = sourceScene;
 
             removeFallbackChildren();
+            group.add(sourceScene);
             group.add(bodyGroup);
             // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
@@ -7703,232 +7708,26 @@ function forceUpdateAllMatrices(node) {
 
 function cpuSkinUpdate(cpuSkinData) {
     try {
-        var srcPos = cpuSkinData.srcPositions;
-        var dstPos = cpuSkinData.dstPositions;
         var skeleton = cpuSkinData.skeleton;
-        var si = cpuSkinData.skinIndex;
-        var sw = cpuSkinData.skinWeight;
-        var bindMatrix = cpuSkinData.bindMatrix;
-        var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
 
-        // Recovery: if _directAnim was never built (timing/race condition), try now
-        // Try ALL shared clips (running, walking, idle) until one succeeds
-        if (!cpuSkinData._directAnim && sharedAnimationsLoaded && cpuSkinData.sourceScene) {
-            var clipKeys = ['running', 'walking', 'idle'];
-            for (var ci = 0; ci < clipKeys.length; ci++) {
-                var recClip = sharedAnimations[clipKeys[ci]];
-                if (recClip) {
-                    var recRetargeted = retargetClipForModel(recClip, cpuSkinData.sourceScene);
-                    var built = buildDirectAnimData(cpuSkinData.sourceScene, recRetargeted);
-                    if (built) {
-                        cpuSkinData._directAnim = built;
-                        console.log('[cpuSkin] Recovery: directAnim built from ' + clipKeys[ci] + ' = ' + built.bindings.length + ' bindings');
-                        break;
-                    }
-                }
-            }
-            if (!cpuSkinData._directAnim) {
-                console.warn('[cpuSkin] Recovery FAILED: no shared clip matched bones');
-            }
-        }
-
-        // Debug heartbeat: log animation state periodically (first 5 frames, then every 300)
-        if (!cpuSkinData._debugCount) cpuSkinData._debugCount = 0;
-        cpuSkinData._debugCount++;
-        if (cpuSkinData._debugCount <= 5 || cpuSkinData._debugCount % 300 === 0) {
-            var da = cpuSkinData._directAnim;
-            var sampleBone = null;
-            if (da && da.bindings.length > 0) sampleBone = da.bindings[0].bone;
-            console.log('[cpuSkin] #' + cpuSkinData._debugCount +
-                ' directAnim=' + (da ? da.bindings.length + ' bindings' : 'NULL') +
-                ' time=' + (da ? da.time.toFixed(2) : 'N/A') +
-                (sampleBone ? ' bone0=' + sampleBone.name +
-                    ' q=[' + sampleBone.quaternion.x.toFixed(3) + ',' +
-                    sampleBone.quaternion.y.toFixed(3) + ',' +
-                    sampleBone.quaternion.z.toFixed(3) + ',' +
-                    sampleBone.quaternion.w.toFixed(3) + ']' : ''));
-        }
-
-        // PRE-ANIM diagnostic: check bone values set by the mixer BEFORE directBoneAnimUpdate
-        // The mixer (root=sourceScene) runs in updateOniAI before cpuSkinUpdate,
-        // so bones already have mixer-driven values at this point.
-        if (cpuSkinData._debugCount <= 5 && skeleton.bones.length > 0) {
-            var preB = skeleton.bones[0];
-            // Also check a leg bone (more visible animation) - typically bone index 60-70
-            var legIdx = Math.min(Math.floor(skeleton.bones.length * 0.65), skeleton.bones.length - 1);
-            var legB = skeleton.bones[legIdx];
-            console.log('[cpuSkin] PRE-ANIM(mixer) bone0=' + preB.name +
-                ' q=[' + preB.quaternion._x.toFixed(4) + ',' + preB.quaternion._y.toFixed(4) + ',' +
-                preB.quaternion._z.toFixed(4) + ',' + preB.quaternion._w.toFixed(4) + ']' +
-                ' leg(' + legIdx + ')=' + legB.name +
-                ' q=[' + legB.quaternion._x.toFixed(4) + ',' + legB.quaternion._y.toFixed(4) + ',' +
-                legB.quaternion._z.toFixed(4) + ',' + legB.quaternion._w.toFixed(4) + ']');
-        }
-
-        // DISABLED: directBoneAnimUpdate was OVERRIDING the mixer's correct bone transforms
-        // with its own independent time tracking (often time=0 → bind-pose values).
-        // The mixer (AnimationMixer with root=sourceScene) already correctly drives bones
-        // via PropertyBinding in updateOniAI's mixer.update(delta).
-        // directBoneAnimUpdate(cpuSkinData);
-
-        // Post-animation bone check (first 5 frames only)
-        if (cpuSkinData._debugCount <= 5) {
-            var da2 = cpuSkinData._directAnim;
-            var sb = skeleton.bones[0];
-            var legIdx2 = Math.min(Math.floor(skeleton.bones.length * 0.65), skeleton.bones.length - 1);
-            var legB2 = skeleton.bones[legIdx2];
-            console.log('[cpuSkin] CURRENT bone0=' + sb.name +
-                ' q=[' + sb.quaternion._x.toFixed(4) + ',' + sb.quaternion._y.toFixed(4) + ',' +
-                sb.quaternion._z.toFixed(4) + ',' + sb.quaternion._w.toFixed(4) + ']' +
-                ' leg(' + legIdx2 + ')=' + legB2.name +
-                ' q=[' + legB2.quaternion._x.toFixed(4) + ',' + legB2.quaternion._y.toFixed(4) + ',' +
-                legB2.quaternion._z.toFixed(4) + ',' + legB2.quaternion._w.toFixed(4) + ']' +
-                (da2 ? ' daTime=' + da2.time.toFixed(3) : ' da=NULL'));
-        }
-
-        // === FULLY MANUAL bone matrix computation ===
-        // Bypasses ALL Three.js matrix system (bone.matrix, bone.matrixWorld,
-        // updateMatrixWorld, skeleton.update) to work around r128 propagation issues.
-        // Uses completely independent Matrix4 objects.
-
-        // Initialize manual bone data on first call
-        if (!cpuSkinData._manualBoneData) {
-            var boneCount = skeleton.bones.length;
-            var parentIndices = [];
-            var rootParentMats = [];
-            var worldMats = [];
-
-            // Ensure sourceScene matrices are correct for parent chain capture
-            forceUpdateAllMatrices(cpuSkinData.sourceScene);
-
-            for (var mbi = 0; mbi < boneCount; mbi++) {
-                worldMats.push(new THREE.Matrix4());
-                parentIndices[mbi] = -1;
-                rootParentMats[mbi] = null;
-                var parentObj = skeleton.bones[mbi] ? skeleton.bones[mbi].parent : null;
-                if (parentObj) {
-                    // Check if parent is another skeleton bone
-                    for (var mpi = 0; mpi < boneCount; mpi++) {
-                        if (skeleton.bones[mpi] === parentObj) {
-                            parentIndices[mbi] = mpi;
-                            break;
-                        }
-                    }
-                    // If parent is NOT a skeleton bone (e.g. Armature), capture its world matrix
-                    if (parentIndices[mbi] === -1) {
-                        rootParentMats[mbi] = parentObj.matrixWorld.clone();
-                    }
-                }
-            }
-
-            // Verify topological order (parents must come before children)
-            var topoOK = true;
-            for (var tbi = 0; tbi < boneCount; tbi++) {
-                if (parentIndices[tbi] >= tbi) {
-                    topoOK = false;
-                    console.warn('[cpuSkin] Bone ' + tbi + ' (' + skeleton.bones[tbi].name +
-                        ') parent=' + parentIndices[tbi] + ' NOT in topological order!');
-                }
-            }
-
-            var boneInvs = cpuSkinData._ownBoneInverses;
-            if (!boneInvs || boneInvs.length === 0) boneInvs = skeleton.boneInverses;
-
-            cpuSkinData._manualBoneData = {
-                parentIndices: parentIndices,
-                rootParentMats: rootParentMats,
-                worldMats: worldMats,
-                boneInverses: boneInvs,
-                localMat: new THREE.Matrix4(),
-                offsetMat: new THREE.Matrix4()
-            };
-            console.log('[cpuSkin] Manual bone data initialized: ' + boneCount + ' bones, topoOK=' + topoOK +
-                ' rootParents=' + rootParentMats.filter(function(m) { return m !== null; }).length);
-        }
-
-        var mbd = cpuSkinData._manualBoneData;
+        // sourceScene MUST be in the scene graph (as hidden child of group)
+        // for Three.js to correctly propagate bone world matrices.
+        // The mixer (AnimationMixer) drives bone TRS via PropertyBinding,
+        // and updateMatrixWorld propagates those to matrixWorld for skeleton.update().
+        cpuSkinData.sourceScene.updateMatrixWorld(true);
+        skeleton.update();
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        var localMat = mbd.localMat;
-        var mWorldMats = mbd.worldMats;
-        var mParentIndices = mbd.parentIndices;
-        var mRootParentMats = mbd.rootParentMats;
-        var mBoneInvs = mbd.boneInverses;
-        var mOffsetMat = mbd.offsetMat;
-
-        // Diagnostic: compare animated vs bind-pose quaternions (first 5 frames)
-        if (cpuSkinData._debugCount <= 5 && cpuSkinData._bindPoseQuats) {
-            for (var dqi = 0; dqi < Math.min(5, skeleton.bones.length); dqi++) {
-                var bpq = cpuSkinData._bindPoseQuats[dqi];
-                var aq = skeleton.bones[dqi].quaternion;
-                var qDiff = Math.abs(aq._x - bpq._x) + Math.abs(aq._y - bpq._y) +
-                            Math.abs(aq._z - bpq._z) + Math.abs(aq._w - bpq._w);
-                console.log('[cpuSkin] QUAT bone' + dqi + ' "' + skeleton.bones[dqi].name +
-                    '" bind=[' + bpq._x.toFixed(4) + ',' + bpq._y.toFixed(4) + ',' +
-                    bpq._z.toFixed(4) + ',' + bpq._w.toFixed(4) + ']' +
-                    ' anim=[' + aq._x.toFixed(4) + ',' + aq._y.toFixed(4) + ',' +
-                    aq._z.toFixed(4) + ',' + aq._w.toFixed(4) + ']' +
-                    ' diff=' + qDiff.toFixed(6) +
-                    (qDiff < 0.001 ? ' *** SAME AS BIND ***' : ' (CHANGED)'));
-            }
-
-            // Verify Matrix4.compose works with a known quaternion
-            if (cpuSkinData._debugCount === 1) {
-                var testQ = new THREE.Quaternion(0.5, 0.5, 0.5, 0.5);
-                var testMat = new THREE.Matrix4();
-                testMat.compose(new THREE.Vector3(0, 0, 0), testQ, new THREE.Vector3(1, 1, 1));
-                console.log('[cpuSkin] COMPOSE SANITY: q=(0.5,0.5,0.5,0.5) → te[0]=' +
-                    testMat.elements[0].toFixed(4) + ' (expect 0.0000)');
-            }
-        }
-
-        // Compute world matrices and boneMatrices entirely manually
-        for (var cbi = 0; cbi < skeleton.bones.length; cbi++) {
-            var cbone = skeleton.bones[cbi];
-            if (!cbone) continue;
-
-            // Compose local matrix from CURRENT TRS values (NOT using bone.matrix)
-            localMat.compose(cbone.position, cbone.quaternion, cbone.scale);
-
-            // Compute world matrix using parent chain
-            var pIdx = mParentIndices[cbi];
-            if (pIdx >= 0) {
-                mWorldMats[cbi].multiplyMatrices(mWorldMats[pIdx], localMat);
-            } else if (mRootParentMats[cbi]) {
-                mWorldMats[cbi].multiplyMatrices(mRootParentMats[cbi], localMat);
-            } else {
-                mWorldMats[cbi].copy(localMat);
-            }
-
-            // boneMatrices[i] = worldMatrix * boneInverse
-            if (mBoneInvs[cbi]) {
-                mOffsetMat.multiplyMatrices(mWorldMats[cbi], mBoneInvs[cbi]);
-                mOffsetMat.toArray(bm, cbi * 16);
-            } else {
-                mWorldMats[cbi].toArray(bm, cbi * 16);
-            }
-        }
-
-        // Diagnostic: check manual boneMatrices result
-        if (cpuSkinData._debugCount <= 5) {
+        // Diagnostic (first 3 frames only)
+        if (!cpuSkinData._debugCount) cpuSkinData._debugCount = 0;
+        cpuSkinData._debugCount++;
+        if (cpuSkinData._debugCount <= 3) {
             var isId = Math.abs(bm[0] - 1) < 0.001 && Math.abs(bm[5] - 1) < 0.001 &&
                        Math.abs(bm[10] - 1) < 0.001 && Math.abs(bm[1]) < 0.001;
-            console.log('[cpuSkin] MANUAL #' + cpuSkinData._debugCount +
-                ' boneMatrix[0] diag=[' + bm[0].toFixed(4) + ',' + bm[5].toFixed(4) + ',' + bm[10].toFixed(4) + ']' +
-                ' off=[' + bm[1].toFixed(4) + ',' + bm[2].toFixed(4) + ']' +
-                (isId ? ' *** STILL IDENTITY ***' : ' (ANIMATED!)'));
-            // Verify compose independently on bone0
-            if (skeleton.bones[0]) {
-                var vMat = new THREE.Matrix4();
-                var vb = skeleton.bones[0];
-                vMat.compose(vb.position, vb.quaternion, vb.scale);
-                var ve = vMat.elements;
-                console.log('[cpuSkin] VERIFY bone0 compose: diag=[' +
-                    ve[0].toFixed(4) + ',' + ve[5].toFixed(4) + ',' + ve[10].toFixed(4) + ']' +
-                    ' q._xyzw=[' + vb.quaternion._x.toFixed(4) + ',' + vb.quaternion._y.toFixed(4) +
-                    ',' + vb.quaternion._z.toFixed(4) + ',' + vb.quaternion._w.toFixed(4) + ']');
-            }
+            console.log('[cpuSkin] #' + cpuSkinData._debugCount +
+                ' bm[0]diag=[' + bm[0].toFixed(4) + ',' + bm[5].toFixed(4) + ',' + bm[10].toFixed(4) + ']' +
+                (isId ? ' *** IDENTITY ***' : ' (ANIMATED)'));
         }
 
         // Full CPU skinning with bone matrices (multi-mesh support)
@@ -8187,8 +7986,12 @@ function loadOniGLB(group, charId, stageId) {
             // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
             bodyGroup.position.y = 0;
 
-            // Keep sourceScene DETACHED from scene graph.
-            // World matrices are computed manually in cpuSkinUpdate.
+            // Re-attach sourceScene to scene graph (hidden) so that
+            // updateMatrixWorld(true) correctly propagates bone world matrices.
+            // This is essential for skeleton.update() in cpuSkinUpdate.
+            sourceScene.traverse(function(child) {
+                if (child.isMesh) child.visible = false;
+            });
             group.userData.sourceScene = sourceScene;
 
             // Remove ALL fallback children including eyes (GLB model has its own face)
@@ -8200,6 +8003,7 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.eyeR = null;
             group.userData.eyeL = null;
 
+            group.add(sourceScene);
             group.add(bodyGroup);
             // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
