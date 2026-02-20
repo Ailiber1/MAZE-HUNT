@@ -4570,7 +4570,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             };
 
             // CRITICAL FIX: Capture bind-pose bone world matrix inverses
-            sourceScene.updateMatrixWorld(true);
+            forceUpdateAllMatrices(sourceScene);
             var skeletonBones = origSkinned.skeleton.bones;
             var ownBoneInverses = [];
             for (var obi = 0; obi < skeletonBones.length; obi++) {
@@ -4581,16 +4581,16 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 ownBoneInverses.push(inv);
             }
             group.userData.cpuSkin._ownBoneInverses = ownBoneInverses;
-            var bindLocalMatrices = [];
-            for (var bli = 0; bli < skeletonBones.length; bli++) {
-                var blm = new THREE.Matrix4();
-                if (skeletonBones[bli]) {
-                    blm.copy(skeletonBones[bli].matrix);
-                }
-                bindLocalMatrices.push(blm);
-            }
-            group.userData.cpuSkin._bindLocalMatrices = bindLocalMatrices;
             console.log('[RemotePlayer] Captured ' + ownBoneInverses.length + ' own bind-pose bone inverses');
+            // DIAGNOSTIC: Compare our boneInverses with GLTF's
+            if (origSkinned.skeleton.boneInverses && origSkinned.skeleton.boneInverses.length > 0) {
+                var ours0 = ownBoneInverses[0].elements;
+                var theirs0 = origSkinned.skeleton.boneInverses[0].elements;
+                var invDiff = 0;
+                for (var dd = 0; dd < 16; dd++) invDiff += Math.abs(ours0[dd] - theirs0[dd]);
+                console.log('[RemotePlayer] boneInverse[0] diff=' + invDiff.toFixed(6) +
+                    (invDiff > 0.001 ? ' *** MISMATCH ***' : ' (match)'));
+            }
 
             // ALWAYS use shared animations (Running/Walking/Idle.glb) for remote players.
             // Embedded per-bone Mixamo clips cause vertex spike artifacts in CPU skinning.
@@ -7678,6 +7678,23 @@ function buildDirectAnimData(sourceScene, clip) {
     return { clip: clip, time: 0, bindings: bindings };
 }
 
+/* Force-update ALL local and world matrices in a scene hierarchy.
+   Bypasses Three.js's matrixAutoUpdate checks and caching to guarantee
+   that position/quaternion/scale are recomposed into matrix for EVERY node,
+   and world matrices are propagated correctly. Essential for detached scenes
+   where the renderer doesn't call updateMatrixWorld automatically. */
+function forceUpdateAllMatrices(node) {
+    node.matrix.compose(node.position, node.quaternion, node.scale);
+    if (node.parent) {
+        node.matrixWorld.multiplyMatrices(node.parent.matrixWorld, node.matrix);
+    } else {
+        node.matrixWorld.copy(node.matrix);
+    }
+    for (var ci = 0; ci < node.children.length; ci++) {
+        forceUpdateAllMatrices(node.children[ci]);
+    }
+}
+
 function cpuSkinUpdate(cpuSkinData) {
     try {
         var srcPos = cpuSkinData.srcPositions;
@@ -7744,25 +7761,9 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // CRITICAL FIX: Manually recompose ALL local matrices and propagate
-        // world matrices through the ENTIRE sourceScene hierarchy.
-        // We bypass Three.js's updateMatrixWorld entirely to eliminate any
-        // potential issues with matrixAutoUpdate, cached matrices, or
-        // broken parent-child traversal on detached scenes.
-        (function forceUpdateAllMatrices(node) {
-            // Force recompose local matrix from position/quaternion/scale
-            node.matrix.compose(node.position, node.quaternion, node.scale);
-            // Compute world matrix
-            if (node.parent) {
-                node.matrixWorld.multiplyMatrices(node.parent.matrixWorld, node.matrix);
-            } else {
-                node.matrixWorld.copy(node.matrix);
-            }
-            // Recurse to all children
-            for (var ci = 0; ci < node.children.length; ci++) {
-                forceUpdateAllMatrices(node.children[ci]);
-            }
-        })(cpuSkinData.sourceScene);
+        // CRITICAL FIX: Force recompose ALL matrices and propagate world matrices.
+        // Bypasses Three.js's updateMatrixWorld to eliminate matrixAutoUpdate issues.
+        forceUpdateAllMatrices(cpuSkinData.sourceScene);
 
         // CRITICAL FIX: Compute boneMatrices ourselves using our captured
         // bind-pose bone world inverses instead of skeleton.update().
@@ -8117,14 +8118,11 @@ function loadOniGLB(group, charId, stageId) {
             };
 
             // CRITICAL FIX: Capture bind-pose bone world matrix inverses ourselves.
-            // We compute these BEFORE animations start, from the actual bone.matrixWorld
-            // values after updateMatrixWorld(true). This bypasses skeleton.boneInverses
-            // (from GLTF inverseBindMatrices) which may not match the actual bone world
-            // matrices as computed by Three.js after matrixAutoUpdate changes.
-            sourceScene.updateMatrixWorld(true);
+            // Uses forceUpdateAllMatrices (same function used in cpuSkinUpdate)
+            // to ensure 100% consistency between capture and animation time.
+            forceUpdateAllMatrices(sourceScene);
             var skeletonBones = origSkinned.skeleton.bones;
             var ownBoneInverses = [];
-            var boneParentMap = []; // Store bone hierarchy for manual traversal
             for (var obi = 0; obi < skeletonBones.length; obi++) {
                 var inv = new THREE.Matrix4();
                 if (skeletonBones[obi]) {
@@ -8133,25 +8131,26 @@ function loadOniGLB(group, charId, stageId) {
                 ownBoneInverses.push(inv);
             }
             group.userData.cpuSkin._ownBoneInverses = ownBoneInverses;
-            // Also store bind-pose bone local matrices for comparison
-            var bindLocalMatrices = [];
-            for (var bli = 0; bli < skeletonBones.length; bli++) {
-                var blm = new THREE.Matrix4();
-                if (skeletonBones[bli]) {
-                    blm.copy(skeletonBones[bli].matrix);
-                }
-                bindLocalMatrices.push(blm);
-            }
-            group.userData.cpuSkin._bindLocalMatrices = bindLocalMatrices;
             console.log('[ONI] Captured ' + ownBoneInverses.length + ' own bind-pose bone inverses');
-            // Compare with GLTF boneInverses
+            // DIAGNOSTIC: Compare our boneInverses with GLTF's.
+            // If they differ, skeleton.update() would produce wrong boneMatrices.
             if (origSkinned.skeleton.boneInverses && origSkinned.skeleton.boneInverses.length > 0) {
                 var ours0 = ownBoneInverses[0].elements;
                 var theirs0 = origSkinned.skeleton.boneInverses[0].elements;
                 var invDiff = 0;
                 for (var dd = 0; dd < 16; dd++) invDiff += Math.abs(ours0[dd] - theirs0[dd]);
                 console.log('[ONI] boneInverse[0] diff=' + invDiff.toFixed(6) +
-                    (invDiff > 0.001 ? ' *** MISMATCH ***' : ' (OK)'));
+                    (invDiff > 0.001 ? ' *** MISMATCH - THIS IS THE T-POSE CAUSE ***' : ' (match)'));
+                // Also test: does skeleton.update() give identity at bind time?
+                origSkinned.skeleton.update();
+                var tbm = origSkinned.skeleton.boneMatrices;
+                if (tbm && tbm.length >= 16) {
+                    var isId = Math.abs(tbm[0] - 1) < 0.01 && Math.abs(tbm[5] - 1) < 0.01 &&
+                               Math.abs(tbm[10] - 1) < 0.01;
+                    console.log('[ONI] skeleton.update() at bind-time: bm[0]diag=[' +
+                        tbm[0].toFixed(4) + ',' + tbm[5].toFixed(4) + ',' + tbm[10].toFixed(4) + ']' +
+                        (isId ? ' (identity=OK)' : ' *** NOT IDENTITY - CONFIRMS MISMATCH ***'));
+                }
             }
 
             // ALWAYS use shared animations (same approach as remote players).
