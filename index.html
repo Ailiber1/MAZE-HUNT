@@ -4410,7 +4410,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             // Sanitize bone names: remove ':' which is a reserved char in
             // Three.js PropertyBinding (causes animation tracks to fail silently).
             // e.g. "mixamorig:Hips" → "mixamorigHips" (matches shared animation tracks)
+            // AND force matrixAutoUpdate = true on ALL objects for CPU skinning.
             sourceScene.traverse(function(child) {
+                child.matrixAutoUpdate = true;
                 if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
                     child.name = child.name.replace(/:/g, '');
                 }
@@ -4577,12 +4579,21 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             }
             console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
 
-            // Setup direct bone animation (bypasses PropertyBinding for reliability)
-            if (sharedAnimationsLoaded) {
-                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-                if (sharedClip && group.userData.cpuSkin) {
-                    var retargeted = retargetClipForModel(sharedClip, sourceScene);
-                    group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, retargeted);
+            // Ensure direct bone animation is set up (applySharedAnimation handles this,
+            // but as fallback, try building if it's still null — never overwrite a working one)
+            if (sharedAnimationsLoaded && group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
+                var clipKeys = ['running', 'walking', 'idle'];
+                for (var dci = 0; dci < clipKeys.length; dci++) {
+                    var sharedClip = sharedAnimations[clipKeys[dci]];
+                    if (sharedClip) {
+                        var retargeted = retargetClipForModel(sharedClip, sourceScene);
+                        var built = buildDirectAnimData(sourceScene, retargeted);
+                        if (built) {
+                            group.userData.cpuSkin._directAnim = built;
+                            console.log('[RemotePlayer] Fallback directAnim from ' + clipKeys[dci] + ': ' + built.bindings.length + ' bindings');
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -7548,6 +7559,9 @@ function directBoneAnimUpdate(cpuSkinData) {
         } else if (b.propName === 'scale') {
             b.bone.scale.set(result[0], result[1], result[2]);
         }
+        // Force matrix recomposition from updated position/quaternion/scale.
+        // Without this, bones with matrixAutoUpdate=false retain stale matrices → T-pose.
+        b.bone.updateMatrix();
     }
 }
 
@@ -7707,6 +7721,16 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
+        // Explicitly recompose local matrices on ALL skeleton bones before
+        // propagating world matrices. This is critical because:
+        // 1) GLTFLoader may set matrixAutoUpdate=false on some nodes
+        // 2) Mixer's PropertyBinding may set bones without updateMatrix()
+        // 3) directBoneAnimUpdate already calls updateMatrix per bone, but
+        //    parent objects (Armature) might also need it
+        var skBones = skeleton.bones;
+        for (var bi = 0; bi < skBones.length; bi++) {
+            if (skBones[bi]) skBones[bi].updateMatrix();
+        }
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         skeleton.update();
@@ -7870,7 +7894,12 @@ function loadOniGLB(group, charId, stageId) {
             sourceScene.updateMatrixWorld(true);
 
             // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
+            // AND force matrixAutoUpdate = true on ALL objects for CPU skinning.
+            // GLTFLoader may set matrixAutoUpdate=false on nodes loaded with 'matrix'
+            // instead of TRS, which prevents updateMatrixWorld from recomposing
+            // position/quaternion/scale into the local matrix — causing T-pose.
             sourceScene.traverse(function(child) {
+                child.matrixAutoUpdate = true;
                 if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
                     child.name = child.name.replace(/:/g, '');
                 }
@@ -8011,12 +8040,21 @@ function loadOniGLB(group, charId, stageId) {
                 pendingAnimationGroups.push(group);
             }
 
-            // Setup direct bone animation (bypasses PropertyBinding for reliability)
-            if (sharedAnimationsLoaded) {
-                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-                if (sharedClip && group.userData.cpuSkin) {
-                    var retargeted = retargetClipForModel(sharedClip, sourceScene);
-                    group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, retargeted);
+            // Ensure direct bone animation is set up (applySharedAnimation handles this,
+            // but as fallback, try building if it's still null — never overwrite a working one)
+            if (sharedAnimationsLoaded && group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
+                var clipKeys = ['running', 'walking', 'idle'];
+                for (var dci = 0; dci < clipKeys.length; dci++) {
+                    var sharedClip = sharedAnimations[clipKeys[dci]];
+                    if (sharedClip) {
+                        var retargeted = retargetClipForModel(sharedClip, sourceScene);
+                        var built = buildDirectAnimData(sourceScene, retargeted);
+                        if (built) {
+                            group.userData.cpuSkin._directAnim = built;
+                            console.log('[ONI] Fallback directAnim from ' + clipKeys[dci] + ': ' + built.bindings.length + ' bindings');
+                            break;
+                        }
+                    }
                 }
             }
 
