@@ -3036,8 +3036,11 @@ function pauseGame() {
         GameState.language === 'ja' ? 'タイトルに戻る' : 'Back to Title';
 }
 
+var _isResuming = false; // Guard against pointerlockchange re-triggering pause
+
 function resumeGame() {
     if (!gamePaused) return;
+    _isResuming = true;
     gamePaused = false;
 
     var pauseScreen = document.getElementById('pause-screen');
@@ -3069,6 +3072,9 @@ function resumeGame() {
     }
 
     gameLoop();
+
+    // Clear resume guard after a short delay (allows pointerlockchange to settle)
+    setTimeout(function() { _isResuming = false; }, 500);
 }
 
 function isMultiplayerMode() {
@@ -7710,10 +7716,12 @@ function cpuSkinUpdate(cpuSkinData) {
     try {
         var skeleton = cpuSkinData.skeleton;
 
-        // sourceScene MUST be in the scene graph (as hidden child of group)
-        // for Three.js to correctly propagate bone world matrices.
-        // The mixer (AnimationMixer) drives bone TRS via PropertyBinding,
-        // and updateMatrixWorld propagates those to matrixWorld for skeleton.update().
+        // Drive bone TRS directly (bypasses broken PropertyBinding in Three.js r128).
+        // The mixer's PropertyBinding silently fails to bind tracks to bones in
+        // this GLTF + r128 configuration, so we evaluate interpolants manually.
+        directBoneAnimUpdate(cpuSkinData);
+
+        // Propagate bone TRS → matrixWorld → boneMatrices
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         skeleton.update();
         var bm = skeleton.boneMatrices;
@@ -9683,7 +9691,8 @@ function initPointerLock() {
             hint.classList.toggle('visible', !isPointerLocked && GameState.gameActive && !gamePaused);
         }
         // Solo mode: pause when pointer lock is lost (ESC pressed or click outside)
-        if (!isPointerLocked && GameState.gameActive && !gamePaused && !GameState.captureInProgress) {
+        // Skip if _isResuming to prevent resumeGame → requestPointerLock → pointerlockchange → pauseGame loop
+        if (!isPointerLocked && GameState.gameActive && !gamePaused && !GameState.captureInProgress && !_isResuming) {
             if (!isMultiplayerMode()) {
                 pauseGame();
             }
