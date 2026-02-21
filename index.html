@@ -4470,8 +4470,12 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 return;
             }
 
-            // SkinnedMesh found — setup CPU skinning with bone-based scale
+            // SkinnedMesh found — setup CPU skinning with source geometry scale
             var srcGeo = origSkinned.geometry;
+            srcGeo.computeBoundingBox();
+            var srcBB = srcGeo.boundingBox;
+            var srcGeoHeight = srcBB.max.y - srcBB.min.y;
+            var cpuMeshScale = (srcGeoHeight > 0.001) ? (1.8 / srcGeoHeight) : 100;
 
             // Create visible regular Mesh with cloned geometry and materials
             var dstGeo = srcGeo.clone();
@@ -4481,9 +4485,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
-            // Use bone-based scale (same approach as ONI and runner)
-            bodyGroup.scale.setScalar(boneScale);
-            bodyGroup.position.y = boneOffsetY;
+            // Use source geometry scale; Y-offset=0 (cpuSkinUpdate yAnchor handles grounding)
+            bodyGroup.scale.setScalar(cpuMeshScale);
+            bodyGroup.position.y = 0;
 
             // Keep sourceScene DETACHED (not added to group)
             group.userData.sourceScene = sourceScene;
@@ -4497,7 +4501,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Setup CPU skinning data (scale handled by bodyGroup transform above)
+            // Setup CPU skinning data (geometry-based scale + per-frame yAnchor)
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
@@ -4510,7 +4514,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     bindMatrixInverse: origSkinned.bindMatrixInverse,
                 }],
                 frameCount: 0,
-                _boneHeight: (hasBones && !boneBox.isEmpty()) ? boneBox.getSize(new THREE.Vector3()).y : 0
+                srcHeight: srcGeoHeight
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene
@@ -7582,53 +7586,58 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Compute Armature amplification ratio on first frame:
-        // CPU skinning output is ~52x larger than expected due to unbalanced
-        // Armature scale in boneMatrices. Correct by scaling vertices down.
-        if (!cpuSkinData._vertexScaleFix) {
-            var outHeight = globalMaxY - globalMinY;
-            if (outHeight > 0.01 && cpuSkinData._boneHeight && cpuSkinData._boneHeight > 0.01) {
-                cpuSkinData._vertexScaleFix = cpuSkinData._boneHeight / outHeight;
-                var fixMsg = '[cpuSkin] vertexFix: outH=' + outHeight.toFixed(1) + ' boneH=' + cpuSkinData._boneHeight.toFixed(2) + ' ratio=' + cpuSkinData._vertexScaleFix.toFixed(6);
+        // Auto-scale: compute scale ratio from output vs source bounding box
+        // The Armature scale in boneMatrices amplifies output ~52x; compensate here.
+        var outHeight = globalMaxY - globalMinY;
+        if (!cpuSkinData.scaleFix) {
+            var srcHeight = cpuSkinData.srcHeight;
+            if (outHeight > 0.01 && srcHeight && srcHeight > 0.01) {
+                cpuSkinData.scaleFix = srcHeight / outHeight;
+                var fixMsg = '[cpuSkin] scaleFix: outH=' + outHeight.toFixed(1) + ' srcH=' + srcHeight.toFixed(4) + ' fix=' + cpuSkinData.scaleFix.toFixed(6);
                 console.log(fixMsg);
                 if (typeof showGLBDiag === 'function') showGLBDiag(fixMsg);
             }
         }
 
-        // Apply vertex scale correction + Y-anchor to bring vertices into bone-BB space
-        if (cpuSkinData._vertexScaleFix) {
-            var vsf = cpuSkinData._vertexScaleFix;
+        // Apply scale correction to all meshes
+        if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
+            var sf = cpuSkinData.scaleFix;
             for (var m = 0; m < meshDataArr.length; m++) {
                 var dstPos = meshDataArr[m].dstPositions;
                 var count = dstPos.count;
                 for (var i = 0; i < count; i++) {
-                    dstPos.setXYZ(i, dstPos.getX(i) * vsf, dstPos.getY(i) * vsf, dstPos.getZ(i) * vsf);
+                    dstPos.setXYZ(i, dstPos.getX(i) * sf, dstPos.getY(i) * sf, dstPos.getZ(i) * sf);
                 }
             }
-            // Recompute Y-anchor after scaling (feet to Y=0)
-            if (!cpuSkinData._yAnchorComputed) {
-                cpuSkinData._yAnchorComputed = true;
-                var anchorMinY = Infinity;
-                for (var m = 0; m < meshDataArr.length; m++) {
-                    var dp = meshDataArr[m].dstPositions;
-                    for (var i = 0; i < dp.count; i++) {
-                        var ay = dp.getY(i);
-                        if (ay < anchorMinY) anchorMinY = ay;
-                    }
+        }
+
+        // Y-anchor: recompute EVERY frame to track animation pose changes
+        // (Animation can shift the model's Y offset significantly between frames)
+        {
+            var anchorMinY = Infinity;
+            for (var m = 0; m < meshDataArr.length; m++) {
+                var dp = meshDataArr[m].dstPositions;
+                var cnt = dp.count;
+                for (var i = 0; i < cnt; i++) {
+                    var ay = dp.getY(i);
+                    if (ay < anchorMinY) anchorMinY = ay;
                 }
-                cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
-                var yaMsg = '[cpuSkin] yAnchor=' + cpuSkinData._yAnchor.toFixed(4);
-                console.log(yaMsg);
-                if (typeof showGLBDiag === 'function') showGLBDiag(yaMsg);
             }
-            if (cpuSkinData._yAnchor) {
-                var ya = cpuSkinData._yAnchor;
+            var ya = isFinite(anchorMinY) ? -anchorMinY : 0;
+            if (ya !== 0) {
                 for (var m = 0; m < meshDataArr.length; m++) {
                     var dp = meshDataArr[m].dstPositions;
-                    for (var i = 0; i < dp.count; i++) {
+                    var cnt = dp.count;
+                    for (var i = 0; i < cnt; i++) {
                         dp.setY(i, dp.getY(i) + ya);
                     }
                 }
+            }
+            // Diagnostic on first few frames
+            if (cpuSkinData.frameCount <= 6) {
+                var yaMsg = '[cpuSkin] f' + cpuSkinData.frameCount + ' yAnchor=' + ya.toFixed(4) + ' outH=' + outHeight.toFixed(1);
+                console.log(yaMsg);
+                if (typeof showGLBDiag === 'function') showGLBDiag(yaMsg);
             }
         }
 
@@ -7728,37 +7737,15 @@ function loadOniGLB(group, charId, stageId) {
             showGLBDiag('[ONI] SkinnedMeshes found: ' + allSkinnedMeshes.length);
             if (allSkinnedMeshes.length === 0) { showGLBDiag('[ONI] ERROR: No SkinnedMesh!'); return; }
 
-            // Compute scale from BONE bounding box (same proven approach as runner)
-            // Bones include Armature scale, matching CPU-skinned output space
-            var boneBox = new THREE.Box3();
-            var bonePos = new THREE.Vector3();
-            var hasBones = false;
-            sourceScene.traverse(function(child) {
-                if (child.isBone) {
-                    child.getWorldPosition(bonePos);
-                    boneBox.expandByPoint(bonePos);
-                    hasBones = true;
-                }
+            // Compute scale from SOURCE GEOMETRY bounding box (stable, matches b550155)
+            var combinedBB = new THREE.Box3();
+            allSkinnedMeshes.forEach(function(sm) {
+                sm.geometry.computeBoundingBox();
+                combinedBB.union(sm.geometry.boundingBox);
             });
-            var boneScale = 1.0, boneOffsetY = 0;
-            if (hasBones && !boneBox.isEmpty()) {
-                var boneSize = boneBox.getSize(new THREE.Vector3());
-                boneScale = (boneSize.y > 0.01) ? (1.8 / boneSize.y) : 1.0;
-                boneOffsetY = -boneBox.min.y * boneScale;
-                showGLBDiag('[ONI] Bone scale: h=' + boneSize.y.toFixed(2) + ' scale=' + boneScale.toFixed(6) + ' offY=' + boneOffsetY.toFixed(4));
-            } else {
-                // Fallback to geometry bounding box
-                var combinedBB = new THREE.Box3();
-                allSkinnedMeshes.forEach(function(sm) {
-                    sm.geometry.computeBoundingBox();
-                    var bb = sm.geometry.boundingBox;
-                    if (bb) { combinedBB.expandByPoint(bb.min); combinedBB.expandByPoint(bb.max); }
-                });
-                var geoHeight = combinedBB.max.y - combinedBB.min.y;
-                boneScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
-                boneOffsetY = -combinedBB.min.y * boneScale;
-                showGLBDiag('[ONI] Geo fallback: h=' + geoHeight.toFixed(2) + ' scale=' + boneScale.toFixed(6));
-            }
+            var geoHeight = combinedBB.max.y - combinedBB.min.y;
+            var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+            showGLBDiag('[ONI] geoH=' + geoHeight.toFixed(4) + ' meshScale=' + meshScale.toFixed(6));
 
             // Create visible regular Mesh for EACH SkinnedMesh (CPU skinning)
             var bodyGroup = new THREE.Group();
@@ -7780,9 +7767,9 @@ function loadOniGLB(group, charId, stageId) {
                 });
             });
 
-            // Apply bone-based scale and offset (set ONCE, never changed by cpuSkinUpdate)
-            bodyGroup.scale.setScalar(boneScale);
-            bodyGroup.position.y = boneOffsetY;
+            // Apply geometry-based scale; Y-offset=0 (cpuSkinUpdate yAnchor handles grounding)
+            bodyGroup.scale.setScalar(meshScale);
+            bodyGroup.position.y = 0;
 
             // Keep sourceScene DETACHED (not added to group) to prevent
             // parent transform contamination in bone world matrices.
@@ -7802,7 +7789,7 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, boneScale=' + boneScale.toFixed(6) + ' offY=' + boneOffsetY.toFixed(4);
+            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, meshScale=' + meshScale.toFixed(6) + ' geoH=' + geoHeight.toFixed(4);
             console.log(diagMsg);
             showGLBDiag(diagMsg);
 
@@ -7812,7 +7799,7 @@ function loadOniGLB(group, charId, stageId) {
                 skeleton: allSkinnedMeshes[0].skeleton,
                 meshes: meshDataArr,
                 frameCount: 0,
-                _boneHeight: (hasBones && !boneBox.isEmpty()) ? boneBox.getSize(new THREE.Vector3()).y : 0
+                srcHeight: geoHeight
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene (unchanged)
