@@ -4575,35 +4575,6 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 frameCount: 0
             };
 
-            // CRITICAL FIX: Capture bind-pose bone world matrix inverses
-            forceUpdateAllMatrices(sourceScene);
-            var skeletonBones = origSkinned.skeleton.bones;
-            var ownBoneInverses = [];
-            for (var obi = 0; obi < skeletonBones.length; obi++) {
-                var inv = new THREE.Matrix4();
-                if (skeletonBones[obi]) {
-                    inv.copy(skeletonBones[obi].matrixWorld).invert();
-                }
-                ownBoneInverses.push(inv);
-            }
-            group.userData.cpuSkin._ownBoneInverses = ownBoneInverses;
-            // Capture bind-pose quaternions BEFORE any animation is applied
-            var bindPoseQuats = [];
-            for (var bqi = 0; bqi < origSkinned.skeleton.bones.length; bqi++) {
-                bindPoseQuats.push(origSkinned.skeleton.bones[bqi].quaternion.clone());
-            }
-            group.userData.cpuSkin._bindPoseQuats = bindPoseQuats;
-            console.log('[RemotePlayer] Captured ' + ownBoneInverses.length + ' own bind-pose bone inverses + ' + bindPoseQuats.length + ' bind quaternions');
-            // DIAGNOSTIC: Compare our boneInverses with GLTF's
-            if (origSkinned.skeleton.boneInverses && origSkinned.skeleton.boneInverses.length > 0) {
-                var ours0 = ownBoneInverses[0].elements;
-                var theirs0 = origSkinned.skeleton.boneInverses[0].elements;
-                var invDiff = 0;
-                for (var dd = 0; dd < 16; dd++) invDiff += Math.abs(ours0[dd] - theirs0[dd]);
-                console.log('[RemotePlayer] boneInverse[0] diff=' + invDiff.toFixed(6) +
-                    (invDiff > 0.001 ? ' *** MISMATCH ***' : ' (match)'));
-            }
-
             // ALWAYS use shared animations (Running/Walking/Idle.glb) for remote players.
             // Embedded per-bone Mixamo clips cause vertex spike artifacts in CPU skinning.
             // Shared animations are pre-sanitized and proven to work in solo mode.
@@ -7594,10 +7565,6 @@ function directBoneAnimUpdate(cpuSkinData) {
         } else if (b.propName === 'scale') {
             b.bone.scale.set(result[0], result[1], result[2]);
         }
-        // Do NOT call bone.updateMatrix() here — let updateMatrixWorld(true)
-        // handle it for bones with matrixAutoUpdate=true (GLTFLoader default for TRS nodes).
-        // Calling updateMatrix() on nodes that had matrixAutoUpdate=false causes
-        // matrix recomposition mismatch with boneInverses.
     }
 }
 
@@ -7691,130 +7658,18 @@ function buildDirectAnimData(sourceScene, clip) {
     return { clip: clip, time: 0, bindings: bindings };
 }
 
-/* Force-update ALL local and world matrices in a scene hierarchy.
-   Bypasses Three.js's matrixAutoUpdate checks and caching to guarantee
-   that position/quaternion/scale are recomposed into matrix for EVERY node,
-   and world matrices are propagated correctly. Essential for detached scenes
-   where the renderer doesn't call updateMatrixWorld automatically. */
-function forceUpdateAllMatrices(node) {
-    node.matrix.compose(node.position, node.quaternion, node.scale);
-    if (node.parent) {
-        node.matrixWorld.multiplyMatrices(node.parent.matrixWorld, node.matrix);
-    } else {
-        node.matrixWorld.copy(node.matrix);
-    }
-    for (var ci = 0; ci < node.children.length; ci++) {
-        forceUpdateAllMatrices(node.children[ci]);
-    }
-}
-
 function cpuSkinUpdate(cpuSkinData) {
     try {
         var skeleton = cpuSkinData.skeleton;
 
-        // === PIPELINE DIAGNOSTIC: Show results on screen ===
-        if (!cpuSkinData._debugCount) cpuSkinData._debugCount = 0;
-        cpuSkinData._debugCount++;
-        var frame = cpuSkinData._debugCount;
-
-        if (frame === 1) {
-            // Create on-screen overlay for diagnostic results
-            var diagDiv = document.createElement('div');
-            diagDiv.id = 'pipeline-diag';
-            diagDiv.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.9);color:#0f0;' +
-                'font:bold 16px monospace;padding:20px;z-index:99999;max-width:90vw;white-space:pre-wrap;border:3px solid #0f0;';
-            document.body.appendChild(diagDiv);
-            cpuSkinData._diagDiv = diagDiv;
-        }
-
-        var da = cpuSkinData._directAnim;
-        var diagLines = [];
-
-        if (frame <= 2) {
-            // STAGE A: _directAnim state
-            diagLines.push('A: _directAnim=' + (da ? 'EXISTS bindings=' + (da.bindings ? da.bindings.length : 'null') : 'NULL'));
-
-            // STAGE B: Bone object identity
-            if (da && da.bindings && da.bindings.length > 0) {
-                var firstBinding = da.bindings[0];
-                var skelBones = skeleton.bones;
-                var foundMatch = false;
-                for (var sbi = 0; sbi < skelBones.length; sbi++) {
-                    if (skelBones[sbi] === firstBinding.bone) {
-                        foundMatch = true;
-                        diagLines.push('B: binding[0].bone === skeleton.bones[' + sbi + '] SAME ✓');
-                        break;
-                    }
-                }
-                if (!foundMatch) {
-                    diagLines.push('B: *** BONES ARE DIFFERENT OBJECTS! ***');
-                    diagLines.push('   binding bone: ' + firstBinding.bone.name + ' id=' + firstBinding.bone.uuid.substr(0,8));
-                    diagLines.push('   skel bones[0]: ' + skelBones[0].name + ' id=' + skelBones[0].uuid.substr(0,8));
-                }
-            }
-        }
-
-        // STAGE C: Run directBoneAnimUpdate
+        // Direct bone animation: bypass PropertyBinding, drive bones directly
         directBoneAnimUpdate(cpuSkinData);
 
-        if (frame <= 2 && da && da.bindings && da.bindings.length > 0) {
-            var tb = da.bindings[0].bone;
-            diagLines.push('C: After directAnim bone[0](' + tb.name + ') q=[' +
-                tb.quaternion.x.toFixed(3) + ',' + tb.quaternion.y.toFixed(3) + ',' +
-                tb.quaternion.z.toFixed(3) + ',' + tb.quaternion.w.toFixed(3) + ']');
-            // Also check skeleton bone directly
-            var sb0 = skeleton.bones[0];
-            diagLines.push('   skeleton.bones[0](' + sb0.name + ') q=[' +
-                sb0.quaternion.x.toFixed(3) + ',' + sb0.quaternion.y.toFixed(3) + ',' +
-                sb0.quaternion.z.toFixed(3) + ',' + sb0.quaternion.w.toFixed(3) + ']');
-        }
-
-        // STAGE D: HARD-CODED rotation on skeleton.bones[1]
-        if (skeleton.bones.length > 1) {
-            var testAngle = Math.sin(performance.now() * 0.003) * 0.5;
-            skeleton.bones[1].quaternion.set(0, 0, Math.sin(testAngle), Math.cos(testAngle));
-            skeleton.bones[1].updateMatrix();
-        }
-        if (frame <= 2 && skeleton.bones.length > 1) {
-            var boneInScene = false;
-            cpuSkinData.sourceScene.traverse(function(c) {
-                if (c === skeleton.bones[1]) boneInScene = true;
-            });
-            diagLines.push('D: skeleton.bones[1](' + skeleton.bones[1].name + ') inSourceScene=' + boneInScene);
-        }
-
-        // Propagate bone TRS → matrixWorld → boneMatrices
+        // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         skeleton.update();
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
-
-        // STAGE E: boneMatrices result
-        if (frame <= 2) {
-            var isId0 = Math.abs(bm[0] - 1) < 0.001 && Math.abs(bm[5] - 1) < 0.001 &&
-                        Math.abs(bm[10] - 1) < 0.001 && Math.abs(bm[1]) < 0.001;
-            var isId1 = bm.length >= 32 &&
-                Math.abs(bm[16] - 1) < 0.001 && Math.abs(bm[21] - 1) < 0.001 &&
-                Math.abs(bm[26] - 1) < 0.001;
-            diagLines.push('E: bm[0]=[' + bm[0].toFixed(3) + ',' + bm[5].toFixed(3) + ',' + bm[10].toFixed(3) + '] ' +
-                (isId0 ? '⚠️ IDENTITY' : '✓ ANIMATED'));
-            diagLines.push('   bm[1]=[' + bm[16].toFixed(3) + ',' + bm[21].toFixed(3) + ',' + bm[26].toFixed(3) + '] ' +
-                (isId1 ? '❌ HARD-ROTATE FAILED' : '✓ PIPELINE WORKS'));
-            diagLines.push('');
-            if (isId1) {
-                diagLines.push('>>> RESULT: PIPELINE BROKEN <<<');
-                diagLines.push('skeleton.bones are not connected to sourceScene');
-            } else if (isId0) {
-                diagLines.push('>>> RESULT: PIPELINE OK, directAnim BROKEN <<<');
-                diagLines.push('directBoneAnimUpdate does not modify correct bones');
-            } else {
-                diagLines.push('>>> RESULT: ALL WORKING <<<');
-            }
-        }
-
-        if (cpuSkinData._diagDiv && diagLines.length > 0) {
-            cpuSkinData._diagDiv.textContent = '=== ONI ANIMATION DIAGNOSTIC ===\n' + diagLines.join('\n');
-        }
 
         // Full CPU skinning with bone matrices (multi-mesh support)
         var meshDataArr = cpuSkinData.meshes || [{
@@ -7830,7 +7685,6 @@ function cpuSkinUpdate(cpuSkinData) {
         var _temp = new THREE.Vector4();
         var _result = new THREE.Vector4();
         var globalMinY = Infinity, globalMaxY = -Infinity;
-        var spikeLimit = cpuSkinData.srcHeight * 10;
 
         // Deform vertices for each mesh
         for (var mi = 0; mi < meshDataArr.length; mi++) {
@@ -7875,29 +7729,25 @@ function cpuSkinUpdate(cpuSkinData) {
                 _result.w = 1;
                 _result.applyMatrix4(mBindMatrixInverse);
 
-                // NaN and spike guard: clamp extreme values to source position
-                var rx = _result.x, ry = _result.y, rz = _result.z;
-                if (rx !== rx || ry !== ry || rz !== rz ||
-                    Math.abs(rx) > spikeLimit || Math.abs(ry) > spikeLimit || Math.abs(rz) > spikeLimit) {
-                    rx = mSrcPos.getX(i);
-                    ry = mSrcPos.getY(i);
-                    rz = mSrcPos.getZ(i);
-                }
+                // NaN guard only (no spike clamping — auto-scale handles large values)
+                if (_result.x !== _result.x) _result.x = mSrcPos.getX(i);
+                if (_result.y !== _result.y) _result.y = mSrcPos.getY(i);
+                if (_result.z !== _result.z) _result.z = mSrcPos.getZ(i);
 
-                mDstPos.setXYZ(i, rx, ry, rz);
-                if (ry < globalMinY) globalMinY = ry;
-                if (ry > globalMaxY) globalMaxY = ry;
+                mDstPos.setXYZ(i, _result.x, _result.y, _result.z);
+                if (_result.y < globalMinY) globalMinY = _result.y;
+                if (_result.y > globalMaxY) globalMaxY = _result.y;
             }
         }
 
-        // Auto-scale: compute scale ratio from combined output vs source bounding box
-        var outHeight = globalMaxY - globalMinY;
-        if (!cpuSkinData._scaleComputed || (cpuSkinData._scaleRetries < 5 && outHeight < 0.01)) {
-            if (!cpuSkinData._scaleRetries) cpuSkinData._scaleRetries = 0;
-            cpuSkinData._scaleRetries++;
+        // Auto-scale: compute scale ratio from output vs source bounding box.
+        // The boneInverses include the Armature's coordinate transform (~100x scale),
+        // so output is ~100x larger than expected. Auto-scale compensates.
+        if (!cpuSkinData._scaleComputed) {
+            cpuSkinData._scaleComputed = true;
+            var outHeight = globalMaxY - globalMinY;
             var srcHeight = cpuSkinData.srcHeight;
-            if (outHeight > 0.01 && srcHeight > 0.001) {
-                cpuSkinData._scaleComputed = true;
+            if (outHeight > 0.001 && srcHeight > 0.001) {
                 var scaleFix = srcHeight / outHeight;
                 cpuSkinData.scaleFix = scaleFix;
                 console.log('[cpuSkin] Auto-scale: outH=' + outHeight.toFixed(4) +
@@ -7907,12 +7757,11 @@ function cpuSkinUpdate(cpuSkinData) {
         }
 
         // Apply scale correction to all meshes
-        for (var mi = 0; mi < meshDataArr.length; mi++) {
-            var md = meshDataArr[mi];
-            var mDstPos = md.dstPositions;
-            var mCount = mDstPos.count;
-            if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
-                var sf = cpuSkinData.scaleFix;
+        if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
+            var sf = cpuSkinData.scaleFix;
+            for (var mi = 0; mi < meshDataArr.length; mi++) {
+                var mDstPos = meshDataArr[mi].dstPositions;
+                var mCount = mDstPos.count;
                 for (var i = 0; i < mCount; i++) {
                     mDstPos.setXYZ(i,
                         mDstPos.getX(i) * sf,
@@ -7923,10 +7772,9 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Y-anchor: anchor model feet at y=0 (computed from combined bounds)
-        if (!cpuSkinData._yAnchorComputed || cpuSkinData._yAnchorRetries < 5) {
-            if (!cpuSkinData._yAnchorRetries) cpuSkinData._yAnchorRetries = 0;
-            cpuSkinData._yAnchorRetries++;
+        // Y-anchor: anchor model feet at y=0 (computed on first frame)
+        if (!cpuSkinData._yAnchorComputed) {
+            cpuSkinData._yAnchorComputed = true;
             var anchorMinY = Infinity;
             for (var mi = 0; mi < meshDataArr.length; mi++) {
                 var mDstPos = meshDataArr[mi].dstPositions;
@@ -7936,12 +7784,9 @@ function cpuSkinUpdate(cpuSkinData) {
                     if (ay < anchorMinY) anchorMinY = ay;
                 }
             }
-            if (isFinite(anchorMinY) && outHeight > 0.01) {
-                cpuSkinData._yAnchorComputed = true;
-                cpuSkinData._yAnchor = -anchorMinY;
-                if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
-                    console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
-                }
+            cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
+            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
+                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
             }
         }
 
