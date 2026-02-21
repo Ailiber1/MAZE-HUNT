@@ -7595,9 +7595,9 @@ function cpuSkinUpdate(cpuSkinData) {
             var srcHeight = cpuSkinData.srcHeight;
             if (outHeight > 0.001 && srcHeight > 0.001) {
                 cpuSkinData.scaleFix = srcHeight / outHeight;
-                console.log('[cpuSkin] Auto-scale: meshes=' + meshDataArr.length +
-                    ' outH=' + outHeight.toFixed(2) + ' srcH=' + srcHeight.toFixed(4) +
-                    ' fix=' + cpuSkinData.scaleFix.toFixed(6));
+                var scaleMsg = '[cpuSkin] scale: m=' + meshDataArr.length + ' outH=' + outHeight.toFixed(1) + ' srcH=' + srcHeight.toFixed(2) + ' fix=' + cpuSkinData.scaleFix.toFixed(6);
+                console.log(scaleMsg);
+                if (typeof showGLBDiag === 'function') showGLBDiag(scaleMsg);
             }
         }
 
@@ -7627,7 +7627,9 @@ function cpuSkinUpdate(cpuSkinData) {
             }
             cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
             if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
-                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
+                var yaMsg = '[cpuSkin] yAnchor=' + cpuSkinData._yAnchor.toFixed(4);
+                console.log(yaMsg);
+                if (typeof showGLBDiag === 'function') showGLBDiag(yaMsg);
             }
         }
         if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
@@ -7676,13 +7678,30 @@ function cloneMatForOni(origMat) {
     }
 }
 
+/* --- C4-diag: On-screen diagnostic overlay for GLB loading --- */
+function showGLBDiag(msg) {
+    var el = document.getElementById('glb-diag');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'glb-diag';
+        el.style.cssText = 'position:fixed;top:60px;left:10px;z-index:99999;background:rgba(0,0,0,0.85);color:#0f0;font:bold 14px monospace;padding:10px;max-width:50vw;white-space:pre-wrap;pointer-events:none;border:2px solid #0f0;';
+        document.body.appendChild(el);
+    }
+    el.textContent += msg + '\n';
+    // Auto-hide after 30 seconds
+    clearTimeout(el._timer);
+    el._timer = setTimeout(function() { el.style.display = 'none'; }, 30000);
+}
+
 /* --- C4: Load GLB model into ONI group (multi-mesh support) --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
-    if (!enemy) return;
+    if (!enemy) { showGLBDiag('[ONI] enemy not found: ' + charId); return; }
+    showGLBDiag('[ONI] Loading: ' + enemy.file);
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
         try {
+            showGLBDiag('[ONI] GLB callback fired');
             var sourceScene = gltf.scene;
             sourceScene.updateMatrixWorld(true);
 
@@ -7717,7 +7736,8 @@ function loadOniGLB(group, charId, stageId) {
             sourceScene.traverse(function(child) {
                 if (child.isSkinnedMesh && child.geometry) allSkinnedMeshes.push(child);
             });
-            if (allSkinnedMeshes.length === 0) return;
+            showGLBDiag('[ONI] SkinnedMeshes found: ' + allSkinnedMeshes.length);
+            if (allSkinnedMeshes.length === 0) { showGLBDiag('[ONI] ERROR: No SkinnedMesh!'); return; }
 
             // Compute COMBINED bounding box from all SkinnedMeshes
             var combinedBB = new THREE.Box3();
@@ -7773,7 +7793,9 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            console.log('[ONI] GLB loaded: ' + allSkinnedMeshes.length + ' meshes, scale=' + meshScale.toFixed(4) + ', height=' + geoHeight.toFixed(4));
+            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, scale=' + meshScale.toFixed(4) + ', h=' + geoHeight.toFixed(4) + ', children=' + group.children.length;
+            console.log(diagMsg);
+            showGLBDiag(diagMsg);
 
             // Setup CPU skinning data with multi-mesh support
             group.userData.cpuSkin = {
@@ -7833,9 +7855,11 @@ function loadOniGLB(group, charId, stageId) {
             }
         } catch(e) {
             console.error('[ONI] Error:', e.message, e.stack);
+            showGLBDiag('[ONI] EXCEPTION: ' + e.message);
         }
     }, undefined, function(err) {
         console.error('[ONI] GLB load failed:', err);
+        showGLBDiag('[ONI] LOAD FAILED: ' + (err && err.message ? err.message : String(err)));
         group.userData.glbLoaded = false;
     });
 }
