@@ -4416,9 +4416,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             // Sanitize bone names: remove ':' which is a reserved char in
             // Three.js PropertyBinding (causes animation tracks to fail silently).
             // e.g. "mixamorig:Hips" → "mixamorigHips" (matches shared animation tracks)
-            // AND force matrixAutoUpdate = true on ALL objects for CPU skinning.
+            // Do NOT force matrixAutoUpdate=true — must preserve GLTFLoader defaults.
             sourceScene.traverse(function(child) {
-                child.matrixAutoUpdate = true;
                 if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
                     child.name = child.name.replace(/:/g, '');
                 }
@@ -7595,9 +7594,10 @@ function directBoneAnimUpdate(cpuSkinData) {
         } else if (b.propName === 'scale') {
             b.bone.scale.set(result[0], result[1], result[2]);
         }
-        // Force matrix recomposition from updated position/quaternion/scale.
-        // Without this, bones with matrixAutoUpdate=false retain stale matrices → T-pose.
-        b.bone.updateMatrix();
+        // Do NOT call bone.updateMatrix() here — let updateMatrixWorld(true)
+        // handle it for bones with matrixAutoUpdate=true (GLTFLoader default for TRS nodes).
+        // Calling updateMatrix() on nodes that had matrixAutoUpdate=false causes
+        // matrix recomposition mismatch with boneInverses.
     }
 }
 
@@ -7973,12 +7973,10 @@ function loadOniGLB(group, charId, stageId) {
             sourceScene.updateMatrixWorld(true);
 
             // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
-            // AND force matrixAutoUpdate = true on ALL objects for CPU skinning.
-            // GLTFLoader may set matrixAutoUpdate=false on nodes loaded with 'matrix'
-            // instead of TRS, which prevents updateMatrixWorld from recomposing
-            // position/quaternion/scale into the local matrix — causing T-pose.
+            // Do NOT force matrixAutoUpdate=true — GLTFLoader's defaults must be preserved.
+            // Forcing it causes Armature matrices to be recomposed from TRS, which
+            // differs from the original GLTF matrix used to compute boneInverses.
             sourceScene.traverse(function(child) {
-                child.matrixAutoUpdate = true;
                 if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
                     child.name = child.name.replace(/:/g, '');
                 }
