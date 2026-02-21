@@ -4544,7 +4544,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             console.log('[RemotePlayer] Multi-mesh: ' + allSkinnedMeshes.length + ' SkinnedMeshes found');
             // NO light inside bodyGroup — light goes on parent group
             bodyGroup.scale.setScalar(meshScale);
-            bodyGroup.position.y = offsetY;
+            // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
+            bodyGroup.position.y = 0;
 
             // Keep sourceScene DETACHED (not added to group) to prevent
             // parent transform contamination in bone world matrices.
@@ -4559,10 +4560,20 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
+            // Recompute boneInverses from runtime matrices for consistency
+            sourceScene.updateMatrixWorld(true);
+            var skel = origSkinned.skeleton;
+            for (var bi = 0; bi < skel.bones.length; bi++) {
+                if (skel.bones[bi]) {
+                    skel.boneInverses[bi] = new THREE.Matrix4().copy(skel.bones[bi].matrixWorld).invert();
+                }
+            }
+            console.log('[RemotePlayer] Recomputed ' + skel.bones.length + ' boneInverses');
+
             // Setup CPU skinning data (multi-mesh)
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
-                skeleton: origSkinned.skeleton,
+                skeleton: skel,
                 meshes: cpuSkinMeshes,
                 srcPositions: cpuSkinMeshes[0].srcPositions,
                 dstPositions: cpuSkinMeshes[0].dstPositions,
@@ -4571,6 +4582,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 bindMatrix: cpuSkinMeshes[0].bindMatrix,
                 bindMatrixInverse: cpuSkinMeshes[0].bindMatrixInverse,
                 srcHeight: geoHeight,
+                srcBBMinY: combinedBB.min.y,
                 scaleFix: null,
                 frameCount: 0
             };
@@ -7940,10 +7952,24 @@ function loadOniGLB(group, charId, stageId) {
 
             console.log('[ONI] GLB body loaded. scale:', meshScale.toFixed(4));
 
+            // Recompute boneInverses from runtime matrices to ensure consistency.
+            // GLTFLoader's boneInverses come from the GLTF file's inverseBindMatrices,
+            // which may differ from what updateMatrixWorld computes at runtime
+            // (e.g., if the Armature node's TRS decomposition is lossy).
+            // Recomputing guarantees boneMatrices = bone.matrixWorld * boneInverse = identity in bind pose.
+            sourceScene.updateMatrixWorld(true);
+            var skel = origSkinned.skeleton;
+            for (var bi = 0; bi < skel.bones.length; bi++) {
+                if (skel.bones[bi]) {
+                    skel.boneInverses[bi] = new THREE.Matrix4().copy(skel.bones[bi].matrixWorld).invert();
+                }
+            }
+            console.log('[ONI] Recomputed ' + skel.bones.length + ' boneInverses for runtime consistency');
+
             // Setup CPU skinning data (multi-mesh)
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
-                skeleton: origSkinned.skeleton,
+                skeleton: skel,
                 meshes: cpuSkinMeshes,
                 srcPositions: cpuSkinMeshes[0].srcPositions,
                 dstPositions: cpuSkinMeshes[0].dstPositions,
@@ -7952,6 +7978,7 @@ function loadOniGLB(group, charId, stageId) {
                 bindMatrix: cpuSkinMeshes[0].bindMatrix,
                 bindMatrixInverse: cpuSkinMeshes[0].bindMatrixInverse,
                 srcHeight: geoHeight,
+                srcBBMinY: combinedBB.min.y,
                 scaleFix: null,
                 frameCount: 0
             };
