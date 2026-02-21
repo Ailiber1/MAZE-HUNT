@@ -4509,7 +4509,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     bindMatrix: origSkinned.bindMatrix,
                     bindMatrixInverse: origSkinned.bindMatrixInverse,
                 }],
-                frameCount: 0
+                frameCount: 0,
+                _boneHeight: (hasBones && !boneBox.isEmpty()) ? boneBox.getSize(new THREE.Vector3()).y : 0
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene
@@ -7541,6 +7542,8 @@ function cpuSkinUpdate(cpuSkinData) {
             }];
         }
 
+        var globalMinY = Infinity, globalMaxY = -Infinity;
+
         // Process EACH mesh independently (same skeleton, per-mesh bind matrices)
         for (var m = 0; m < meshDataArr.length; m++) {
             var md = meshDataArr[m];
@@ -7574,11 +7577,60 @@ function cpuSkinUpdate(cpuSkinData) {
                 if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
 
                 dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+                if (_result.y < globalMinY) globalMinY = _result.y;
+                if (_result.y > globalMaxY) globalMaxY = _result.y;
             }
         }
 
-        // Scale and Y-offset handled by bodyGroup transform (set once in loadOniGLB)
-        // using bone bounding box — matches proven runner approach
+        // Compute Armature amplification ratio on first frame:
+        // CPU skinning output is ~52x larger than expected due to unbalanced
+        // Armature scale in boneMatrices. Correct by scaling vertices down.
+        if (!cpuSkinData._vertexScaleFix) {
+            var outHeight = globalMaxY - globalMinY;
+            if (outHeight > 0.01 && cpuSkinData._boneHeight && cpuSkinData._boneHeight > 0.01) {
+                cpuSkinData._vertexScaleFix = cpuSkinData._boneHeight / outHeight;
+                var fixMsg = '[cpuSkin] vertexFix: outH=' + outHeight.toFixed(1) + ' boneH=' + cpuSkinData._boneHeight.toFixed(2) + ' ratio=' + cpuSkinData._vertexScaleFix.toFixed(6);
+                console.log(fixMsg);
+                if (typeof showGLBDiag === 'function') showGLBDiag(fixMsg);
+            }
+        }
+
+        // Apply vertex scale correction + Y-anchor to bring vertices into bone-BB space
+        if (cpuSkinData._vertexScaleFix) {
+            var vsf = cpuSkinData._vertexScaleFix;
+            for (var m = 0; m < meshDataArr.length; m++) {
+                var dstPos = meshDataArr[m].dstPositions;
+                var count = dstPos.count;
+                for (var i = 0; i < count; i++) {
+                    dstPos.setXYZ(i, dstPos.getX(i) * vsf, dstPos.getY(i) * vsf, dstPos.getZ(i) * vsf);
+                }
+            }
+            // Recompute Y-anchor after scaling (feet to Y=0)
+            if (!cpuSkinData._yAnchorComputed) {
+                cpuSkinData._yAnchorComputed = true;
+                var anchorMinY = Infinity;
+                for (var m = 0; m < meshDataArr.length; m++) {
+                    var dp = meshDataArr[m].dstPositions;
+                    for (var i = 0; i < dp.count; i++) {
+                        var ay = dp.getY(i);
+                        if (ay < anchorMinY) anchorMinY = ay;
+                    }
+                }
+                cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
+                var yaMsg = '[cpuSkin] yAnchor=' + cpuSkinData._yAnchor.toFixed(4);
+                console.log(yaMsg);
+                if (typeof showGLBDiag === 'function') showGLBDiag(yaMsg);
+            }
+            if (cpuSkinData._yAnchor) {
+                var ya = cpuSkinData._yAnchor;
+                for (var m = 0; m < meshDataArr.length; m++) {
+                    var dp = meshDataArr[m].dstPositions;
+                    for (var i = 0; i < dp.count; i++) {
+                        dp.setY(i, dp.getY(i) + ya);
+                    }
+                }
+            }
+        }
 
         // Mark ALL destination buffers for GPU upload
         for (var m = 0; m < meshDataArr.length; m++) {
@@ -7759,7 +7811,8 @@ function loadOniGLB(group, charId, stageId) {
                 sourceScene: sourceScene,
                 skeleton: allSkinnedMeshes[0].skeleton,
                 meshes: meshDataArr,
-                frameCount: 0
+                frameCount: 0,
+                _boneHeight: (hasBones && !boneBox.isEmpty()) ? boneBox.getSize(new THREE.Vector3()).y : 0
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene (unchanged)
