@@ -7712,68 +7712,75 @@ function cpuSkinUpdate(cpuSkinData) {
     try {
         var skeleton = cpuSkinData.skeleton;
 
-        // === PIPELINE DIAGNOSTIC: Test each stage ===
+        // === PIPELINE DIAGNOSTIC: Show results on screen ===
         if (!cpuSkinData._debugCount) cpuSkinData._debugCount = 0;
         cpuSkinData._debugCount++;
         var frame = cpuSkinData._debugCount;
 
-        // STAGE A: Check _directAnim state
-        var da = cpuSkinData._directAnim;
-        if (frame <= 2) {
-            console.log('[DIAG-A] frame=' + frame +
-                ' _directAnim=' + (da ? 'EXISTS bindings=' + (da.bindings ? da.bindings.length : 'null') : 'NULL'));
+        if (frame === 1) {
+            // Create on-screen overlay for diagnostic results
+            var diagDiv = document.createElement('div');
+            diagDiv.id = 'pipeline-diag';
+            diagDiv.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.9);color:#0f0;' +
+                'font:bold 16px monospace;padding:20px;z-index:99999;max-width:90vw;white-space:pre-wrap;border:3px solid #0f0;';
+            document.body.appendChild(diagDiv);
+            cpuSkinData._diagDiv = diagDiv;
         }
 
-        // STAGE B: Check skeleton.bones identity with _directAnim bones
-        if (frame === 1 && da && da.bindings && da.bindings.length > 0) {
-            var firstBinding = da.bindings[0];
-            var skelBones = skeleton.bones;
-            var foundMatch = false;
-            for (var sbi = 0; sbi < skelBones.length; sbi++) {
-                if (skelBones[sbi] === firstBinding.bone) {
-                    foundMatch = true;
-                    console.log('[DIAG-B] bindings[0].bone === skeleton.bones[' + sbi + '] (' + firstBinding.bone.name + ') SAME OBJECT ✓');
-                    break;
+        var da = cpuSkinData._directAnim;
+        var diagLines = [];
+
+        if (frame <= 2) {
+            // STAGE A: _directAnim state
+            diagLines.push('A: _directAnim=' + (da ? 'EXISTS bindings=' + (da.bindings ? da.bindings.length : 'null') : 'NULL'));
+
+            // STAGE B: Bone object identity
+            if (da && da.bindings && da.bindings.length > 0) {
+                var firstBinding = da.bindings[0];
+                var skelBones = skeleton.bones;
+                var foundMatch = false;
+                for (var sbi = 0; sbi < skelBones.length; sbi++) {
+                    if (skelBones[sbi] === firstBinding.bone) {
+                        foundMatch = true;
+                        diagLines.push('B: binding[0].bone === skeleton.bones[' + sbi + '] SAME ✓');
+                        break;
+                    }
+                }
+                if (!foundMatch) {
+                    diagLines.push('B: *** BONES ARE DIFFERENT OBJECTS! ***');
+                    diagLines.push('   binding bone: ' + firstBinding.bone.name + ' id=' + firstBinding.bone.uuid.substr(0,8));
+                    diagLines.push('   skel bones[0]: ' + skelBones[0].name + ' id=' + skelBones[0].uuid.substr(0,8));
                 }
             }
-            if (!foundMatch) {
-                console.log('[DIAG-B] *** bindings[0].bone NOT FOUND in skeleton.bones! DIFFERENT OBJECTS! ***');
-                console.log('[DIAG-B] binding bone name: ' + firstBinding.bone.name + ' uuid: ' + firstBinding.bone.uuid);
-                console.log('[DIAG-B] skeleton.bones[0] name: ' + skelBones[0].name + ' uuid: ' + skelBones[0].uuid);
-            }
         }
 
-        // STAGE C: Run directBoneAnimUpdate and check result
+        // STAGE C: Run directBoneAnimUpdate
         directBoneAnimUpdate(cpuSkinData);
+
         if (frame <= 2 && da && da.bindings && da.bindings.length > 0) {
-            var testBone = da.bindings[0].bone;
-            console.log('[DIAG-C] After directBoneAnimUpdate: bone[0](' + testBone.name + ') quat=[' +
-                testBone.quaternion.x.toFixed(4) + ',' + testBone.quaternion.y.toFixed(4) + ',' +
-                testBone.quaternion.z.toFixed(4) + ',' + testBone.quaternion.w.toFixed(4) + ']');
+            var tb = da.bindings[0].bone;
+            diagLines.push('C: After directAnim bone[0](' + tb.name + ') q=[' +
+                tb.quaternion.x.toFixed(3) + ',' + tb.quaternion.y.toFixed(3) + ',' +
+                tb.quaternion.z.toFixed(3) + ',' + tb.quaternion.w.toFixed(3) + ']');
+            // Also check skeleton bone directly
+            var sb0 = skeleton.bones[0];
+            diagLines.push('   skeleton.bones[0](' + sb0.name + ') q=[' +
+                sb0.quaternion.x.toFixed(3) + ',' + sb0.quaternion.y.toFixed(3) + ',' +
+                sb0.quaternion.z.toFixed(3) + ',' + sb0.quaternion.w.toFixed(3) + ']');
         }
 
-        // STAGE D: HARD-CODED bone rotation test
-        // Force-rotate skeleton.bones[1] (typically first child bone) by 45° on Z-axis
-        // If the mesh deforms, the pipeline (updateMatrixWorld → skeleton.update → deformation) works.
-        // If it DOESN'T deform, the skeleton's bones are somehow disconnected.
+        // STAGE D: HARD-CODED rotation on skeleton.bones[1]
         if (skeleton.bones.length > 1) {
-            var testAngle = Math.sin(performance.now() * 0.003) * 0.5; // oscillate
+            var testAngle = Math.sin(performance.now() * 0.003) * 0.5;
             skeleton.bones[1].quaternion.set(0, 0, Math.sin(testAngle), Math.cos(testAngle));
             skeleton.bones[1].updateMatrix();
         }
-        if (frame <= 2) {
-            console.log('[DIAG-D] Hard-rotated skeleton.bones[1](' +
-                (skeleton.bones[1] ? skeleton.bones[1].name : 'N/A') + ') quat=[' +
-                skeleton.bones[1].quaternion.x.toFixed(4) + ',' +
-                skeleton.bones[1].quaternion.y.toFixed(4) + ',' +
-                skeleton.bones[1].quaternion.z.toFixed(4) + ',' +
-                skeleton.bones[1].quaternion.w.toFixed(4) + ']');
-            // Check: is skeleton.bones[1] in sourceScene hierarchy?
+        if (frame <= 2 && skeleton.bones.length > 1) {
             var boneInScene = false;
             cpuSkinData.sourceScene.traverse(function(c) {
                 if (c === skeleton.bones[1]) boneInScene = true;
             });
-            console.log('[DIAG-D] skeleton.bones[1] in sourceScene: ' + boneInScene);
+            diagLines.push('D: skeleton.bones[1](' + skeleton.bones[1].name + ') inSourceScene=' + boneInScene);
         }
 
         // Propagate bone TRS → matrixWorld → boneMatrices
@@ -7782,18 +7789,31 @@ function cpuSkinUpdate(cpuSkinData) {
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        // STAGE E: Check boneMatrices result
+        // STAGE E: boneMatrices result
         if (frame <= 2) {
-            var isId = Math.abs(bm[0] - 1) < 0.001 && Math.abs(bm[5] - 1) < 0.001 &&
-                       Math.abs(bm[10] - 1) < 0.001 && Math.abs(bm[1]) < 0.001;
-            // Also check bone[1]'s boneMatrix (index 1 = elements 16..31)
-            var bm1Id = bm.length >= 32 &&
+            var isId0 = Math.abs(bm[0] - 1) < 0.001 && Math.abs(bm[5] - 1) < 0.001 &&
+                        Math.abs(bm[10] - 1) < 0.001 && Math.abs(bm[1]) < 0.001;
+            var isId1 = bm.length >= 32 &&
                 Math.abs(bm[16] - 1) < 0.001 && Math.abs(bm[21] - 1) < 0.001 &&
                 Math.abs(bm[26] - 1) < 0.001;
-            console.log('[DIAG-E] bm[0]diag=[' + bm[0].toFixed(4) + ',' + bm[5].toFixed(4) + ',' + bm[10].toFixed(4) + ']' +
-                (isId ? ' IDENTITY' : ' ANIMATED'));
-            console.log('[DIAG-E] bm[1]diag=[' + bm[16].toFixed(4) + ',' + bm[21].toFixed(4) + ',' + bm[26].toFixed(4) + ']' +
-                (bm1Id ? ' IDENTITY (HARD-ROTATE FAILED!)' : ' NON-IDENTITY (pipeline works)'));
+            diagLines.push('E: bm[0]=[' + bm[0].toFixed(3) + ',' + bm[5].toFixed(3) + ',' + bm[10].toFixed(3) + '] ' +
+                (isId0 ? '⚠️ IDENTITY' : '✓ ANIMATED'));
+            diagLines.push('   bm[1]=[' + bm[16].toFixed(3) + ',' + bm[21].toFixed(3) + ',' + bm[26].toFixed(3) + '] ' +
+                (isId1 ? '❌ HARD-ROTATE FAILED' : '✓ PIPELINE WORKS'));
+            diagLines.push('');
+            if (isId1) {
+                diagLines.push('>>> RESULT: PIPELINE BROKEN <<<');
+                diagLines.push('skeleton.bones are not connected to sourceScene');
+            } else if (isId0) {
+                diagLines.push('>>> RESULT: PIPELINE OK, directAnim BROKEN <<<');
+                diagLines.push('directBoneAnimUpdate does not modify correct bones');
+            } else {
+                diagLines.push('>>> RESULT: ALL WORKING <<<');
+            }
+        }
+
+        if (cpuSkinData._diagDiv && diagLines.length > 0) {
+            cpuSkinData._diagDiv.textContent = '=== ONI ANIMATION DIAGNOSTIC ===\n' + diagLines.join('\n');
         }
 
         // Full CPU skinning with bone matrices (multi-mesh support)
