@@ -7848,7 +7848,11 @@ function preloadPlayerGLB() {
     GameState.playerGLBScale = 1.0;
     GameState.playerGLBOffset = { x: 0, y: 0, z: 0 };
     var charData = GameState.selectedCharacter;
-    if (!charData || !charData.file) return;
+    if (!charData || !charData.file) {
+        showGLBDiag('[RUNNER] No selectedCharacter: ' + JSON.stringify(charData));
+        return;
+    }
+    showGLBDiag('[RUNNER] Loading: ' + charData.file);
     var loader = new THREE.GLTFLoader();
     loader.load(charData.file, function(gltf) {
         var model = gltf.scene;
@@ -7891,10 +7895,14 @@ function preloadPlayerGLB() {
         if (gltf.animations && gltf.animations.length > 0) {
             GameState.playerGLBAnimations = gltf.animations;
         }
-        console.log('[PreloadPlayer] Loaded. scale:', scale.toFixed(4),
-            'hasBones:', hasBones, 'offset:', offsetY.toFixed(4));
+        var meshCount = 0;
+        model.traverse(function(c) { if (c.isMesh) meshCount++; });
+        var loadMsg = '[RUNNER] OK: scale=' + scale.toFixed(4) + ' bones=' + hasBones + ' meshes=' + meshCount + ' offY=' + offsetY.toFixed(4);
+        console.log(loadMsg);
+        showGLBDiag(loadMsg);
     }, undefined, function(err) {
         console.error('[MAZE-HUNT] Player GLB preload failed:', err);
+        showGLBDiag('[RUNNER] LOAD FAILED: ' + (err && err.message ? err.message : String(err)));
     });
 }
 
@@ -7905,6 +7913,7 @@ function playCapturedDragAnimation(oni, capturePos) {
     playerGroup.position.set(capturePos.x, capturePos.y, capturePos.z);
 
     try {
+    showGLBDiag('[CAPTURE] playerGLBModel=' + (GameState.playerGLBModel ? 'YES' : 'NULL') + ' selectedChar=' + (GameState.selectedCharacter ? GameState.selectedCharacter.id : 'NULL'));
     if (GameState.playerGLBModel) {
         // Extract ALL meshes from preloaded model → static regular Meshes
         // Use pre-computed bone-based scaling from preloadPlayerGLB (reliable for any model)
