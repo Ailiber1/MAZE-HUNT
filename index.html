@@ -7658,7 +7658,14 @@ function buildDirectAnimData(sourceScene, clip) {
 
 function cpuSkinUpdate(cpuSkinData) {
     try {
+        // === EXACT working version (7e15cda) single-mesh code ===
+        var srcPos = cpuSkinData.srcPositions;
+        var dstPos = cpuSkinData.dstPositions;
         var skeleton = cpuSkinData.skeleton;
+        var si = cpuSkinData.skinIndex;
+        var sw = cpuSkinData.skinWeight;
+        var bindMatrix = cpuSkinData.bindMatrix;
+        var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
 
         // Direct bone animation: bypass PropertyBinding, drive bones directly
         directBoneAnimUpdate(cpuSkinData);
@@ -7669,142 +7676,123 @@ function cpuSkinUpdate(cpuSkinData) {
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        // Full CPU skinning with bone matrices (multi-mesh support)
-        var meshDataArr = cpuSkinData.meshes || [{
-            srcPositions: cpuSkinData.srcPositions,
-            dstPositions: cpuSkinData.dstPositions,
-            skinIndex: cpuSkinData.skinIndex,
-            skinWeight: cpuSkinData.skinWeight,
-            bindMatrix: cpuSkinData.bindMatrix,
-            bindMatrixInverse: cpuSkinData.bindMatrixInverse
-        }];
+        // Full CPU skinning with bone matrices
         var _boneMat = new THREE.Matrix4();
         var _v = new THREE.Vector4();
         var _temp = new THREE.Vector4();
         var _result = new THREE.Vector4();
-        var globalMinY = Infinity, globalMaxY = -Infinity;
+        var count = srcPos.count;
+        var minY = Infinity, maxY = -Infinity;
 
-        // Deform vertices for each mesh
-        for (var mi = 0; mi < meshDataArr.length; mi++) {
-            var md = meshDataArr[mi];
-            var mSrcPos = md.srcPositions;
-            var mDstPos = md.dstPositions;
-            var mSi = md.skinIndex;
-            var mSw = md.skinWeight;
-            var mBindMatrix = md.bindMatrix;
-            var mBindMatrixInverse = md.bindMatrixInverse;
-            var mCount = mSrcPos.count;
+        for (var i = 0; i < count; i++) {
+            _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
+            _v.applyMatrix4(bindMatrix);
 
-            for (var i = 0; i < mCount; i++) {
-                _v.set(mSrcPos.getX(i), mSrcPos.getY(i), mSrcPos.getZ(i), 1);
-                _v.applyMatrix4(mBindMatrix);
+            _result.set(0, 0, 0, 0);
+            var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
+            var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
 
-                _result.set(0, 0, 0, 0);
-                var w0 = mSw.getX(i), w1 = mSw.getY(i), w2 = mSw.getZ(i), w3 = mSw.getW(i);
-                var i0 = mSi.getX(i), i1 = mSi.getY(i), i2 = mSi.getZ(i), i3 = mSi.getW(i);
-
-                if (w0 > 0) {
-                    _boneMat.fromArray(bm, i0 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w0; _result.y += _temp.y * w0; _result.z += _temp.z * w0;
-                }
-                if (w1 > 0) {
-                    _boneMat.fromArray(bm, i1 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w1; _result.y += _temp.y * w1; _result.z += _temp.z * w1;
-                }
-                if (w2 > 0) {
-                    _boneMat.fromArray(bm, i2 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w2; _result.y += _temp.y * w2; _result.z += _temp.z * w2;
-                }
-                if (w3 > 0) {
-                    _boneMat.fromArray(bm, i3 * 16);
-                    _temp.copy(_v).applyMatrix4(_boneMat);
-                    _result.x += _temp.x * w3; _result.y += _temp.y * w3; _result.z += _temp.z * w3;
-                }
-
-                _result.w = 1;
-                _result.applyMatrix4(mBindMatrixInverse);
-
-                // NaN guard only (no spike clamping — auto-scale handles large values)
-                if (_result.x !== _result.x) _result.x = mSrcPos.getX(i);
-                if (_result.y !== _result.y) _result.y = mSrcPos.getY(i);
-                if (_result.z !== _result.z) _result.z = mSrcPos.getZ(i);
-
-                mDstPos.setXYZ(i, _result.x, _result.y, _result.z);
-                if (_result.y < globalMinY) globalMinY = _result.y;
-                if (_result.y > globalMaxY) globalMaxY = _result.y;
+            if (w0 > 0) {
+                _boneMat.fromArray(bm, i0 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w0; _result.y += _temp.y * w0; _result.z += _temp.z * w0;
             }
+            if (w1 > 0) {
+                _boneMat.fromArray(bm, i1 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w1; _result.y += _temp.y * w1; _result.z += _temp.z * w1;
+            }
+            if (w2 > 0) {
+                _boneMat.fromArray(bm, i2 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w2; _result.y += _temp.y * w2; _result.z += _temp.z * w2;
+            }
+            if (w3 > 0) {
+                _boneMat.fromArray(bm, i3 * 16);
+                _temp.copy(_v).applyMatrix4(_boneMat);
+                _result.x += _temp.x * w3; _result.y += _temp.y * w3; _result.z += _temp.z * w3;
+            }
+
+            _result.w = 1;
+            _result.applyMatrix4(bindMatrixInverse);
+
+            // NaN guard
+            if (_result.x !== _result.x) _result.x = srcPos.getX(i);
+            if (_result.y !== _result.y) _result.y = srcPos.getY(i);
+            if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
+
+            dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+            if (_result.y < minY) minY = _result.y;
+            if (_result.y > maxY) maxY = _result.y;
         }
 
-        // Auto-scale: compute scale ratio from output vs source bounding box.
-        // The boneInverses include the Armature's coordinate transform (~100x scale),
-        // so output is ~100x larger than expected. Auto-scale compensates.
+        // Auto-scale: compute scale ratio from output vs source bounding box
         if (!cpuSkinData._scaleComputed) {
             cpuSkinData._scaleComputed = true;
-            var outHeight = globalMaxY - globalMinY;
+            var outHeight = maxY - minY;
             var srcHeight = cpuSkinData.srcHeight;
             if (outHeight > 0.001 && srcHeight > 0.001) {
                 var scaleFix = srcHeight / outHeight;
                 cpuSkinData.scaleFix = scaleFix;
-                console.warn('████ FIRST-FRAME DIAG ████ outH=' + outHeight.toFixed(4) +
-                    ' srcH=' + srcHeight.toFixed(4) + ' scaleFix=' + scaleFix.toFixed(6) +
-                    ' globalMinY=' + globalMinY.toFixed(4) + ' globalMaxY=' + globalMaxY.toFixed(4) +
-                    ' meshes=' + meshDataArr.length);
-            } else {
-                console.warn('████ FIRST-FRAME DIAG ████ SKIP SCALE: outH=' + outHeight.toFixed(4) +
-                    ' srcH=' + srcHeight.toFixed(4));
+                console.log('[cpuSkin] Auto-scale: outH=' + outHeight.toFixed(4) +
+                    ' srcH=' + srcHeight.toFixed(4) + ' fix=' + scaleFix.toFixed(6));
             }
+            // === DIAGNOSTIC OVERLAY (auto-removes after 15s) ===
+            try {
+                var diagDiv = document.createElement('div');
+                diagDiv.id = 'cpuSkinDiag';
+                diagDiv.style.cssText = 'position:fixed;top:10px;left:10px;z-index:99999;background:rgba(0,0,0,0.9);color:#0f0;font:bold 16px monospace;padding:12px;border:2px solid #0f0;max-width:90vw;white-space:pre-wrap;pointer-events:none;';
+                diagDiv.textContent = '[cpuSkin DIAG]\n' +
+                    'outH=' + outHeight.toFixed(2) + ' srcH=' + srcHeight.toFixed(2) + '\n' +
+                    'scaleFix=' + (scaleFix ? scaleFix.toFixed(6) : 'null') + '\n' +
+                    'minY=' + minY.toFixed(2) + ' maxY=' + maxY.toFixed(2) + '\n' +
+                    'count=' + count;
+                document.body.appendChild(diagDiv);
+                setTimeout(function() { var d = document.getElementById('cpuSkinDiag'); if (d) d.remove(); }, 15000);
+            } catch(de) {}
         }
 
-        // Apply scale correction to all meshes
+        // Apply scale correction to all vertices
         if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
             var sf = cpuSkinData.scaleFix;
-            for (var mi = 0; mi < meshDataArr.length; mi++) {
-                var mDstPos = meshDataArr[mi].dstPositions;
-                var mCount = mDstPos.count;
-                for (var i = 0; i < mCount; i++) {
-                    mDstPos.setXYZ(i,
-                        mDstPos.getX(i) * sf,
-                        mDstPos.getY(i) * sf,
-                        mDstPos.getZ(i) * sf
-                    );
-                }
+            for (var i = 0; i < count; i++) {
+                dstPos.setXYZ(i,
+                    dstPos.getX(i) * sf,
+                    dstPos.getY(i) * sf,
+                    dstPos.getZ(i) * sf
+                );
             }
         }
 
-        // Y-anchor: anchor model feet at y=0 (computed on first frame)
+        // Y-anchor: compute on first frame, anchor model feet at y=0
         if (!cpuSkinData._yAnchorComputed) {
             cpuSkinData._yAnchorComputed = true;
             var anchorMinY = Infinity;
-            for (var mi = 0; mi < meshDataArr.length; mi++) {
-                var mDstPos = meshDataArr[mi].dstPositions;
-                var mCount = mDstPos.count;
-                for (var i = 0; i < mCount; i++) {
-                    var ay = mDstPos.getY(i);
-                    if (ay < anchorMinY) anchorMinY = ay;
-                }
+            for (var i = 0; i < count; i++) {
+                var ay = dstPos.getY(i);
+                if (ay < anchorMinY) anchorMinY = ay;
             }
             cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
-            console.warn('████ Y-ANCHOR DIAG ████ anchorMinY=' + anchorMinY.toFixed(4) +
-                ' _yAnchor=' + cpuSkinData._yAnchor.toFixed(4) +
-                ' srcBBMinY=' + (cpuSkinData.srcBBMinY || 'N/A') +
-                ' scaleFix=' + (cpuSkinData.scaleFix ? cpuSkinData.scaleFix.toFixed(6) : 'null'));
+            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
+                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
+            }
+            // Update diagnostic overlay with Y-anchor info
+            try {
+                var diagDiv = document.getElementById('cpuSkinDiag');
+                if (diagDiv) {
+                    diagDiv.textContent += '\nanchorMinY=' + anchorMinY.toFixed(2) +
+                        ' yAnchor=' + cpuSkinData._yAnchor.toFixed(2);
+                }
+            } catch(de) {}
+        }
+        if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
+            var ya = cpuSkinData._yAnchor;
+            for (var i = 0; i < count; i++) {
+                dstPos.setY(i, dstPos.getY(i) + ya);
+            }
         }
 
-        // Apply Y-anchor and mark buffers as needing update
-        for (var mi = 0; mi < meshDataArr.length; mi++) {
-            var mDstPos = meshDataArr[mi].dstPositions;
-            if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
-                var ya = cpuSkinData._yAnchor;
-                var mCount = mDstPos.count;
-                for (var i = 0; i < mCount; i++) {
-                    mDstPos.setY(i, mDstPos.getY(i) + ya);
-                }
-            }
-            mDstPos.needsUpdate = true;
-        }
+        dstPos.needsUpdate = true;
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
     }
