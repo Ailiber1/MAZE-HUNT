@@ -4576,6 +4576,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 bindMatrixInverse: cpuSkinMeshes[0].bindMatrixInverse,
                 srcHeight: geoHeight,
                 srcBBMinY: combinedBB.min.y,
+                bodyGroup: bodyGroup,
+                meshScale: meshScale,
                 scaleFix: null,
                 frameCount: 0
             };
@@ -7764,7 +7766,9 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Y-anchor: compute on first frame, anchor model feet at y=0
+        // Y-grounding: use bodyGroup.position.y instead of vertex buffer modification.
+        // Vertex buffer Y-anchor was not producing visible results despite correct values.
+        // Using transform hierarchy (bodyGroup.position.y) is more reliable.
         if (!cpuSkinData._yAnchorComputed) {
             cpuSkinData._yAnchorComputed = true;
             var anchorMinY = Infinity;
@@ -7772,24 +7776,24 @@ function cpuSkinUpdate(cpuSkinData) {
                 var ay = dstPos.getY(i);
                 if (ay < anchorMinY) anchorMinY = ay;
             }
-            cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
-            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
-                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
+            // Set bodyGroup.position.y to shift model so feet touch ground
+            // worldY = groupY + bodyGroupY + vertexY * meshScale
+            // For feet (vertexY=anchorMinY) to be at groundY (=groupY):
+            // bodyGroupY = -anchorMinY * meshScale
+            if (cpuSkinData.bodyGroup && cpuSkinData.meshScale && isFinite(anchorMinY)) {
+                var groundingY = -anchorMinY * cpuSkinData.meshScale;
+                cpuSkinData.bodyGroup.position.y = groundingY;
+                console.log('[cpuSkin] bodyGroup.position.y grounding:', groundingY.toFixed(4),
+                    'anchorMinY:', anchorMinY.toFixed(4), 'meshScale:', cpuSkinData.meshScale.toFixed(4));
             }
-            // Update diagnostic overlay with Y-anchor info
+            // Update diagnostic overlay
             try {
                 var diagDiv = document.getElementById('cpuSkinDiag');
                 if (diagDiv) {
                     diagDiv.textContent += '\nanchorMinY=' + anchorMinY.toFixed(2) +
-                        ' yAnchor=' + cpuSkinData._yAnchor.toFixed(2);
+                        ' groundY=' + (cpuSkinData.bodyGroup ? cpuSkinData.bodyGroup.position.y.toFixed(2) : 'N/A');
                 }
             } catch(de) {}
-        }
-        if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
-            var ya = cpuSkinData._yAnchor;
-            for (var i = 0; i < count; i++) {
-                dstPos.setY(i, dstPos.getY(i) + ya);
-            }
         }
 
         dstPos.needsUpdate = true;
@@ -7948,6 +7952,8 @@ function loadOniGLB(group, charId, stageId) {
                 bindMatrixInverse: cpuSkinMeshes[0].bindMatrixInverse,
                 srcHeight: geoHeight,
                 srcBBMinY: combinedBB.min.y,
+                bodyGroup: bodyGroup,
+                meshScale: meshScale,
                 scaleFix: null,
                 frameCount: 0
             };
