@@ -2318,7 +2318,6 @@ body {
             <div id="quick-chat-keys"></div>
             <div id="spectator-badge"></div>
             <div id="navigator-bar"></div>
-            <div id="anim-debug-panel" style="display:none;position:fixed;bottom:4px;left:4px;background:rgba(0,0,0,0.8);color:#0f0;font:10px monospace;padding:4px 8px;z-index:9999;max-width:50vw;pointer-events:none;border:1px solid #0f0;white-space:pre;"></div>
         </div>
         <!-- Phase 8: Touch Controls (Mobile) -->
         <div id="touch-controls">
@@ -3036,11 +3035,8 @@ function pauseGame() {
         GameState.language === 'ja' ? 'タイトルに戻る' : 'Back to Title';
 }
 
-var _isResuming = false; // Guard against pointerlockchange re-triggering pause
-
 function resumeGame() {
     if (!gamePaused) return;
-    _isResuming = true;
     gamePaused = false;
 
     var pauseScreen = document.getElementById('pause-screen');
@@ -3072,9 +3068,6 @@ function resumeGame() {
     }
 
     gameLoop();
-
-    // Clear resume guard after a short delay (allows pointerlockchange to settle)
-    setTimeout(function() { _isResuming = false; }, 500);
 }
 
 function isMultiplayerMode() {
@@ -4324,35 +4317,6 @@ function createOniPlayerModel(playerIndex) {
     return group;
 }
 
-/* Merge multiple per-bone animation clips into a single clip.
-   Mixamo exports create separate clips per bone (e.g., "mixamo.com", "mixamo.com.001").
-   This merges them into one clip with all tracks, deduplicating by bone.property. */
-function mergeAnimationClips(clips) {
-    if (!clips || clips.length === 0) return null;
-    // If single clip with many tracks, it's already a full animation
-    if (clips.length === 1 && clips[0].tracks.length > 5) return clips[0];
-
-    var tracks = [];
-    var seen = {};
-    var maxDuration = 0;
-
-    for (var ci = 0; ci < clips.length; ci++) {
-        var clip = clips[ci];
-        if (clip.duration > maxDuration) maxDuration = clip.duration;
-        for (var ti = 0; ti < clip.tracks.length; ti++) {
-            var track = clip.tracks[ti];
-            if (!seen[track.name]) {
-                seen[track.name] = true;
-                tracks.push(track);
-            }
-        }
-    }
-
-    if (tracks.length === 0) return null;
-    console.log('[mergeClips] Merged ' + clips.length + ' clips → ' + tracks.length + ' tracks');
-    return new THREE.AnimationClip('merged_animation', maxDuration > 0 ? maxDuration : -1, tracks);
-}
-
 function loadRemotePlayerGLB(group, charId, isOni) {
     // Find character in both runner and enemy lists
     var charData = CHARACTER_LIST.runners.find(function(c) { return c.id === charId; });
@@ -4369,12 +4333,11 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             var sourceScene = gltf.scene;
             sourceScene.updateMatrixWorld(true);
 
-            // Find ALL SkinnedMeshes for CPU skinning (models may have multiple: upper/lower body)
-            var allSkinnedMeshes = [];
+            // Find first SkinnedMesh for CPU skinning
+            var origSkinned = null;
             sourceScene.traverse(function(child) {
-                if (child.isSkinnedMesh && child.geometry) allSkinnedMeshes.push(child);
+                if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
             });
-            var origSkinned = allSkinnedMeshes.length > 0 ? allSkinnedMeshes[0] : null;
 
             // Helper: clone material with emissive for visibility
             function cloneMatForRemote(mat) {
@@ -4416,7 +4379,6 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             // Sanitize bone names: remove ':' which is a reserved char in
             // Three.js PropertyBinding (causes animation tracks to fail silently).
             // e.g. "mixamorig:Hips" → "mixamorigHips" (matches shared animation tracks)
-            // Do NOT force matrixAutoUpdate=true — must preserve GLTFLoader defaults.
             sourceScene.traverse(function(child) {
                 if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
                     child.name = child.name.replace(/:/g, '');
@@ -4508,47 +4470,29 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 return;
             }
 
-            // SkinnedMesh found — setup CPU skinning (support multiple meshes)
-            // Compute combined bounding box from ALL SkinnedMeshes
-            var combinedBB = new THREE.Box3();
-            allSkinnedMeshes.forEach(function(sm) {
-                sm.geometry.computeBoundingBox();
-                combinedBB.union(sm.geometry.boundingBox);
-            });
-            var geoHeight = combinedBB.max.y - combinedBB.min.y;
+            // SkinnedMesh found — setup CPU skinning
+            var srcGeo = origSkinned.geometry;
+            srcGeo.computeBoundingBox();
+            var bb = srcGeo.boundingBox;
+            var geoHeight = bb.max.y - bb.min.y;
             // Use geometry-based scale for CPU skinning (compatible with auto-scale)
             var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
             // Y-offset = 0 for CPU skinning path: cpuSkinUpdate Y-anchor handles grounding
             var offsetY = 0;
 
-            // Create visible regular Mesh for EACH SkinnedMesh (upper body, lower body, etc.)
+            // Create visible regular Mesh with cloned geometry and materials
+            var dstGeo = srcGeo.clone();
+            var bodyMat = cloneMatForRemote(origSkinned.material);
+            var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
+            bodyMesh.frustumCulled = false;
+
             var bodyGroup = new THREE.Group();
-            var cpuSkinMeshes = [];
-            for (var smi = 0; smi < allSkinnedMeshes.length; smi++) {
-                var sm = allSkinnedMeshes[smi];
-                var srcGeo = sm.geometry;
-                var dstGeo = srcGeo.clone();
-                var bodyMat = cloneMatForRemote(sm.material);
-                var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
-                bodyMesh.frustumCulled = false;
-                bodyGroup.add(bodyMesh);
-                cpuSkinMeshes.push({
-                    srcPositions: srcGeo.attributes.position,
-                    dstPositions: dstGeo.attributes.position,
-                    skinIndex: srcGeo.attributes.skinIndex,
-                    skinWeight: srcGeo.attributes.skinWeight,
-                    bindMatrix: sm.bindMatrix,
-                    bindMatrixInverse: sm.bindMatrixInverse
-                });
-            }
-            console.log('[RemotePlayer] Multi-mesh: ' + allSkinnedMeshes.length + ' SkinnedMeshes found');
+            bodyGroup.add(bodyMesh);
             // NO light inside bodyGroup — light goes on parent group
             bodyGroup.scale.setScalar(meshScale);
-            // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
-            bodyGroup.position.y = 0;
+            bodyGroup.position.y = offsetY;
 
-            // Keep sourceScene DETACHED (not added to group) to prevent
-            // parent transform contamination in bone world matrices.
+            // Keep sourceScene DETACHED (not added to group)
             group.userData.sourceScene = sourceScene;
 
             removeFallbackChildren();
@@ -4560,61 +4504,78 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Use STORED boneInverses from GLB file (consistent with bindMatrix/bindMatrixInverse)
-            var skel = origSkinned.skeleton;
-
-            // Setup CPU skinning data (multi-mesh)
+            // Setup CPU skinning data
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
-                skeleton: skel,
-                meshes: cpuSkinMeshes,
-                srcPositions: cpuSkinMeshes[0].srcPositions,
-                dstPositions: cpuSkinMeshes[0].dstPositions,
-                skinIndex: cpuSkinMeshes[0].skinIndex,
-                skinWeight: cpuSkinMeshes[0].skinWeight,
-                bindMatrix: cpuSkinMeshes[0].bindMatrix,
-                bindMatrixInverse: cpuSkinMeshes[0].bindMatrixInverse,
+                skeleton: origSkinned.skeleton,
+                srcPositions: srcGeo.attributes.position,
+                dstPositions: dstGeo.attributes.position,
+                skinIndex: srcGeo.attributes.skinIndex,
+                skinWeight: srcGeo.attributes.skinWeight,
+                bindMatrix: origSkinned.bindMatrix,
+                bindMatrixInverse: origSkinned.bindMatrixInverse,
                 srcHeight: geoHeight,
-                srcBBMinY: combinedBB.min.y,
-                bodyGroup: bodyGroup,
-                meshScale: meshScale,
                 scaleFix: null,
                 frameCount: 0
             };
 
-            // ALWAYS use shared animations (Running/Walking/Idle.glb) for remote players.
-            // Embedded per-bone Mixamo clips cause vertex spike artifacts in CPU skinning.
-            // Shared animations are pre-sanitized and proven to work in solo mode.
-            if (sharedAnimationsLoaded) {
-                applySharedAnimation(group, sourceScene);
-            } else {
-                pendingAnimationGroups.push(group);
-            }
-            console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
-
-            // Ensure direct bone animation is set up (applySharedAnimation handles this,
-            // but as fallback, try building if it's still null — never overwrite a working one)
-            if (sharedAnimationsLoaded && group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
-                var clipKeys = ['running', 'walking', 'idle'];
-                for (var dci = 0; dci < clipKeys.length; dci++) {
-                    var sharedClip = sharedAnimations[clipKeys[dci]];
-                    if (sharedClip) {
-                        var retargeted = retargetClipForModel(sharedClip, sourceScene);
-                        var built = buildDirectAnimData(sourceScene, retargeted);
-                        if (built) {
-                            group.userData.cpuSkin._directAnim = built;
-                            console.log('[RemotePlayer] Fallback directAnim from ' + clipKeys[dci] + ': ' + built.bindings.length + ' bindings');
-                            break;
-                        }
+            // Setup animation mixer on the ORIGINAL sourceScene
+            var mixer = null;
+            var usedEmbedded = false;
+            if (gltf.animations && gltf.animations.length > 0) {
+                group.userData.animations = gltf.animations;
+                // Look for walk/run/idle clips — try broader matching
+                var walkClip = null;
+                var anyClip = gltf.animations[0];
+                for (var i = 0; i < gltf.animations.length; i++) {
+                    var aname = gltf.animations[i].name.toLowerCase();
+                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1 ||
+                        aname.indexOf('locomotion') !== -1 || aname.indexOf('move') !== -1) {
+                        walkClip = gltf.animations[i]; break;
                     }
                 }
+                // If no walk/run found, use any embedded animation
+                if (!walkClip && gltf.animations.length > 0) walkClip = anyClip;
+                if (walkClip) {
+                    mixer = new THREE.AnimationMixer(sourceScene);
+                    group.userData.mixer = mixer;
+                    var embAction = mixer.clipAction(walkClip);
+                    embAction.play();
+                    // Store as currentAction so setCharacterAnimation can properly fade it out
+                    // when switching states (run→idle→run). Without this, embedded animation
+                    // would play at full weight forever, blending with shared animations.
+                    group.userData.currentAction = embAction;
+                    group.userData.currentAnimState = 'run';
+                    usedEmbedded = true;
+                    console.log('[RemotePlayer] Using embedded anim:', walkClip.name, 'tracks:', walkClip.tracks.length);
+                }
+            }
+            if (!usedEmbedded) {
+                if (sharedAnimationsLoaded) {
+                    applySharedAnimation(group, sourceScene);
+                } else {
+                    pendingAnimationGroups.push(group);
+                }
+                console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
+            }
+
+            // Setup direct bone animation (bypasses PropertyBinding)
+            var animClipForDirect = walkClip; // embedded clip if available
+            if (!animClipForDirect && sharedAnimationsLoaded) {
+                // Use shared running animation for models without embedded anims
+                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+                if (sharedClip) {
+                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+                }
+            }
+            if (animClipForDirect && group.userData.cpuSkin) {
+                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
             }
 
             // Log bone names for debug
             var boneNames = [];
             sourceScene.traverse(function(c) { if (c.isBone) boneNames.push(c.name); });
             console.log('[RemotePlayer] GLB loaded. charId:', charId,
-                'skinnedMeshes:', allSkinnedMeshes.length,
                 'geoH:', geoHeight.toFixed(4), 'boneScale:', boneScale.toFixed(4),
                 'meshScale:', meshScale.toFixed(4), 'bones:', boneNames.length,
                 'firstBones:', boneNames.slice(0, 5).join(','));
@@ -5218,28 +5179,22 @@ function startMultiplayerGame() {
     // Write game config and status to Firebase
     if (firebaseReady && GameState.roomId) {
         var roomRef = database.ref('rooms/' + GameState.roomId);
-        // Reset all player alive/escaped status before starting new game
-        var playerResets = {};
-        Object.keys(GameState.players).forEach(function(idx) {
-            playerResets['players/' + idx + '/alive'] = true;
-            playerResets['players/' + idx + '/escaped'] = false;
-            playerResets['players/' + idx + '/catchTimestamp'] = null;
+        roomRef.update({
+            status: 'playing',
+            currentStage: GameState.multiCurrentStage,
+            gameConfig: {
+                cols: stageConfig.cols,
+                rows: stageConfig.rows,
+                floors: stageConfig.floors,
+                oni: stageConfig.oni,
+                time: stageConfig.time,
+                speedMul: stageConfig.speedMul,
+                mode: GameState.multiMode,
+                seed: Math.floor(Math.random() * 999999),
+                stage: GameState.multiCurrentStage,
+                teamAssignment: GameState.teamAssignment || {}
+            }
         });
-        playerResets.status = 'playing';
-        playerResets.currentStage = GameState.multiCurrentStage;
-        playerResets.gameConfig = {
-            cols: stageConfig.cols,
-            rows: stageConfig.rows,
-            floors: stageConfig.floors,
-            oni: stageConfig.oni,
-            time: stageConfig.time,
-            speedMul: stageConfig.speedMul,
-            mode: GameState.multiMode,
-            seed: Math.floor(Math.random() * 999999),
-            stage: GameState.multiCurrentStage,
-            teamAssignment: GameState.teamAssignment || {}
-        };
-        roomRef.update(playerResets);
     }
 
     // Start locally
@@ -5398,8 +5353,6 @@ function launchMultiGame(config) {
 
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
-    // Clear stale pending animation groups from previous game
-    pendingAnimationGroups = [];
     // Preload shared Mixamo animations (Running/Walking/Idle)
     preloadSharedAnimations();
 
@@ -5430,8 +5383,6 @@ function launchMultiGame(config) {
     // Spawn remote player models
     spawnRemotePlayers();
 
-    // Clean up old listeners before reconnecting (prevents duplicate listeners on rematch)
-    SyncLayer.disconnect();
     // Start SyncLayer
     SyncLayer.connect(GameState.roomId);
     SyncLayer.setupDisconnect(GameState.playerIndex);
@@ -7330,22 +7281,13 @@ function applyPendingAnimations() {
             }
         }
         // Also setup direct bone animation if cpuSkin exists but no directAnim yet
-        // Try all shared clips until one matches the model's bones
         if (group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
             var ss = group.userData.sourceScene || group.userData.glbModel;
             if (ss) {
-                var clipKeys = ['running', 'walking', 'idle'];
-                for (var ci = 0; ci < clipKeys.length; ci++) {
-                    var sharedClip = sharedAnimations[clipKeys[ci]];
-                    if (sharedClip) {
-                        var retargeted = retargetClipForModel(sharedClip, ss);
-                        var built = buildDirectAnimData(ss, retargeted);
-                        if (built) {
-                            group.userData.cpuSkin._directAnim = built;
-                            console.log('[applyPending] directAnim from ' + clipKeys[ci] + ': ' + built.bindings.length + ' bindings');
-                            break;
-                        }
-                    }
+                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+                if (sharedClip) {
+                    var retargeted = retargetClipForModel(sharedClip, ss);
+                    group.userData.cpuSkin._directAnim = buildDirectAnimData(ss, retargeted);
                 }
             }
         }
@@ -7422,10 +7364,7 @@ function retargetClipForModel(clip, glbModel) {
 
 function applySharedAnimation(group, glbModel) {
     var clip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-    if (!clip) {
-        console.warn('[applySharedAnim] No shared clips available!');
-        return;
-    }
+    if (!clip) return;
 
     // Retarget and cache all shared clips for this model's bone names
     var retargeted = {};
@@ -7437,10 +7376,7 @@ function applySharedAnimation(group, glbModel) {
     group.userData.retargetedAnims = retargeted;
 
     clip = retargeted.running || retargeted.walking || retargeted.idle;
-    if (!clip) {
-        console.warn('[applySharedAnim] Retarget produced no clips!');
-        return;
-    }
+    if (!clip) return;
 
     var mixer = new THREE.AnimationMixer(glbModel);
     // Ensure skinning is enabled on all SkinnedMesh materials
@@ -7458,20 +7394,6 @@ function applySharedAnimation(group, glbModel) {
     group.userData.mixer = mixer;
     group.userData.currentAction = action;
     group.userData.currentAnimState = 'run';
-
-    // Build directAnim immediately (don't wait for cpuSkinUpdate recovery)
-    if (group.userData.cpuSkin && !group.userData.cpuSkin._directAnim) {
-        group.userData.cpuSkin._directAnim = buildDirectAnimData(glbModel, clip);
-        console.log('[applySharedAnim] Built directAnim in applySharedAnimation:',
-            group.userData.cpuSkin._directAnim ? group.userData.cpuSkin._directAnim.bindings.length + ' bindings' : 'FAILED');
-    }
-
-    // Log bone names for debugging
-    var boneNames = [];
-    glbModel.traverse(function(c) { if (c.isBone) boneNames.push(c.name); });
-    console.log('[applySharedAnim] Mixer created. clip=' + clip.name +
-        ' tracks=' + clip.tracks.length + ' bones=' + boneNames.length +
-        ' first5=' + boneNames.slice(0, 5).join(','));
 }
 
 /* Switch animation state: 'idle', 'walk', 'run' */
@@ -7530,11 +7452,6 @@ function setCharacterAnimation(group, state) {
     newAction.reset().fadeIn(0.25).play();
     group.userData.currentAction = newAction;
     group.userData.currentAnimState = state;
-
-    // NOTE: Do NOT rebuild _directAnim here.
-    // The initial _directAnim from loadOniGLB uses the model's own embedded clip
-    // with correct Hips position values. Switching to a shared clip would use
-    // Hips position values from a different model, causing Y-position mismatch.
 }
 
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
@@ -7568,66 +7485,24 @@ function directBoneAnimUpdate(cpuSkinData) {
     }
 }
 
-/* Build direct animation data: bone map + interpolants for all tracks.
-   Uses aggressive fuzzy matching to handle Mixamo naming variants:
-   mixamorigHips, mixamorig:Hips, Hips, etc. */
+/* Build direct animation data: bone map + interpolants for all tracks */
 function buildDirectAnimData(sourceScene, clip) {
     if (!clip || !clip.tracks || clip.tracks.length === 0) return null;
 
-    // Build multiple lookup maps for aggressive bone matching
-    var boneExact = {};   // exact name → bone
-    var boneLower = {};   // lowercase name → bone
-    var boneStripped = {};// stripped (no mixamorig prefix) lowercase → bone
-    var boneConcat = {};  // concatenated (no colon) lowercase → bone
-    var boneCount = 0;
+    var boneMap = {};
     sourceScene.traverse(function(c) {
-        if (c.isBone && c.name) {
-            boneCount++;
-            boneExact[c.name] = c;
-            boneLower[c.name.toLowerCase()] = c;
-            // Strip mixamorig prefix variants
-            var stripped = c.name.replace(/^mixamorig[_:]?/i, '');
-            if (stripped && stripped !== c.name) boneStripped[stripped.toLowerCase()] = c;
-            // Concatenated form (remove colon)
-            var concat = c.name.replace(/:/g, '');
-            if (concat !== c.name) boneConcat[concat.toLowerCase()] = c;
-        }
+        if (c.isBone) boneMap[c.name] = c;
     });
 
     var bindings = [];
     var matched = 0;
-    var unmatched = [];
     for (var i = 0; i < clip.tracks.length; i++) {
         var track = clip.tracks[i];
         var dotIdx = track.name.lastIndexOf('.');
         if (dotIdx === -1) continue;
         var boneName = track.name.substring(0, dotIdx);
         var propName = track.name.substring(dotIdx + 1);
-
-        // 1. Exact match
-        var bone = boneExact[boneName];
-        // 2. Case-insensitive match
-        if (!bone) bone = boneLower[boneName.toLowerCase()];
-        // 3. Strip mixamorig prefix from track name and match
-        if (!bone) {
-            var trackStripped = boneName.replace(/^mixamorig[_:]?/i, '');
-            if (trackStripped && trackStripped !== boneName) {
-                bone = boneLower[trackStripped.toLowerCase()] || boneStripped[trackStripped.toLowerCase()];
-            }
-        }
-        // 4. Add mixamorig prefix to track name and match
-        if (!bone) bone = boneLower[('mixamorig' + boneName).toLowerCase()];
-        // 5. Try concatenated form (remove colon from track name)
-        if (!bone) {
-            var trackConcat = boneName.replace(/:/g, '');
-            if (trackConcat !== boneName) bone = boneLower[trackConcat.toLowerCase()];
-        }
-        // 6. Try matching stripped track name against stripped bone names
-        if (!bone) {
-            var ts = boneName.replace(/^mixamorig[_:]?/i, '');
-            if (ts) bone = boneStripped[ts.toLowerCase()];
-        }
-
+        var bone = boneMap[boneName];
         if (bone) {
             matched++;
             bindings.push({
@@ -7635,32 +7510,16 @@ function buildDirectAnimData(sourceScene, clip) {
                 propName: propName,
                 interpolant: track.createInterpolant()
             });
-        } else {
-            if (unmatched.length < 3) unmatched.push(boneName);
         }
     }
     console.log('[DirectAnim] Built: ' + matched + '/' + clip.tracks.length +
-        ' tracks matched, bones=' + boneCount + ', clip=' + clip.name +
-        ' dur=' + clip.duration.toFixed(2) +
-        (unmatched.length > 0 ? ' unmatched: ' + unmatched.join(',') : ''));
-    if (matched === 0) {
-        // Log all bone names for debugging
-        var allBones = [];
-        sourceScene.traverse(function(c) { if (c.isBone) allBones.push(c.name); });
-        var trackNames = [];
-        for (var t = 0; t < Math.min(5, clip.tracks.length); t++) {
-            trackNames.push(clip.tracks[t].name);
-        }
-        console.error('[DirectAnim] ZERO matches! Bones:', allBones.slice(0, 10).join(','),
-            'Tracks:', trackNames.join(','));
-        return null;
-    }
+        ' tracks matched, clip=' + clip.name + ' dur=' + clip.duration.toFixed(2));
+    if (matched === 0) return null;
     return { clip: clip, time: 0, bindings: bindings };
 }
 
 function cpuSkinUpdate(cpuSkinData) {
     try {
-        // === EXACT working version (7e15cda) single-mesh code ===
         var srcPos = cpuSkinData.srcPositions;
         var dstPos = cpuSkinData.dstPositions;
         var skeleton = cpuSkinData.skeleton;
@@ -7729,6 +7588,8 @@ function cpuSkinUpdate(cpuSkinData) {
         }
 
         // Auto-scale: compute scale ratio from output vs source bounding box
+        // The stored bindMatrixInverse includes ~100x scale from Armature,
+        // so output is ~100x larger than expected. Compensate via bodyGroup scale.
         if (!cpuSkinData._scaleComputed) {
             cpuSkinData._scaleComputed = true;
             var outHeight = maxY - minY;
@@ -7739,19 +7600,6 @@ function cpuSkinUpdate(cpuSkinData) {
                 console.log('[cpuSkin] Auto-scale: outH=' + outHeight.toFixed(4) +
                     ' srcH=' + srcHeight.toFixed(4) + ' fix=' + scaleFix.toFixed(6));
             }
-            // === DIAGNOSTIC OVERLAY (auto-removes after 15s) ===
-            try {
-                var diagDiv = document.createElement('div');
-                diagDiv.id = 'cpuSkinDiag';
-                diagDiv.style.cssText = 'position:fixed;top:10px;left:10px;z-index:99999;background:rgba(0,0,0,0.9);color:#0f0;font:bold 16px monospace;padding:12px;border:2px solid #0f0;max-width:90vw;white-space:pre-wrap;pointer-events:none;';
-                diagDiv.textContent = '[cpuSkin DIAG]\n' +
-                    'outH=' + outHeight.toFixed(2) + ' srcH=' + srcHeight.toFixed(2) + '\n' +
-                    'scaleFix=' + (scaleFix ? scaleFix.toFixed(6) : 'null') + '\n' +
-                    'minY=' + minY.toFixed(2) + ' maxY=' + maxY.toFixed(2) + '\n' +
-                    'count=' + count;
-                document.body.appendChild(diagDiv);
-                setTimeout(function() { var d = document.getElementById('cpuSkinDiag'); if (d) d.remove(); }, 15000);
-            } catch(de) {}
         }
 
         // Apply scale correction to all vertices
@@ -7766,9 +7614,8 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Y-grounding: use bodyGroup.position.y instead of vertex buffer modification.
-        // Vertex buffer Y-anchor was not producing visible results despite correct values.
-        // Using transform hierarchy (bodyGroup.position.y) is more reliable.
+        // Y-anchor: compute on first frame, anchor model feet at y=0
+        // Runs ALWAYS (regardless of scaleFix) to handle bone transform offsets
         if (!cpuSkinData._yAnchorComputed) {
             cpuSkinData._yAnchorComputed = true;
             var anchorMinY = Infinity;
@@ -7776,24 +7623,16 @@ function cpuSkinUpdate(cpuSkinData) {
                 var ay = dstPos.getY(i);
                 if (ay < anchorMinY) anchorMinY = ay;
             }
-            // Set bodyGroup.position.y to shift model so feet touch ground
-            // worldY = groupY + bodyGroupY + vertexY * meshScale
-            // For feet (vertexY=anchorMinY) to be at groundY (=groupY):
-            // bodyGroupY = -anchorMinY * meshScale
-            if (cpuSkinData.bodyGroup && cpuSkinData.meshScale && isFinite(anchorMinY)) {
-                var groundingY = -anchorMinY * cpuSkinData.meshScale;
-                cpuSkinData.bodyGroup.position.y = groundingY;
-                console.log('[cpuSkin] bodyGroup.position.y grounding:', groundingY.toFixed(4),
-                    'anchorMinY:', anchorMinY.toFixed(4), 'meshScale:', cpuSkinData.meshScale.toFixed(4));
+            cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
+            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
+                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
             }
-            // Update diagnostic overlay
-            try {
-                var diagDiv = document.getElementById('cpuSkinDiag');
-                if (diagDiv) {
-                    diagDiv.textContent += '\nanchorMinY=' + anchorMinY.toFixed(2) +
-                        ' groundY=' + (cpuSkinData.bodyGroup ? cpuSkinData.bodyGroup.position.y.toFixed(2) : 'N/A');
-                }
-            } catch(de) {}
+        }
+        if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
+            var ya = cpuSkinData._yAnchor;
+            for (var i = 0; i < count; i++) {
+                dstPos.setY(i, dstPos.getY(i) + ya);
+            }
         }
 
         dstPos.needsUpdate = true;
@@ -7813,9 +7652,6 @@ function loadOniGLB(group, charId, stageId) {
             sourceScene.updateMatrixWorld(true);
 
             // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
-            // Do NOT force matrixAutoUpdate=true — GLTFLoader's defaults must be preserved.
-            // Forcing it causes Armature matrices to be recomposed from TRS, which
-            // differs from the original GLTF matrix used to compute boneInverses.
             sourceScene.traverse(function(child) {
                 if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
                     child.name = child.name.replace(/:/g, '');
@@ -7841,70 +7677,51 @@ function loadOniGLB(group, charId, stageId) {
                 });
             }
 
-            // Find ALL SkinnedMeshes for CPU skinning (models may have multiple: upper/lower body)
-            var allSkinnedMeshes = [];
+            // Find first SkinnedMesh for CPU skinning
+            var origSkinned = null;
             sourceScene.traverse(function(child) {
-                if (child.isSkinnedMesh && child.geometry) allSkinnedMeshes.push(child);
+                if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
             });
-            var origSkinned = allSkinnedMeshes.length > 0 ? allSkinnedMeshes[0] : null;
 
             if (!origSkinned || !origSkinned.geometry) return;
 
-            // Compute combined bounding box from ALL SkinnedMeshes
-            var combinedBB = new THREE.Box3();
-            allSkinnedMeshes.forEach(function(sm) {
-                sm.geometry.computeBoundingBox();
-                combinedBB.union(sm.geometry.boundingBox);
-            });
-            var geoHeight = combinedBB.max.y - combinedBB.min.y;
+            var srcGeo = origSkinned.geometry;
+            srcGeo.computeBoundingBox();
+            var bb = srcGeo.boundingBox;
+            var geoHeight = bb.max.y - bb.min.y;
             var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
 
-            // Helper: clone material for ONI mesh
-            function cloneMatForOni(mat) {
-                if (Array.isArray(mat)) {
-                    return mat.map(function(m) {
-                        var cm = m.clone();
-                        cm.skinning = false;
-                        cm.side = THREE.DoubleSide;
-                        if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
-                        if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
-                        return cm;
-                    });
-                } else if (mat) {
-                    var cm = mat.clone();
+            // Create visible regular Mesh with cloned geometry and ORIGINAL materials
+            var dstGeo = srcGeo.clone();
+            // Use original material from GLB (clone and disable skinning for regular Mesh)
+            var origMat = origSkinned.material;
+            var bodyMat;
+            if (Array.isArray(origMat)) {
+                bodyMat = origMat.map(function(m) {
+                    var cm = m.clone();
                     cm.skinning = false;
                     cm.side = THREE.DoubleSide;
                     if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
                     if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
                     return cm;
-                }
-                return new THREE.MeshBasicMaterial({
+                });
+            } else if (origMat) {
+                bodyMat = origMat.clone();
+                bodyMat.skinning = false;
+                bodyMat.side = THREE.DoubleSide;
+                if (bodyMat.emissive) bodyMat.emissive.setScalar(Math.max(bodyMat.emissive.r, 0.12));
+                if (bodyMat.emissiveIntensity !== undefined) bodyMat.emissiveIntensity = Math.max(bodyMat.emissiveIntensity, 0.2);
+            } else {
+                bodyMat = new THREE.MeshBasicMaterial({
                     color: ONI_CONFIG.bodyEmissive,
                     side: THREE.DoubleSide
                 });
             }
+            var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
+            bodyMesh.frustumCulled = false;
 
-            // Create visible regular Mesh for EACH SkinnedMesh (upper body, lower body, etc.)
             var bodyGroup = new THREE.Group();
-            var cpuSkinMeshes = [];
-            for (var smi = 0; smi < allSkinnedMeshes.length; smi++) {
-                var sm = allSkinnedMeshes[smi];
-                var srcGeo = sm.geometry;
-                var dstGeo = srcGeo.clone();
-                var bodyMat = cloneMatForOni(sm.material);
-                var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
-                bodyMesh.frustumCulled = false;
-                bodyGroup.add(bodyMesh);
-                cpuSkinMeshes.push({
-                    srcPositions: srcGeo.attributes.position,
-                    dstPositions: dstGeo.attributes.position,
-                    skinIndex: srcGeo.attributes.skinIndex,
-                    skinWeight: srcGeo.attributes.skinWeight,
-                    bindMatrix: sm.bindMatrix,
-                    bindMatrixInverse: sm.bindMatrixInverse
-                });
-            }
-            console.log('[ONI] Multi-mesh: ' + allSkinnedMeshes.length + ' SkinnedMeshes found');
+            bodyGroup.add(bodyMesh);
             // NO light inside bodyGroup (scale would move light too far)
             bodyGroup.scale.setScalar(meshScale);
             // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
@@ -7912,8 +7729,6 @@ function loadOniGLB(group, charId, stageId) {
 
             // Keep sourceScene DETACHED (not added to group) to prevent
             // parent transform contamination in bone world matrices.
-            // When attached, bone.matrixWorld includes group's world transform,
-            // but boneInverses were captured without it → boneMatrices become wrong.
             group.userData.sourceScene = sourceScene;
 
             // Remove ALL fallback children including eyes (GLB model has its own face)
@@ -7935,35 +7750,30 @@ function loadOniGLB(group, charId, stageId) {
 
             console.log('[ONI] GLB body loaded. scale:', meshScale.toFixed(4));
 
-            // Use STORED boneInverses from GLB file (consistent with bindMatrix/bindMatrixInverse).
-            // Do NOT recompute — GLTFLoader's inverseBindMatrices are authoritative.
-            var skel = origSkinned.skeleton;
-
-            // Setup CPU skinning data (multi-mesh)
+            // Setup CPU skinning data
+            // Use STORED bindMatrix and bindMatrixInverse (they are consistent
+            // with boneInverses from the GLB file). The stored bindMatrixInverse
+            // includes ~100x Armature scale which is compensated by auto-scaling.
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
-                skeleton: skel,
-                meshes: cpuSkinMeshes,
-                srcPositions: cpuSkinMeshes[0].srcPositions,
-                dstPositions: cpuSkinMeshes[0].dstPositions,
-                skinIndex: cpuSkinMeshes[0].skinIndex,
-                skinWeight: cpuSkinMeshes[0].skinWeight,
-                bindMatrix: cpuSkinMeshes[0].bindMatrix,
-                bindMatrixInverse: cpuSkinMeshes[0].bindMatrixInverse,
+                skeleton: origSkinned.skeleton,
+                srcPositions: srcGeo.attributes.position,
+                dstPositions: dstGeo.attributes.position,
+                skinIndex: srcGeo.attributes.skinIndex,
+                skinWeight: srcGeo.attributes.skinWeight,
+                bindMatrix: origSkinned.bindMatrix,
+                bindMatrixInverse: origSkinned.bindMatrixInverse,
                 srcHeight: geoHeight,
-                srcBBMinY: combinedBB.min.y,
-                bodyGroup: bodyGroup,
-                meshScale: meshScale,
                 scaleFix: null,
                 frameCount: 0
             };
 
-            // Setup animation: prefer embedded walkClip from GLB (exact bone name match),
-            // fall back to shared animations if no embedded clip found.
-            var walkClip = null;
+            // Setup animation mixer on the ORIGINAL sourceScene
+            var mixer = null;
             var usedEmbedded = false;
             if (gltf.animations && gltf.animations.length > 0) {
                 group.userData.animations = gltf.animations;
+                var walkClip = null;
                 for (var i = 0; i < gltf.animations.length; i++) {
                     var aname = gltf.animations[i].name.toLowerCase();
                     if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
@@ -7971,15 +7781,13 @@ function loadOniGLB(group, charId, stageId) {
                     }
                 }
                 if (walkClip) {
-                    var mixer = new THREE.AnimationMixer(sourceScene);
+                    mixer = new THREE.AnimationMixer(sourceScene);
                     group.userData.mixer = mixer;
                     var embAction = mixer.clipAction(walkClip);
                     embAction.play();
                     group.userData.currentAction = embAction;
                     group.userData.currentAnimState = 'run';
                     usedEmbedded = true;
-                    console.log('[ONI] Using embedded walkClip: ' + walkClip.name +
-                        ' dur=' + walkClip.duration.toFixed(2) + ' tracks=' + walkClip.tracks.length);
                 }
             }
             if (!usedEmbedded) {
@@ -7991,7 +7799,6 @@ function loadOniGLB(group, charId, stageId) {
             }
 
             // Setup direct bone animation (bypasses PropertyBinding)
-            // Prefer embedded walkClip (exact bone name match after sanitization)
             var animClipForDirect = walkClip;
             if (!animClipForDirect && sharedAnimationsLoaded) {
                 var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
@@ -9587,8 +9394,7 @@ function initPointerLock() {
             hint.classList.toggle('visible', !isPointerLocked && GameState.gameActive && !gamePaused);
         }
         // Solo mode: pause when pointer lock is lost (ESC pressed or click outside)
-        // Skip if _isResuming to prevent resumeGame → requestPointerLock → pointerlockchange → pauseGame loop
-        if (!isPointerLocked && GameState.gameActive && !gamePaused && !GameState.captureInProgress && !_isResuming) {
+        if (!isPointerLocked && GameState.gameActive && !gamePaused && !GameState.captureInProgress) {
             if (!isMultiplayerMode()) {
                 pauseGame();
             }
@@ -11471,22 +11277,6 @@ function gameLoop() {
         }
     }
 
-    // Guest ONI animation update: guests don't run updateOniAI but still
-    // need to update mixer + cpuSkin so ONI models are animated (not T-pose)
-    if (isMulti && !GameState.isHost && GameState.multiMode !== 'teamBattle') {
-        GameState.onis.forEach(function(oni) {
-            if (oni.group.userData.mixer) {
-                oni.group.userData.mixer.update(delta);
-            }
-            if (oni.group.userData.cpuSkin) {
-                oni.group.userData.cpuSkin.frameCount++;
-                if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
-                    cpuSkinUpdate(oni.group.userData.cpuSkin);
-                }
-            }
-        });
-    }
-
     // Phase 7: Oni footstep manager
     OniFootstepManager.update(
         GameState.onis,
@@ -11579,44 +11369,6 @@ function gameLoop() {
 
     // Floor visibility culling for performance
     updateFloorVisibility();
-
-    // Animation debug overlay (multiplayer only)
-    if (isMulti) {
-        if (!window._animDebugCounter) window._animDebugCounter = 0;
-        window._animDebugCounter++;
-        if (window._animDebugCounter % 60 === 1) { // Update every 60 frames
-            var dbg = document.getElementById('anim-debug-panel');
-            if (dbg) {
-                var lines = [];
-                lines.push('SharedAnim: ' + (sharedAnimationsLoaded ? 'LOADED' : 'NOT LOADED'));
-                if (sharedAnimationsLoaded) {
-                    lines.push('  run=' + (sharedAnimations.running ? sharedAnimations.running.tracks.length + 'trk' : 'null') +
-                        ' walk=' + (sharedAnimations.walking ? sharedAnimations.walking.tracks.length + 'trk' : 'null') +
-                        ' idle=' + (sharedAnimations.idle ? sharedAnimations.idle.tracks.length + 'trk' : 'null'));
-                }
-                Object.keys(GameState.remotePlayers).forEach(function(idx) {
-                    var rp = GameState.remotePlayers[idx];
-                    var ud = rp.model.userData;
-                    var cs = ud.cpuSkin;
-                    lines.push('P' + idx + ': glb=' + (ud.glbLoaded ? 'Y' : 'N') +
-                        ' mix=' + (ud.mixer ? 'Y' : 'N') +
-                        ' cpu=' + (cs ? 'Y' : 'N') +
-                        ' da=' + (cs && cs._directAnim ? cs._directAnim.bindings.length + 'b' : 'NULL') +
-                        ' st=' + (ud.currentAnimState || '?'));
-                });
-                GameState.onis.forEach(function(oni, oi) {
-                    var ud = oni.group.userData;
-                    var cs = ud.cpuSkin;
-                    lines.push('ONI' + oi + ': glb=' + (ud.glbLoaded ? 'Y' : 'N') +
-                        ' mix=' + (ud.mixer ? 'Y' : 'N') +
-                        ' cpu=' + (cs ? 'Y' : 'N') +
-                        ' da=' + (cs && cs._directAnim ? cs._directAnim.bindings.length + 'b' : 'NULL'));
-                });
-                dbg.textContent = lines.join('\n');
-                dbg.style.display = 'block';
-            }
-        }
-    }
 
     if (renderer && scene && camera) renderer.render(scene, camera);
     GameState.animationId = requestAnimationFrame(gameLoop);
@@ -11794,8 +11546,6 @@ function startGame(stageId) {
 
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
-    // Clear stale pending animation groups from previous game
-    pendingAnimationGroups = [];
     // Preload shared Mixamo animations (Running/Walking/Idle)
     preloadSharedAnimations();
 
