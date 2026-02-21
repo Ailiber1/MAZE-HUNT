@@ -4470,15 +4470,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 return;
             }
 
-            // SkinnedMesh found — setup CPU skinning
+            // SkinnedMesh found — setup CPU skinning with bone-based scale
             var srcGeo = origSkinned.geometry;
-            srcGeo.computeBoundingBox();
-            var bb = srcGeo.boundingBox;
-            var geoHeight = bb.max.y - bb.min.y;
-            // Use geometry-based scale for CPU skinning (compatible with auto-scale)
-            var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
-            // Y-offset = 0 for CPU skinning path: cpuSkinUpdate Y-anchor handles grounding
-            var offsetY = 0;
 
             // Create visible regular Mesh with cloned geometry and materials
             var dstGeo = srcGeo.clone();
@@ -4488,9 +4481,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
-            // NO light inside bodyGroup — light goes on parent group
-            bodyGroup.scale.setScalar(meshScale);
-            bodyGroup.position.y = offsetY;
+            // Use bone-based scale (same approach as ONI and runner)
+            bodyGroup.scale.setScalar(boneScale);
+            bodyGroup.position.y = boneOffsetY;
 
             // Keep sourceScene DETACHED (not added to group)
             group.userData.sourceScene = sourceScene;
@@ -4504,18 +4497,18 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Setup CPU skinning data
+            // Setup CPU skinning data (scale handled by bodyGroup transform above)
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
-                srcPositions: srcGeo.attributes.position,
-                dstPositions: dstGeo.attributes.position,
-                skinIndex: srcGeo.attributes.skinIndex,
-                skinWeight: srcGeo.attributes.skinWeight,
-                bindMatrix: origSkinned.bindMatrix,
-                bindMatrixInverse: origSkinned.bindMatrixInverse,
-                srcHeight: geoHeight,
-                scaleFix: null,
+                meshes: [{
+                    srcPositions: srcGeo.attributes.position,
+                    dstPositions: dstGeo.attributes.position,
+                    skinIndex: srcGeo.attributes.skinIndex,
+                    skinWeight: srcGeo.attributes.skinWeight,
+                    bindMatrix: origSkinned.bindMatrix,
+                    bindMatrixInverse: origSkinned.bindMatrixInverse,
+                }],
                 frameCount: 0
             };
 
@@ -7548,8 +7541,6 @@ function cpuSkinUpdate(cpuSkinData) {
             }];
         }
 
-        var globalMinY = Infinity, globalMaxY = -Infinity;
-
         // Process EACH mesh independently (same skeleton, per-mesh bind matrices)
         for (var m = 0; m < meshDataArr.length; m++) {
             var md = meshDataArr[m];
@@ -7583,40 +7574,11 @@ function cpuSkinUpdate(cpuSkinData) {
                 if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
 
                 dstPos.setXYZ(i, _result.x, _result.y, _result.z);
-                if (_result.y < globalMinY) globalMinY = _result.y;
-                if (_result.y > globalMaxY) globalMaxY = _result.y;
             }
         }
 
-        // Auto-scale: compute combined scale from first frame (stable across poses)
-        // Y offset: computed EVERY FRAME to track animation-driven foot position
-        if (!cpuSkinData._scaleComputed) {
-            cpuSkinData._scaleComputed = true;
-            var outHeight = globalMaxY - globalMinY;
-            if (outHeight > 0.001) {
-                cpuSkinData._combinedScale = 1.8 / outHeight;
-                var scaleMsg = '[cpuSkin] scale: m=' + meshDataArr.length + ' outH=' + outHeight.toFixed(1) + ' minY=' + globalMinY.toFixed(1) + ' maxY=' + globalMaxY.toFixed(1) + ' cs=' + cpuSkinData._combinedScale.toFixed(6);
-                console.log(scaleMsg);
-                if (typeof showGLBDiag === 'function') showGLBDiag(scaleMsg);
-            }
-        }
-
-        // Apply scale and Y-anchor via bodyGroup TRANSFORM every frame
-        // globalMinY changes with animation (running vs idle), so must update every frame
-        if (cpuSkinData._bodyGroup && cpuSkinData._combinedScale) {
-            var cs = cpuSkinData._combinedScale;
-            cpuSkinData._bodyGroup.scale.setScalar(cs);
-            // Shift model so feet (globalMinY) sit at Y=0 in local space
-            cpuSkinData._bodyGroup.position.y = -globalMinY * cs;
-            // Log on first few frames for diagnostic
-            if (!cpuSkinData._transformLogCount) cpuSkinData._transformLogCount = 0;
-            if (cpuSkinData._transformLogCount < 3) {
-                cpuSkinData._transformLogCount++;
-                var tMsg = '[cpuSkin] f' + cpuSkinData._transformLogCount + ': minY=' + globalMinY.toFixed(1) + ' posY=' + cpuSkinData._bodyGroup.position.y.toFixed(4);
-                console.log(tMsg);
-                if (typeof showGLBDiag === 'function') showGLBDiag(tMsg);
-            }
-        }
+        // Scale and Y-offset handled by bodyGroup transform (set once in loadOniGLB)
+        // using bone bounding box — matches proven runner approach
 
         // Mark ALL destination buffers for GPU upload
         for (var m = 0; m < meshDataArr.length; m++) {
@@ -7714,18 +7676,37 @@ function loadOniGLB(group, charId, stageId) {
             showGLBDiag('[ONI] SkinnedMeshes found: ' + allSkinnedMeshes.length);
             if (allSkinnedMeshes.length === 0) { showGLBDiag('[ONI] ERROR: No SkinnedMesh!'); return; }
 
-            // Compute COMBINED bounding box from all SkinnedMeshes
-            var combinedBB = new THREE.Box3();
-            allSkinnedMeshes.forEach(function(sm) {
-                sm.geometry.computeBoundingBox();
-                var bb = sm.geometry.boundingBox;
-                if (bb) {
-                    combinedBB.expandByPoint(bb.min);
-                    combinedBB.expandByPoint(bb.max);
+            // Compute scale from BONE bounding box (same proven approach as runner)
+            // Bones include Armature scale, matching CPU-skinned output space
+            var boneBox = new THREE.Box3();
+            var bonePos = new THREE.Vector3();
+            var hasBones = false;
+            sourceScene.traverse(function(child) {
+                if (child.isBone) {
+                    child.getWorldPosition(bonePos);
+                    boneBox.expandByPoint(bonePos);
+                    hasBones = true;
                 }
             });
-            var geoHeight = combinedBB.max.y - combinedBB.min.y;
-            var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+            var boneScale = 1.0, boneOffsetY = 0;
+            if (hasBones && !boneBox.isEmpty()) {
+                var boneSize = boneBox.getSize(new THREE.Vector3());
+                boneScale = (boneSize.y > 0.01) ? (1.8 / boneSize.y) : 1.0;
+                boneOffsetY = -boneBox.min.y * boneScale;
+                showGLBDiag('[ONI] Bone scale: h=' + boneSize.y.toFixed(2) + ' scale=' + boneScale.toFixed(6) + ' offY=' + boneOffsetY.toFixed(4));
+            } else {
+                // Fallback to geometry bounding box
+                var combinedBB = new THREE.Box3();
+                allSkinnedMeshes.forEach(function(sm) {
+                    sm.geometry.computeBoundingBox();
+                    var bb = sm.geometry.boundingBox;
+                    if (bb) { combinedBB.expandByPoint(bb.min); combinedBB.expandByPoint(bb.max); }
+                });
+                var geoHeight = combinedBB.max.y - combinedBB.min.y;
+                boneScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+                boneOffsetY = -combinedBB.min.y * boneScale;
+                showGLBDiag('[ONI] Geo fallback: h=' + geoHeight.toFixed(2) + ' scale=' + boneScale.toFixed(6));
+            }
 
             // Create visible regular Mesh for EACH SkinnedMesh (CPU skinning)
             var bodyGroup = new THREE.Group();
@@ -7747,9 +7728,9 @@ function loadOniGLB(group, charId, stageId) {
                 });
             });
 
-            // Initial scale = 1 (cpuSkinUpdate will set correct scale via transform)
-            bodyGroup.scale.setScalar(1);
-            bodyGroup.position.y = 0;
+            // Apply bone-based scale and offset (set ONCE, never changed by cpuSkinUpdate)
+            bodyGroup.scale.setScalar(boneScale);
+            bodyGroup.position.y = boneOffsetY;
 
             // Keep sourceScene DETACHED (not added to group) to prevent
             // parent transform contamination in bone world matrices.
@@ -7769,19 +7750,15 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, h=' + geoHeight.toFixed(4) + ' (transform-based positioning)';
+            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, boneScale=' + boneScale.toFixed(6) + ' offY=' + boneOffsetY.toFixed(4);
             console.log(diagMsg);
             showGLBDiag(diagMsg);
 
-            // Setup CPU skinning data with multi-mesh support
-            // bodyGroup and meshScale stored for transform-based positioning
+            // Setup CPU skinning data — scale/offset handled by bodyGroup transform (set above)
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: allSkinnedMeshes[0].skeleton,
                 meshes: meshDataArr,
-                srcHeight: geoHeight,
-                _bodyGroup: bodyGroup,
-                _meshScale: meshScale,
                 frameCount: 0
             };
 
