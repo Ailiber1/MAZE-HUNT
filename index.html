@@ -7520,108 +7520,110 @@ function buildDirectAnimData(sourceScene, clip) {
 
 function cpuSkinUpdate(cpuSkinData) {
     try {
-        var srcPos = cpuSkinData.srcPositions;
-        var dstPos = cpuSkinData.dstPositions;
-        var skeleton = cpuSkinData.skeleton;
-        var si = cpuSkinData.skinIndex;
-        var sw = cpuSkinData.skinWeight;
-        var bindMatrix = cpuSkinData.bindMatrix;
-        var bindMatrixInverse = cpuSkinData.bindMatrixInverse;
-
         // Direct bone animation: bypass PropertyBinding, drive bones directly
         directBoneAnimUpdate(cpuSkinData);
 
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
+        var skeleton = cpuSkinData.skeleton;
         skeleton.update();
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        // Full CPU skinning with bone matrices
         var _boneMat = new THREE.Matrix4();
         var _v = new THREE.Vector4();
         var _temp = new THREE.Vector4();
         var _result = new THREE.Vector4();
-        var count = srcPos.count;
-        var minY = Infinity, maxY = -Infinity;
 
-        for (var i = 0; i < count; i++) {
-            _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
-            _v.applyMatrix4(bindMatrix);
-
-            _result.set(0, 0, 0, 0);
-            var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
-            var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
-
-            if (w0 > 0) {
-                _boneMat.fromArray(bm, i0 * 16);
-                _temp.copy(_v).applyMatrix4(_boneMat);
-                _result.x += _temp.x * w0; _result.y += _temp.y * w0; _result.z += _temp.z * w0;
-            }
-            if (w1 > 0) {
-                _boneMat.fromArray(bm, i1 * 16);
-                _temp.copy(_v).applyMatrix4(_boneMat);
-                _result.x += _temp.x * w1; _result.y += _temp.y * w1; _result.z += _temp.z * w1;
-            }
-            if (w2 > 0) {
-                _boneMat.fromArray(bm, i2 * 16);
-                _temp.copy(_v).applyMatrix4(_boneMat);
-                _result.x += _temp.x * w2; _result.y += _temp.y * w2; _result.z += _temp.z * w2;
-            }
-            if (w3 > 0) {
-                _boneMat.fromArray(bm, i3 * 16);
-                _temp.copy(_v).applyMatrix4(_boneMat);
-                _result.x += _temp.x * w3; _result.y += _temp.y * w3; _result.z += _temp.z * w3;
-            }
-
-            _result.w = 1;
-            _result.applyMatrix4(bindMatrixInverse);
-
-            // NaN guard
-            if (_result.x !== _result.x) _result.x = srcPos.getX(i);
-            if (_result.y !== _result.y) _result.y = srcPos.getY(i);
-            if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
-
-            dstPos.setXYZ(i, _result.x, _result.y, _result.z);
-            if (_result.y < minY) minY = _result.y;
-            if (_result.y > maxY) maxY = _result.y;
+        // Multi-mesh support: use meshes array if present, else legacy single-mesh
+        var meshDataArr = cpuSkinData.meshes;
+        if (!meshDataArr) {
+            meshDataArr = [{
+                srcPositions: cpuSkinData.srcPositions,
+                dstPositions: cpuSkinData.dstPositions,
+                skinIndex: cpuSkinData.skinIndex,
+                skinWeight: cpuSkinData.skinWeight,
+                bindMatrix: cpuSkinData.bindMatrix,
+                bindMatrixInverse: cpuSkinData.bindMatrixInverse,
+            }];
         }
 
-        // Auto-scale: compute scale ratio from output vs source bounding box
-        // The stored bindMatrixInverse includes ~100x scale from Armature,
-        // so output is ~100x larger than expected. Compensate via bodyGroup scale.
+        var globalMinY = Infinity, globalMaxY = -Infinity;
+
+        // Process EACH mesh independently (same skeleton, per-mesh bind matrices)
+        for (var m = 0; m < meshDataArr.length; m++) {
+            var md = meshDataArr[m];
+            var srcPos = md.srcPositions;
+            var dstPos = md.dstPositions;
+            var si = md.skinIndex;
+            var sw = md.skinWeight;
+            var bindMatrix = md.bindMatrix;
+            var bindMatrixInverse = md.bindMatrixInverse;
+            var count = srcPos.count;
+
+            for (var i = 0; i < count; i++) {
+                _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
+                _v.applyMatrix4(bindMatrix);
+
+                _result.set(0, 0, 0, 0);
+                var w0 = sw.getX(i), w1 = sw.getY(i), w2 = sw.getZ(i), w3 = sw.getW(i);
+                var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
+
+                if (w0 > 0) { _boneMat.fromArray(bm, i0*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w0; _result.y+=_temp.y*w0; _result.z+=_temp.z*w0; }
+                if (w1 > 0) { _boneMat.fromArray(bm, i1*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w1; _result.y+=_temp.y*w1; _result.z+=_temp.z*w1; }
+                if (w2 > 0) { _boneMat.fromArray(bm, i2*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w2; _result.y+=_temp.y*w2; _result.z+=_temp.z*w2; }
+                if (w3 > 0) { _boneMat.fromArray(bm, i3*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w3; _result.y+=_temp.y*w3; _result.z+=_temp.z*w3; }
+
+                _result.w = 1;
+                _result.applyMatrix4(bindMatrixInverse);
+
+                // NaN guard
+                if (_result.x !== _result.x) _result.x = srcPos.getX(i);
+                if (_result.y !== _result.y) _result.y = srcPos.getY(i);
+                if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
+
+                dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+                if (_result.y < globalMinY) globalMinY = _result.y;
+                if (_result.y > globalMaxY) globalMaxY = _result.y;
+            }
+        }
+
+        // Auto-scale from COMBINED bounding box of all meshes
         if (!cpuSkinData._scaleComputed) {
             cpuSkinData._scaleComputed = true;
-            var outHeight = maxY - minY;
+            var outHeight = globalMaxY - globalMinY;
             var srcHeight = cpuSkinData.srcHeight;
             if (outHeight > 0.001 && srcHeight > 0.001) {
-                var scaleFix = srcHeight / outHeight;
-                cpuSkinData.scaleFix = scaleFix;
-                console.log('[cpuSkin] Auto-scale: outH=' + outHeight.toFixed(4) +
-                    ' srcH=' + srcHeight.toFixed(4) + ' fix=' + scaleFix.toFixed(6));
+                cpuSkinData.scaleFix = srcHeight / outHeight;
+                console.log('[cpuSkin] Auto-scale: meshes=' + meshDataArr.length +
+                    ' outH=' + outHeight.toFixed(2) + ' srcH=' + srcHeight.toFixed(4) +
+                    ' fix=' + cpuSkinData.scaleFix.toFixed(6));
             }
         }
 
-        // Apply scale correction to all vertices
+        // Apply scale correction to ALL meshes
         if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
             var sf = cpuSkinData.scaleFix;
-            for (var i = 0; i < count; i++) {
-                dstPos.setXYZ(i,
-                    dstPos.getX(i) * sf,
-                    dstPos.getY(i) * sf,
-                    dstPos.getZ(i) * sf
-                );
+            for (var m = 0; m < meshDataArr.length; m++) {
+                var dstPos = meshDataArr[m].dstPositions;
+                var count = dstPos.count;
+                for (var i = 0; i < count; i++) {
+                    dstPos.setXYZ(i, dstPos.getX(i)*sf, dstPos.getY(i)*sf, dstPos.getZ(i)*sf);
+                }
             }
         }
 
-        // Y-anchor: compute on first frame, anchor model feet at y=0
-        // Runs ALWAYS (regardless of scaleFix) to handle bone transform offsets
+        // Y-anchor from COMBINED bounding box: anchor feet at y=0
         if (!cpuSkinData._yAnchorComputed) {
             cpuSkinData._yAnchorComputed = true;
             var anchorMinY = Infinity;
-            for (var i = 0; i < count; i++) {
-                var ay = dstPos.getY(i);
-                if (ay < anchorMinY) anchorMinY = ay;
+            for (var m = 0; m < meshDataArr.length; m++) {
+                var dstPos = meshDataArr[m].dstPositions;
+                var count = dstPos.count;
+                for (var i = 0; i < count; i++) {
+                    var ay = dstPos.getY(i);
+                    if (ay < anchorMinY) anchorMinY = ay;
+                }
             }
             cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
             if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
@@ -7630,18 +7632,51 @@ function cpuSkinUpdate(cpuSkinData) {
         }
         if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
             var ya = cpuSkinData._yAnchor;
-            for (var i = 0; i < count; i++) {
-                dstPos.setY(i, dstPos.getY(i) + ya);
+            for (var m = 0; m < meshDataArr.length; m++) {
+                var dstPos = meshDataArr[m].dstPositions;
+                var count = dstPos.count;
+                for (var i = 0; i < count; i++) {
+                    dstPos.setY(i, dstPos.getY(i) + ya);
+                }
             }
         }
 
-        dstPos.needsUpdate = true;
+        // Mark ALL destination buffers for GPU upload
+        for (var m = 0; m < meshDataArr.length; m++) {
+            meshDataArr[m].dstPositions.needsUpdate = true;
+        }
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
     }
 }
 
-/* --- C4: Load GLB model into ONI group --- */
+/* --- C4-helper: Clone material for ONI (disable GPU skinning, boost emissive) --- */
+function cloneMatForOni(origMat) {
+    if (Array.isArray(origMat)) {
+        return origMat.map(function(m) {
+            var cm = m.clone();
+            cm.skinning = false;
+            cm.side = THREE.DoubleSide;
+            if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
+            if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
+            return cm;
+        });
+    } else if (origMat) {
+        var cm = origMat.clone();
+        cm.skinning = false;
+        cm.side = THREE.DoubleSide;
+        if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
+        if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
+        return cm;
+    } else {
+        return new THREE.MeshBasicMaterial({
+            color: ONI_CONFIG.bodyEmissive,
+            side: THREE.DoubleSide
+        });
+    }
+}
+
+/* --- C4: Load GLB model into ONI group (multi-mesh support) --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
     if (!enemy) return;
@@ -7658,7 +7693,7 @@ function loadOniGLB(group, charId, stageId) {
                 }
             });
 
-            // CRITICAL: Also sanitize embedded animation track names to match sanitized bones
+            // Sanitize embedded animation track names to match sanitized bones
             if (gltf.animations) {
                 gltf.animations.forEach(function(clip) {
                     clip.tracks.forEach(function(track) {
@@ -7677,54 +7712,47 @@ function loadOniGLB(group, charId, stageId) {
                 });
             }
 
-            // Find first SkinnedMesh for CPU skinning
-            var origSkinned = null;
+            // Find ALL SkinnedMeshes for full-body CPU skinning
+            var allSkinnedMeshes = [];
             sourceScene.traverse(function(child) {
-                if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
+                if (child.isSkinnedMesh && child.geometry) allSkinnedMeshes.push(child);
             });
+            if (allSkinnedMeshes.length === 0) return;
 
-            if (!origSkinned || !origSkinned.geometry) return;
-
-            var srcGeo = origSkinned.geometry;
-            srcGeo.computeBoundingBox();
-            var bb = srcGeo.boundingBox;
-            var geoHeight = bb.max.y - bb.min.y;
+            // Compute COMBINED bounding box from all SkinnedMeshes
+            var combinedBB = new THREE.Box3();
+            allSkinnedMeshes.forEach(function(sm) {
+                sm.geometry.computeBoundingBox();
+                var bb = sm.geometry.boundingBox;
+                if (bb) {
+                    combinedBB.expandByPoint(bb.min);
+                    combinedBB.expandByPoint(bb.max);
+                }
+            });
+            var geoHeight = combinedBB.max.y - combinedBB.min.y;
             var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
 
-            // Create visible regular Mesh with cloned geometry and ORIGINAL materials
-            var dstGeo = srcGeo.clone();
-            // Use original material from GLB (clone and disable skinning for regular Mesh)
-            var origMat = origSkinned.material;
-            var bodyMat;
-            if (Array.isArray(origMat)) {
-                bodyMat = origMat.map(function(m) {
-                    var cm = m.clone();
-                    cm.skinning = false;
-                    cm.side = THREE.DoubleSide;
-                    if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
-                    if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
-                    return cm;
-                });
-            } else if (origMat) {
-                bodyMat = origMat.clone();
-                bodyMat.skinning = false;
-                bodyMat.side = THREE.DoubleSide;
-                if (bodyMat.emissive) bodyMat.emissive.setScalar(Math.max(bodyMat.emissive.r, 0.12));
-                if (bodyMat.emissiveIntensity !== undefined) bodyMat.emissiveIntensity = Math.max(bodyMat.emissiveIntensity, 0.2);
-            } else {
-                bodyMat = new THREE.MeshBasicMaterial({
-                    color: ONI_CONFIG.bodyEmissive,
-                    side: THREE.DoubleSide
-                });
-            }
-            var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
-            bodyMesh.frustumCulled = false;
-
+            // Create visible regular Mesh for EACH SkinnedMesh (CPU skinning)
             var bodyGroup = new THREE.Group();
-            bodyGroup.add(bodyMesh);
-            // NO light inside bodyGroup (scale would move light too far)
+            var meshDataArr = [];
+            allSkinnedMeshes.forEach(function(origSM) {
+                var srcGeo = origSM.geometry;
+                var dstGeo = srcGeo.clone();
+                var bodyMat = cloneMatForOni(origSM.material);
+                var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
+                bodyMesh.frustumCulled = false;
+                bodyGroup.add(bodyMesh);
+                meshDataArr.push({
+                    srcPositions: srcGeo.attributes.position,
+                    dstPositions: dstGeo.attributes.position,
+                    skinIndex: srcGeo.attributes.skinIndex,
+                    skinWeight: srcGeo.attributes.skinWeight,
+                    bindMatrix: origSM.bindMatrix,
+                    bindMatrixInverse: origSM.bindMatrixInverse,
+                });
+            });
+
             bodyGroup.scale.setScalar(meshScale);
-            // Y-offset = 0: cpuSkinUpdate Y-anchor handles grounding
             bodyGroup.position.y = 0;
 
             // Keep sourceScene DETACHED (not added to group) to prevent
@@ -7733,47 +7761,36 @@ function loadOniGLB(group, charId, stageId) {
 
             // Remove ALL fallback children including eyes (GLB model has its own face)
             var toRemove = [];
-            group.children.forEach(function(child) {
-                toRemove.push(child);
-            });
+            group.children.forEach(function(child) { toRemove.push(child); });
             toRemove.forEach(function(child) { group.remove(child); });
             group.userData.eyeR = null;
             group.userData.eyeL = null;
 
             group.add(bodyGroup);
-            // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
             bodyLight.position.set(0, 1.2, 0);
             group.add(bodyLight);
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            console.log('[ONI] GLB body loaded. scale:', meshScale.toFixed(4));
+            console.log('[ONI] GLB loaded: ' + allSkinnedMeshes.length + ' meshes, scale=' + meshScale.toFixed(4) + ', height=' + geoHeight.toFixed(4));
 
-            // Setup CPU skinning data
-            // Use STORED bindMatrix and bindMatrixInverse (they are consistent
-            // with boneInverses from the GLB file). The stored bindMatrixInverse
-            // includes ~100x Armature scale which is compensated by auto-scaling.
+            // Setup CPU skinning data with multi-mesh support
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
-                skeleton: origSkinned.skeleton,
-                srcPositions: srcGeo.attributes.position,
-                dstPositions: dstGeo.attributes.position,
-                skinIndex: srcGeo.attributes.skinIndex,
-                skinWeight: srcGeo.attributes.skinWeight,
-                bindMatrix: origSkinned.bindMatrix,
-                bindMatrixInverse: origSkinned.bindMatrixInverse,
+                skeleton: allSkinnedMeshes[0].skeleton,
+                meshes: meshDataArr,
                 srcHeight: geoHeight,
                 scaleFix: null,
                 frameCount: 0
             };
 
-            // Setup animation mixer on the ORIGINAL sourceScene
+            // Setup animation mixer on the ORIGINAL sourceScene (unchanged)
             var mixer = null;
             var usedEmbedded = false;
+            var walkClip = null;
             if (gltf.animations && gltf.animations.length > 0) {
                 group.userData.animations = gltf.animations;
-                var walkClip = null;
                 for (var i = 0; i < gltf.animations.length; i++) {
                     var aname = gltf.animations[i].name.toLowerCase();
                     if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
@@ -7809,9 +7826,6 @@ function loadOniGLB(group, charId, stageId) {
             if (animClipForDirect && group.userData.cpuSkin) {
                 group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
             }
-
-            // Skip initial CPU skin bake - the cloned geometry already has
-            // correct T-pose positions. CPU skinning starts on first animation frame.
 
             if (group.userData.sceneLight) {
                 scene.remove(group.userData.sceneLight);
