@@ -4560,15 +4560,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Recompute boneInverses from runtime matrices for consistency
-            sourceScene.updateMatrixWorld(true);
+            // Use STORED boneInverses from GLB file (consistent with bindMatrix/bindMatrixInverse)
             var skel = origSkinned.skeleton;
-            for (var bi = 0; bi < skel.bones.length; bi++) {
-                if (skel.bones[bi]) {
-                    skel.boneInverses[bi] = new THREE.Matrix4().copy(skel.bones[bi].matrixWorld).invert();
-                }
-            }
-            console.log('[RemotePlayer] Recomputed ' + skel.bones.length + ' boneInverses');
 
             // Setup CPU skinning data (multi-mesh)
             group.userData.cpuSkin = {
@@ -7536,17 +7529,10 @@ function setCharacterAnimation(group, state) {
     group.userData.currentAction = newAction;
     group.userData.currentAnimState = state;
 
-    // Update directAnim to match new clip for CPU skinning path
-    // IMPORTANT: Only overwrite if new build succeeds — never nullify working animation
-    if (group.userData.cpuSkin) {
-        var ss = group.userData.sourceScene;
-        if (ss && clip) {
-            var newDirectAnim = buildDirectAnimData(ss, clip);
-            if (newDirectAnim) {
-                group.userData.cpuSkin._directAnim = newDirectAnim;
-            }
-        }
-    }
+    // NOTE: Do NOT rebuild _directAnim here.
+    // The initial _directAnim from loadOniGLB uses the model's own embedded clip
+    // with correct Hips position values. Switching to a shared clip would use
+    // Hips position values from a different model, causing Y-position mismatch.
 }
 
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
@@ -7762,9 +7748,13 @@ function cpuSkinUpdate(cpuSkinData) {
             if (outHeight > 0.001 && srcHeight > 0.001) {
                 var scaleFix = srcHeight / outHeight;
                 cpuSkinData.scaleFix = scaleFix;
-                console.log('[cpuSkin] Auto-scale: outH=' + outHeight.toFixed(4) +
-                    ' srcH=' + srcHeight.toFixed(4) + ' fix=' + scaleFix.toFixed(6) +
+                console.warn('████ FIRST-FRAME DIAG ████ outH=' + outHeight.toFixed(4) +
+                    ' srcH=' + srcHeight.toFixed(4) + ' scaleFix=' + scaleFix.toFixed(6) +
+                    ' globalMinY=' + globalMinY.toFixed(4) + ' globalMaxY=' + globalMaxY.toFixed(4) +
                     ' meshes=' + meshDataArr.length);
+            } else {
+                console.warn('████ FIRST-FRAME DIAG ████ SKIP SCALE: outH=' + outHeight.toFixed(4) +
+                    ' srcH=' + srcHeight.toFixed(4));
             }
         }
 
@@ -7797,9 +7787,10 @@ function cpuSkinUpdate(cpuSkinData) {
                 }
             }
             cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
-            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
-                console.log('[cpuSkin] Y-anchor:', cpuSkinData._yAnchor.toFixed(4));
-            }
+            console.warn('████ Y-ANCHOR DIAG ████ anchorMinY=' + anchorMinY.toFixed(4) +
+                ' _yAnchor=' + cpuSkinData._yAnchor.toFixed(4) +
+                ' srcBBMinY=' + (cpuSkinData.srcBBMinY || 'N/A') +
+                ' scaleFix=' + (cpuSkinData.scaleFix ? cpuSkinData.scaleFix.toFixed(6) : 'null'));
         }
 
         // Apply Y-anchor and mark buffers as needing update
@@ -7952,19 +7943,9 @@ function loadOniGLB(group, charId, stageId) {
 
             console.log('[ONI] GLB body loaded. scale:', meshScale.toFixed(4));
 
-            // Recompute boneInverses from runtime matrices to ensure consistency.
-            // GLTFLoader's boneInverses come from the GLTF file's inverseBindMatrices,
-            // which may differ from what updateMatrixWorld computes at runtime
-            // (e.g., if the Armature node's TRS decomposition is lossy).
-            // Recomputing guarantees boneMatrices = bone.matrixWorld * boneInverse = identity in bind pose.
-            sourceScene.updateMatrixWorld(true);
+            // Use STORED boneInverses from GLB file (consistent with bindMatrix/bindMatrixInverse).
+            // Do NOT recompute — GLTFLoader's inverseBindMatrices are authoritative.
             var skel = origSkinned.skeleton;
-            for (var bi = 0; bi < skel.bones.length; bi++) {
-                if (skel.bones[bi]) {
-                    skel.boneInverses[bi] = new THREE.Matrix4().copy(skel.bones[bi].matrixWorld).invert();
-                }
-            }
-            console.log('[ONI] Recomputed ' + skel.bones.length + ' boneInverses for runtime consistency');
 
             // Setup CPU skinning data (multi-mesh)
             group.userData.cpuSkin = {
