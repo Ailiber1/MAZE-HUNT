@@ -7588,58 +7588,32 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Auto-scale from COMBINED bounding box of all meshes
+        // Auto-scale: compute combined scale from output vs source bounding box
+        // Apply via bodyGroup TRANSFORM instead of vertex buffer modification
         if (!cpuSkinData._scaleComputed) {
             cpuSkinData._scaleComputed = true;
             var outHeight = globalMaxY - globalMinY;
-            var srcHeight = cpuSkinData.srcHeight;
-            if (outHeight > 0.001 && srcHeight > 0.001) {
-                cpuSkinData.scaleFix = srcHeight / outHeight;
-                var scaleMsg = '[cpuSkin] scale: m=' + meshDataArr.length + ' outH=' + outHeight.toFixed(1) + ' srcH=' + srcHeight.toFixed(2) + ' fix=' + cpuSkinData.scaleFix.toFixed(6);
+            if (outHeight > 0.001) {
+                // Combined scale: maps from deformed space (~96m) directly to target 1.8m
+                cpuSkinData._combinedScale = 1.8 / outHeight;
+                cpuSkinData._globalMinY = globalMinY;
+                var scaleMsg = '[cpuSkin] scale: m=' + meshDataArr.length + ' outH=' + outHeight.toFixed(1) + ' minY=' + globalMinY.toFixed(1) + ' combinedScale=' + cpuSkinData._combinedScale.toFixed(6);
                 console.log(scaleMsg);
                 if (typeof showGLBDiag === 'function') showGLBDiag(scaleMsg);
             }
         }
 
-        // Apply scale correction to ALL meshes
-        if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
-            var sf = cpuSkinData.scaleFix;
-            for (var m = 0; m < meshDataArr.length; m++) {
-                var dstPos = meshDataArr[m].dstPositions;
-                var count = dstPos.count;
-                for (var i = 0; i < count; i++) {
-                    dstPos.setXYZ(i, dstPos.getX(i)*sf, dstPos.getY(i)*sf, dstPos.getZ(i)*sf);
-                }
-            }
-        }
-
-        // Y-anchor from COMBINED bounding box: anchor feet at y=0
-        if (!cpuSkinData._yAnchorComputed) {
-            cpuSkinData._yAnchorComputed = true;
-            var anchorMinY = Infinity;
-            for (var m = 0; m < meshDataArr.length; m++) {
-                var dstPos = meshDataArr[m].dstPositions;
-                var count = dstPos.count;
-                for (var i = 0; i < count; i++) {
-                    var ay = dstPos.getY(i);
-                    if (ay < anchorMinY) anchorMinY = ay;
-                }
-            }
-            cpuSkinData._yAnchor = isFinite(anchorMinY) ? -anchorMinY : 0;
-            if (Math.abs(cpuSkinData._yAnchor) > 0.001) {
-                var yaMsg = '[cpuSkin] yAnchor=' + cpuSkinData._yAnchor.toFixed(4);
-                console.log(yaMsg);
-                if (typeof showGLBDiag === 'function') showGLBDiag(yaMsg);
-            }
-        }
-        if (cpuSkinData._yAnchor && cpuSkinData._yAnchor !== 0) {
-            var ya = cpuSkinData._yAnchor;
-            for (var m = 0; m < meshDataArr.length; m++) {
-                var dstPos = meshDataArr[m].dstPositions;
-                var count = dstPos.count;
-                for (var i = 0; i < count; i++) {
-                    dstPos.setY(i, dstPos.getY(i) + ya);
-                }
+        // Apply scale and position via bodyGroup TRANSFORM (bypasses vertex buffer issues)
+        if (cpuSkinData._bodyGroup && cpuSkinData._combinedScale) {
+            var cs = cpuSkinData._combinedScale;
+            cpuSkinData._bodyGroup.scale.setScalar(cs);
+            cpuSkinData._bodyGroup.position.y = -cpuSkinData._globalMinY * cs;
+            // Log on first frame only
+            if (!cpuSkinData._transformLogged) {
+                cpuSkinData._transformLogged = true;
+                var tMsg = '[cpuSkin] transform: scale=' + cs.toFixed(6) + ' posY=' + cpuSkinData._bodyGroup.position.y.toFixed(4);
+                console.log(tMsg);
+                if (typeof showGLBDiag === 'function') showGLBDiag(tMsg);
             }
         }
 
@@ -7772,7 +7746,8 @@ function loadOniGLB(group, charId, stageId) {
                 });
             });
 
-            bodyGroup.scale.setScalar(meshScale);
+            // Initial scale = 1 (cpuSkinUpdate will set correct scale via transform)
+            bodyGroup.scale.setScalar(1);
             bodyGroup.position.y = 0;
 
             // Keep sourceScene DETACHED (not added to group) to prevent
@@ -7793,17 +7768,19 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, scale=' + meshScale.toFixed(4) + ', h=' + geoHeight.toFixed(4) + ', children=' + group.children.length;
+            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, h=' + geoHeight.toFixed(4) + ' (transform-based positioning)';
             console.log(diagMsg);
             showGLBDiag(diagMsg);
 
             // Setup CPU skinning data with multi-mesh support
+            // bodyGroup and meshScale stored for transform-based positioning
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: allSkinnedMeshes[0].skeleton,
                 meshes: meshDataArr,
                 srcHeight: geoHeight,
-                scaleFix: null,
+                _bodyGroup: bodyGroup,
+                _meshScale: meshScale,
                 frameCount: 0
             };
 
