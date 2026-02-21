@@ -4514,7 +4514,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Setup CPU skinning data (geometry-based scale + per-frame yAnchor)
+            // Setup CPU skinning data — bodyGroup transforms set dynamically
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
@@ -4527,7 +4527,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     bindMatrixInverse: origSkinned.bindMatrixInverse,
                 }],
                 frameCount: 0,
-                srcHeight: srcGeoHeight
+                srcHeight: srcGeoHeight,
+                _bodyGroup: bodyGroup
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene
@@ -7599,58 +7600,28 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Auto-scale: compute scale ratio from output vs source bounding box
-        // The Armature scale in boneMatrices amplifies output ~52x; compensate here.
+        // NEW APPROACH: Don't modify vertices. Use bodyGroup transforms instead.
+        // The diagnostic bypass (copying source positions) displayed correctly
+        // using bodyGroup transforms. Apply the same principle to CPU skinning:
+        // upload RAW output to GPU, let bodyGroup scale/position handle the rest.
         var outHeight = globalMaxY - globalMinY;
-        if (!cpuSkinData.scaleFix) {
-            var srcHeight = cpuSkinData.srcHeight;
-            if (outHeight > 0.01 && srcHeight && srcHeight > 0.01) {
-                cpuSkinData.scaleFix = srcHeight / outHeight;
-                var fixMsg = '[cpuSkin] scaleFix: outH=' + outHeight.toFixed(1) + ' srcH=' + srcHeight.toFixed(4) + ' fix=' + cpuSkinData.scaleFix.toFixed(6);
-                console.log(fixMsg);
-                if (typeof showGLBDiag === 'function') showGLBDiag(fixMsg);
-            }
-        }
+        if (outHeight > 0.01 && cpuSkinData._bodyGroup) {
+            var targetH = 1.8;
+            var dynamicScale = targetH / outHeight;
+            var dynamicOffsetY = -globalMinY * dynamicScale;
+            cpuSkinData._bodyGroup.scale.setScalar(dynamicScale);
+            cpuSkinData._bodyGroup.position.y = dynamicOffsetY;
 
-        // Apply scale correction to all meshes
-        if (cpuSkinData.scaleFix && cpuSkinData.scaleFix !== 1) {
-            var sf = cpuSkinData.scaleFix;
-            for (var m = 0; m < meshDataArr.length; m++) {
-                var dstPos = meshDataArr[m].dstPositions;
-                var count = dstPos.count;
-                for (var i = 0; i < count; i++) {
-                    dstPos.setXYZ(i, dstPos.getX(i) * sf, dstPos.getY(i) * sf, dstPos.getZ(i) * sf);
-                }
-            }
-        }
-
-        // Y-anchor: recompute EVERY frame to track animation pose changes
-        // (Animation can shift the model's Y offset significantly between frames)
-        {
-            var anchorMinY = Infinity;
-            for (var m = 0; m < meshDataArr.length; m++) {
-                var dp = meshDataArr[m].dstPositions;
-                var cnt = dp.count;
-                for (var i = 0; i < cnt; i++) {
-                    var ay = dp.getY(i);
-                    if (ay < anchorMinY) anchorMinY = ay;
-                }
-            }
-            var ya = isFinite(anchorMinY) ? -anchorMinY : 0;
-            if (ya !== 0) {
-                for (var m = 0; m < meshDataArr.length; m++) {
-                    var dp = meshDataArr[m].dstPositions;
-                    var cnt = dp.count;
-                    for (var i = 0; i < cnt; i++) {
-                        dp.setY(i, dp.getY(i) + ya);
-                    }
-                }
-            }
             // Diagnostic on first few frames
             if (cpuSkinData.frameCount <= 2) {
-                var yaMsg = '[cpuSkin] f' + cpuSkinData.frameCount + ' yAnchor=' + ya.toFixed(4) + ' outH=' + outHeight.toFixed(1) + ' anchorMinY=' + anchorMinY.toFixed(4);
-                console.log(yaMsg);
-                if (typeof showGLBDiag === 'function') showGLBDiag(yaMsg);
+                var diagMsg = '[cpuSkin] f' + cpuSkinData.frameCount +
+                    ' TRANSFORM: outH=' + outHeight.toFixed(1) +
+                    ' minY=' + globalMinY.toFixed(1) +
+                    ' maxY=' + globalMaxY.toFixed(1) +
+                    ' scale=' + dynamicScale.toFixed(6) +
+                    ' offY=' + dynamicOffsetY.toFixed(4);
+                console.log(diagMsg);
+                if (typeof showGLBDiag === 'function') showGLBDiag(diagMsg);
             }
         }
 
@@ -7658,31 +7629,11 @@ function cpuSkinUpdate(cpuSkinData) {
         for (var m = 0; m < meshDataArr.length; m++) {
             var dp = meshDataArr[m].dstPositions;
             dp.needsUpdate = true;
-            // CRITICAL FIX: InterleavedBufferAttribute needs data.needsUpdate too
             if (dp.isInterleavedBufferAttribute && dp.data) {
                 dp.data.needsUpdate = true;
             }
         }
-
-        // One-time comprehensive diagnostic (frame 0-2)
-        if (cpuSkinData.frameCount <= 2) {
-            var dp0 = meshDataArr[0].dstPositions;
-            var diagMinY = Infinity, diagMaxY = -Infinity;
-            for (var di = 0; di < dp0.count; di++) {
-                var dy = dp0.getY(di);
-                if (dy < diagMinY) diagMinY = dy;
-                if (dy > diagMaxY) diagMaxY = dy;
-            }
-            var diagMsg = '[cpuSkin] f' + cpuSkinData.frameCount +
-                ' FINAL: minY=' + diagMinY.toFixed(4) +
-                ' maxY=' + diagMaxY.toFixed(4) +
-                ' h=' + (diagMaxY - diagMinY).toFixed(4) +
-                ' isIBA=' + (!!dp0.isInterleavedBufferAttribute) +
-                ' sf=' + (cpuSkinData.scaleFix ? cpuSkinData.scaleFix.toFixed(6) : 'null');
-            console.log(diagMsg);
-            if (typeof showGLBDiag === 'function') showGLBDiag(diagMsg);
-        }
-        cpuSkinData.frameCount = (cpuSkinData.frameCount || 0) + 1;
+        // Note: frameCount is incremented by the game loop caller, not here
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
     }
@@ -7850,13 +7801,14 @@ function loadOniGLB(group, charId, stageId) {
             console.log(diagMsg);
             showGLBDiag(diagMsg);
 
-            // Setup CPU skinning data — scale/offset handled by bodyGroup transform (set above)
+            // Setup CPU skinning data — bodyGroup transforms will be set dynamically
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: allSkinnedMeshes[0].skeleton,
                 meshes: meshDataArr,
                 frameCount: 0,
-                srcHeight: geoHeight
+                srcHeight: geoHeight,
+                _bodyGroup: bodyGroup
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene (unchanged)
