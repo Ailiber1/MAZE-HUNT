@@ -7588,30 +7588,31 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // Auto-scale: compute combined scale from output vs source bounding box
-        // Apply via bodyGroup TRANSFORM instead of vertex buffer modification
+        // Auto-scale: compute combined scale from first frame (stable across poses)
+        // Y offset: computed EVERY FRAME to track animation-driven foot position
         if (!cpuSkinData._scaleComputed) {
             cpuSkinData._scaleComputed = true;
             var outHeight = globalMaxY - globalMinY;
             if (outHeight > 0.001) {
-                // Combined scale: maps from deformed space (~96m) directly to target 1.8m
                 cpuSkinData._combinedScale = 1.8 / outHeight;
-                cpuSkinData._globalMinY = globalMinY;
-                var scaleMsg = '[cpuSkin] scale: m=' + meshDataArr.length + ' outH=' + outHeight.toFixed(1) + ' minY=' + globalMinY.toFixed(1) + ' combinedScale=' + cpuSkinData._combinedScale.toFixed(6);
+                var scaleMsg = '[cpuSkin] scale: m=' + meshDataArr.length + ' outH=' + outHeight.toFixed(1) + ' minY=' + globalMinY.toFixed(1) + ' maxY=' + globalMaxY.toFixed(1) + ' cs=' + cpuSkinData._combinedScale.toFixed(6);
                 console.log(scaleMsg);
                 if (typeof showGLBDiag === 'function') showGLBDiag(scaleMsg);
             }
         }
 
-        // Apply scale and position via bodyGroup TRANSFORM (bypasses vertex buffer issues)
+        // Apply scale and Y-anchor via bodyGroup TRANSFORM every frame
+        // globalMinY changes with animation (running vs idle), so must update every frame
         if (cpuSkinData._bodyGroup && cpuSkinData._combinedScale) {
             var cs = cpuSkinData._combinedScale;
             cpuSkinData._bodyGroup.scale.setScalar(cs);
-            cpuSkinData._bodyGroup.position.y = -cpuSkinData._globalMinY * cs;
-            // Log on first frame only
-            if (!cpuSkinData._transformLogged) {
-                cpuSkinData._transformLogged = true;
-                var tMsg = '[cpuSkin] transform: scale=' + cs.toFixed(6) + ' posY=' + cpuSkinData._bodyGroup.position.y.toFixed(4);
+            // Shift model so feet (globalMinY) sit at Y=0 in local space
+            cpuSkinData._bodyGroup.position.y = -globalMinY * cs;
+            // Log on first few frames for diagnostic
+            if (!cpuSkinData._transformLogCount) cpuSkinData._transformLogCount = 0;
+            if (cpuSkinData._transformLogCount < 3) {
+                cpuSkinData._transformLogCount++;
+                var tMsg = '[cpuSkin] f' + cpuSkinData._transformLogCount + ': minY=' + globalMinY.toFixed(1) + ' posY=' + cpuSkinData._bodyGroup.position.y.toFixed(4);
                 console.log(tMsg);
                 if (typeof showGLBDiag === 'function') showGLBDiag(tMsg);
             }
