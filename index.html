@@ -4339,13 +4339,27 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
             });
 
-            // Helper: clone material with emissive for visibility
+            // Helper: clone material with emissive for visibility + force texture alpha
             function cloneMatForRemote(mat) {
+                // Helper: fix alpha on all textures in a material
+                function fixMatTextures(m) {
+                    if (typeof forceTextureAlpha === 'function') {
+                        var texProps = ['map', 'emissiveMap', 'normalMap', 'aoMap', 'roughnessMap', 'metalnessMap'];
+                        texProps.forEach(function(prop) {
+                            if (m[prop]) m[prop] = forceTextureAlpha(m[prop]);
+                        });
+                    }
+                }
                 if (Array.isArray(mat)) {
                     return mat.map(function(m) {
                         var cm = m.clone();
                         cm.skinning = false;
+                        cm.morphTargets = false;
                         cm.side = THREE.DoubleSide;
+                        cm.transparent = false;
+                        cm.alphaTest = 0;
+                        cm.depthWrite = true;
+                        fixMatTextures(cm);
                         // Add emissive so model is visible even in dark areas
                         if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
                         if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
@@ -4354,13 +4368,19 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 } else if (mat) {
                     var cm = mat.clone();
                     cm.skinning = false;
+                    cm.morphTargets = false;
                     cm.side = THREE.DoubleSide;
+                    cm.transparent = false;
+                    cm.alphaTest = 0;
+                    cm.depthWrite = true;
+                    fixMatTextures(cm);
                     if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
                     if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
                     return cm;
                 }
                 return new THREE.MeshStandardMaterial({
                     color: 0x888888, side: THREE.DoubleSide,
+                    transparent: false, alphaTest: 0, depthWrite: true,
                     emissive: new THREE.Color(0x222222), emissiveIntensity: 0.3
                 });
             }
@@ -4495,12 +4515,19 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             dstGeo.deleteAttribute('skinIndex');
             dstGeo.deleteAttribute('skinWeight');
 
-            // === STEP 1: Clean geometry FIRST (before material) ===
-            var keepAttrsR = ['position', 'normal', 'uv'];
+            // === STEP 1: Clean geometry (keep essential attrs, preserve groups) ===
+            var keepAttrsR = ['position', 'normal', 'uv', 'uv2', 'color', 'tangent'];
             Object.keys(dstGeo.attributes).forEach(function(name) {
                 if (keepAttrsR.indexOf(name) === -1) dstGeo.deleteAttribute(name);
             });
-            if (dstGeo.groups && dstGeo.groups.length > 0) dstGeo.clearGroups();
+            // DO NOT clear geometry groups - they define material indices
+            // Ensure index buffer is Uint32 for large meshes
+            if (vtxCountR > 65535 && dstGeo.index && dstGeo.index.array instanceof Uint16Array) {
+                var oldIdxR = dstGeo.index.array;
+                var newIdxR = new Uint32Array(oldIdxR.length);
+                for (var iiR = 0; iiR < oldIdxR.length; iiR++) newIdxR[iiR] = oldIdxR[iiR];
+                dstGeo.setIndex(new THREE.BufferAttribute(newIdxR, 1));
+            }
             if (dstGeo.index) {
                 dstGeo.setDrawRange(0, dstGeo.index.count);
             } else {
@@ -4508,36 +4535,37 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             }
             dstGeo.computeVertexNormals();
 
-            // === STEP 2: Extract texture ===
+            // === STEP 2: Clone original material + force texture alpha ===
             var origMatR = origSkinned.material;
-            var texMapR = null;
-            if (Array.isArray(origMatR)) {
-                for (var mri = 0; mri < origMatR.length; mri++) {
-                    if (origMatR[mri] && origMatR[mri].map) { texMapR = origMatR[mri].map; break; }
-                }
-            } else if (origMatR) {
-                texMapR = origMatR.map || null;
-            }
-            var hasUVR = !!dstGeo.attributes.uv;
-
-            // === STEP 3: emissiveMap approach (NO map, bypass alpha) ===
             var bodyMat;
-            if (texMapR && hasUVR) {
-                bodyMat = new THREE.MeshStandardMaterial({
-                    color: 0x444444,
-                    emissiveMap: texMapR,
-                    emissive: new THREE.Color(0xffffff),
-                    emissiveIntensity: 1.0,
-                    side: THREE.DoubleSide,
-                    transparent: false,
-                    alphaTest: 0,
-                    roughness: 0.8,
-                    metalness: 0.0
+            if (Array.isArray(origMatR)) {
+                bodyMat = origMatR.map(function(m) {
+                    return cloneMatForRemote(m);
                 });
+            } else if (origMatR) {
+                var cmR = cloneMatForRemote(origMatR);
+                // If geometry has groups referencing different materialIndex, create array
+                if (dstGeo.groups && dstGeo.groups.length > 0) {
+                    var maxMatIdxR = 0;
+                    dstGeo.groups.forEach(function(g) {
+                        if (g.materialIndex > maxMatIdxR) maxMatIdxR = g.materialIndex;
+                    });
+                    if (maxMatIdxR > 0) {
+                        bodyMat = [];
+                        for (var mIdxR = 0; mIdxR <= maxMatIdxR; mIdxR++) {
+                            bodyMat.push(cmR.clone ? cmR.clone() : cloneMatForRemote(origMatR));
+                        }
+                    } else {
+                        bodyMat = cmR;
+                    }
+                } else {
+                    bodyMat = cmR;
+                }
             } else {
-                bodyMat = new THREE.MeshBasicMaterial({
-                    color: 0xcc44cc,
-                    side: THREE.DoubleSide
+                bodyMat = new THREE.MeshStandardMaterial({
+                    color: 0xcc44cc, side: THREE.DoubleSide,
+                    transparent: false, alphaTest: 0, depthWrite: true,
+                    emissive: new THREE.Color(0x222222), emissiveIntensity: 0.3
                 });
             }
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
@@ -7779,6 +7807,37 @@ function showGLBDiag(msg) {
     el._timer = setTimeout(function() { el.style.display = 'none'; }, 8000);
 }
 
+/* --- C4-fix: Force all texture pixels to fully opaque (alpha=255) --- */
+function forceTextureAlpha(texture) {
+    if (!texture || !texture.image) return texture;
+    var img = texture.image;
+    var w = img.width || img.naturalWidth || 256;
+    var h = img.height || img.naturalHeight || 256;
+    if (w === 0 || h === 0) return texture;
+    try {
+        var canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        var imageData = ctx.getImageData(0, 0, w, h);
+        var data = imageData.data;
+        var fixedCount = 0;
+        for (var i = 3; i < data.length; i += 4) {
+            if (data[i] < 255) { fixedCount++; data[i] = 255; }
+        }
+        if (fixedCount > 0) {
+            ctx.putImageData(imageData, 0, 0);
+            texture.image = canvas;
+            texture.needsUpdate = true;
+            showGLBDiag('[ONI] Fixed ' + fixedCount + '/' + (data.length/4) + ' pixels with alpha < 255');
+        }
+    } catch(e) {
+        showGLBDiag('[ONI] forceTextureAlpha error: ' + e.message);
+    }
+    return texture;
+}
+
 /* --- C4-setup: Process GLTF data into ONI group --- */
 function processOniGLTF(group, gltf, stageId) {
     var sourceScene = gltf.scene;
@@ -7810,28 +7869,53 @@ function processOniGLTF(group, gltf, stageId) {
         });
     }
 
-    // Find ALL SkinnedMeshes for full-body CPU skinning
+    // Find ALL meshes (SkinnedMesh + regular Mesh) for full-body rendering
     var allSkinnedMeshes = [];
+    var allStaticMeshes = [];
     sourceScene.traverse(function(child) {
-        if (child.isSkinnedMesh && child.geometry) allSkinnedMeshes.push(child);
+        if (child.isSkinnedMesh && child.geometry) {
+            allSkinnedMeshes.push(child);
+        } else if (child.isMesh && child.geometry) {
+            allStaticMeshes.push(child);
+        }
     });
-    showGLBDiag('[ONI] SkinnedMeshes found: ' + allSkinnedMeshes.length);
-    if (allSkinnedMeshes.length === 0) { showGLBDiag('[ONI] ERROR: No SkinnedMesh!'); return; }
+    showGLBDiag('[ONI] SkinnedMeshes: ' + allSkinnedMeshes.length + ' StaticMeshes: ' + allStaticMeshes.length);
+    if (allSkinnedMeshes.length === 0 && allStaticMeshes.length === 0) {
+        showGLBDiag('[ONI] ERROR: No meshes found!');
+        return;
+    }
 
-    // Compute scale from SOURCE GEOMETRY bounding box
+    // Helper: force alpha on all textures in a material
+    function fixMaterialTextures(mat) {
+        if (!mat) return;
+        var texProps = ['map', 'emissiveMap', 'normalMap', 'aoMap', 'roughnessMap', 'metalnessMap'];
+        texProps.forEach(function(prop) {
+            if (mat[prop]) mat[prop] = forceTextureAlpha(mat[prop]);
+        });
+    }
+
+    // Compute scale from SOURCE GEOMETRY bounding box (all meshes)
     var combinedBB = new THREE.Box3();
     allSkinnedMeshes.forEach(function(sm) {
         sm.geometry.computeBoundingBox();
         combinedBB.union(sm.geometry.boundingBox);
     });
+    allStaticMeshes.forEach(function(sm) {
+        sm.geometry.computeBoundingBox();
+        var bb = sm.geometry.boundingBox.clone();
+        bb.applyMatrix4(sm.matrixWorld);
+        combinedBB.union(bb);
+    });
     var geoHeight = combinedBB.max.y - combinedBB.min.y;
     var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
     showGLBDiag('[ONI] geoH=' + geoHeight.toFixed(4) + ' meshScale=' + meshScale.toFixed(6));
 
-    // Create visible regular Mesh for EACH SkinnedMesh (CPU skinning)
+    // Create visible regular Mesh for EACH mesh (CPU skinning for SkinnedMesh)
     var bodyGroup = new THREE.Group();
     var meshDataArr = [];
     var totalVertexCount = 0;
+
+    // Process SkinnedMeshes (with CPU skinning)
     allSkinnedMeshes.forEach(function(origSM) {
         var srcGeo = origSM.geometry;
         var dstGeo = srcGeo.clone();
@@ -7850,27 +7934,29 @@ function processOniGLTF(group, gltf, stageId) {
 
         // Remove morph attributes
         if (dstGeo.morphAttributes) {
-            var morphKeys = Object.keys(dstGeo.morphAttributes);
-            if (morphKeys.length > 0) {
-                morphKeys.forEach(function(k) { delete dstGeo.morphAttributes[k]; });
-            }
+            Object.keys(dstGeo.morphAttributes).forEach(function(k) { delete dstGeo.morphAttributes[k]; });
         }
-        // Remove skin attributes
+
+        // Remove skin attributes from dstGeo (keep on srcGeo for CPU skinning reference)
         dstGeo.deleteAttribute('skinIndex');
         dstGeo.deleteAttribute('skinWeight');
 
-        // === STEP 1: Clean geometry FIRST (before material creation) ===
-        // Remove skin/morph attributes and extras BEFORE creating material
-        var keepAttrs = ['position', 'normal', 'uv'];
+        // Keep essential attributes: position, normal, uv, uv2, color, tangent
+        var keepAttrs = ['position', 'normal', 'uv', 'uv2', 'color', 'tangent'];
         Object.keys(dstGeo.attributes).forEach(function(name) {
             if (keepAttrs.indexOf(name) === -1) dstGeo.deleteAttribute(name);
         });
 
-        // Clear geometry groups to force single draw call
-        if (dstGeo.groups && dstGeo.groups.length > 0) {
-            showGLBDiag('[ONI-DIAG] Clearing ' + dstGeo.groups.length + ' geometry groups');
-            dstGeo.clearGroups();
+        // Ensure index buffer is Uint32 for large meshes (Uint16 overflow at 65535)
+        if (vtxCount > 65535 && dstGeo.index && dstGeo.index.array instanceof Uint16Array) {
+            var oldIdx = dstGeo.index.array;
+            var newIdx = new Uint32Array(oldIdx.length);
+            for (var ii = 0; ii < oldIdx.length; ii++) newIdx[ii] = oldIdx[ii];
+            dstGeo.setIndex(new THREE.BufferAttribute(newIdx, 1));
+            showGLBDiag('[ONI] Upgraded index buffer to Uint32 (vtxCount=' + vtxCount + ')');
         }
+
+        // DO NOT clear geometry groups - they define which material index to use
         // Ensure drawRange covers all
         if (dstGeo.index) {
             dstGeo.setDrawRange(0, dstGeo.index.count);
@@ -7878,64 +7964,75 @@ function processOniGLTF(group, gltf, stageId) {
             dstGeo.setDrawRange(0, Infinity);
         }
 
-        // Recompute normals for correct lighting with MeshStandardMaterial
+        // Recompute normals
         dstGeo.computeVertexNormals();
 
-        // === STEP 2: UV diagnostic ===
+        // UV diagnostic
         var hasUV = !!dstGeo.attributes.uv;
-        var uvDiag = 'UV=' + hasUV;
-        if (hasUV) {
-            var uvAttr = dstGeo.attributes.uv;
-            var nanUVCount = 0;
-            for (var uvi = 0; uvi < uvAttr.count; uvi++) {
-                var uu = uvAttr.getX(uvi);
-                var vv = uvAttr.getY(uvi);
-                if (isNaN(uu) || isNaN(vv) || !isFinite(uu) || !isFinite(vv)) nanUVCount++;
-            }
-            uvDiag += ' count=' + uvAttr.count + ' nanUV=' + nanUVCount;
-        }
-        showGLBDiag('[ONI-DIAG] ' + uvDiag);
+        showGLBDiag('[ONI-DIAG] UV=' + hasUV + (hasUV ? ' count=' + dstGeo.attributes.uv.count : ''));
 
-        // === STEP 3: Extract texture from original material ===
+        // === Create material from ORIGINAL with forced alpha fix ===
         var origMat = origSM.material;
-        var texMap = null;
-        if (Array.isArray(origMat)) {
-            for (var mi = 0; mi < origMat.length; mi++) {
-                if (origMat[mi] && origMat[mi].map) { texMap = origMat[mi].map; break; }
-            }
-        } else if (origMat) {
-            texMap = origMat.map || null;
-            showGLBDiag('[ONI-DIAG] origMat: type=' + origMat.type +
-                ' transparent=' + origMat.transparent + ' alphaTest=' + origMat.alphaTest +
-                ' map=' + (texMap ? 'YES(' + (texMap.image ? (texMap.image.width||'?') + 'x' + (texMap.image.height||'?') : 'noImg') + ')' : 'NO') +
-                ' flipY=' + (texMap ? texMap.flipY : '-'));
-        }
-
-        // === STEP 4: Create material - USE emissiveMap INSTEAD OF map ===
-        // KEY FIX: "map" triggers diffuseColor *= texelColor (includes alpha multiplication)
-        // This causes lower body to vanish when texture alpha < 1
-        // "emissiveMap" only uses RGB channels, completely bypassing alpha
         var bodyMat;
-        if (texMap && hasUV) {
-            bodyMat = new THREE.MeshStandardMaterial({
-                // NO map property - this avoids the alpha multiplication bug
-                color: 0x444444,
-                emissiveMap: texMap,
-                emissive: new THREE.Color(0xffffff),
-                emissiveIntensity: 1.0,
-                side: THREE.DoubleSide,
-                transparent: false,
-                alphaTest: 0,
-                roughness: 0.8,
-                metalness: 0.0
+
+        if (Array.isArray(origMat)) {
+            // Multi-material: clone each, fix textures, force opaque
+            bodyMat = origMat.map(function(m) {
+                var cm = m.clone();
+                cm.skinning = false;
+                cm.morphTargets = false;
+                cm.side = THREE.DoubleSide;
+                cm.transparent = false;
+                cm.alphaTest = 0;
+                cm.depthWrite = true;
+                fixMaterialTextures(cm);
+                cm.emissive = new THREE.Color(0x333333);
+                cm.emissiveIntensity = 0.3;
+                return cm;
             });
-            showGLBDiag('[ONI-DIAG] Using emissiveMap approach (NO map, bypassing alpha)');
+            showGLBDiag('[ONI-DIAG] Multi-material: ' + bodyMat.length + ' materials (alpha forced)');
+        } else if (origMat) {
+            var cm = origMat.clone();
+            cm.skinning = false;
+            cm.morphTargets = false;
+            cm.side = THREE.DoubleSide;
+            cm.transparent = false;
+            cm.alphaTest = 0;
+            cm.depthWrite = true;
+            fixMaterialTextures(cm);
+            cm.emissive = new THREE.Color(0x333333);
+            cm.emissiveIntensity = 0.3;
+
+            showGLBDiag('[ONI-DIAG] origMat: type=' + origMat.type +
+                ' map=' + (cm.map ? 'YES' : 'NO') +
+                ' groups=' + (dstGeo.groups ? dstGeo.groups.length : 0));
+
+            // If geometry has groups referencing different materialIndex, create array
+            if (dstGeo.groups && dstGeo.groups.length > 0) {
+                var maxMatIdx = 0;
+                dstGeo.groups.forEach(function(g) {
+                    if (g.materialIndex > maxMatIdx) maxMatIdx = g.materialIndex;
+                });
+                if (maxMatIdx > 0) {
+                    bodyMat = [];
+                    for (var mIdx = 0; mIdx <= maxMatIdx; mIdx++) {
+                        bodyMat.push(cm.clone());
+                    }
+                    showGLBDiag('[ONI-DIAG] Created material array: ' + bodyMat.length + ' entries for groups');
+                } else {
+                    bodyMat = cm;
+                }
+            } else {
+                bodyMat = cm;
+            }
         } else {
-            bodyMat = new THREE.MeshBasicMaterial({
+            bodyMat = new THREE.MeshStandardMaterial({
                 color: 0xcc44cc,
-                side: THREE.DoubleSide
+                side: THREE.DoubleSide,
+                emissive: new THREE.Color(0x333333),
+                emissiveIntensity: 0.3
             });
-            showGLBDiag('[ONI-DIAG] Fallback: solid color (no texture or no UV)');
+            showGLBDiag('[ONI-DIAG] Fallback: no original material');
         }
 
         var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
@@ -7950,6 +8047,59 @@ function processOniGLTF(group, gltf, stageId) {
             bindMatrix: origSM.bindMatrix,
             bindMatrixInverse: origSM.bindMatrixInverse,
         });
+    });
+
+    // Process static (non-SkinnedMesh) meshes - clone geometry, apply world transform
+    allStaticMeshes.forEach(function(origMesh) {
+        var clonedGeo = origMesh.geometry.clone();
+        clonedGeo.applyMatrix4(origMesh.matrixWorld);
+
+        // Remove morph attributes
+        if (clonedGeo.morphAttributes) {
+            Object.keys(clonedGeo.morphAttributes).forEach(function(k) { delete clonedGeo.morphAttributes[k]; });
+        }
+
+        clonedGeo.computeVertexNormals();
+
+        var origMatS = origMesh.material;
+        var staticMat;
+        if (Array.isArray(origMatS)) {
+            staticMat = origMatS.map(function(m) {
+                var cm = m.clone();
+                cm.skinning = false;
+                cm.morphTargets = false;
+                cm.side = THREE.DoubleSide;
+                cm.transparent = false;
+                cm.alphaTest = 0;
+                cm.depthWrite = true;
+                fixMaterialTextures(cm);
+                cm.emissive = new THREE.Color(0x333333);
+                cm.emissiveIntensity = 0.3;
+                return cm;
+            });
+        } else if (origMatS) {
+            var cms = origMatS.clone();
+            cms.skinning = false;
+            cms.morphTargets = false;
+            cms.side = THREE.DoubleSide;
+            cms.transparent = false;
+            cms.alphaTest = 0;
+            cms.depthWrite = true;
+            fixMaterialTextures(cms);
+            cms.emissive = new THREE.Color(0x333333);
+            cms.emissiveIntensity = 0.3;
+            staticMat = cms;
+        } else {
+            staticMat = new THREE.MeshStandardMaterial({
+                color: 0xcc44cc, side: THREE.DoubleSide,
+                emissive: new THREE.Color(0x333333), emissiveIntensity: 0.3
+            });
+        }
+
+        var staticBodyMesh = new THREE.Mesh(clonedGeo, staticMat);
+        staticBodyMesh.frustumCulled = false;
+        bodyGroup.add(staticBodyMesh);
+        showGLBDiag('[ONI] Added static mesh: ' + (origMesh.name || 'unnamed') + ' vtx=' + clonedGeo.attributes.position.count);
     });
 
     // bodyGroup uses IDENTITY transform
@@ -7985,14 +8135,19 @@ function processOniGLTF(group, gltf, stageId) {
     group.userData.glbLoaded = true;
     group.userData.glbModel = bodyGroup;
 
-    var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, geoH=' + geoHeight.toFixed(4) + ' geoMinY=' + geoMinY.toFixed(4);
+    var totalMeshes = allSkinnedMeshes.length + allStaticMeshes.length;
+    var diagMsg = '[ONI] OK: ' + totalMeshes + ' meshes (' + allSkinnedMeshes.length + ' skinned + ' + allStaticMeshes.length + ' static), geoH=' + geoHeight.toFixed(4) + ' geoMinY=' + geoMinY.toFixed(4);
     console.log(diagMsg);
     showGLBDiag(diagMsg);
 
-    // Setup CPU skinning data
+    // Setup CPU skinning data (use first available skeleton)
+    var skeletonRef = null;
+    for (var si = 0; si < allSkinnedMeshes.length; si++) {
+        if (allSkinnedMeshes[si].skeleton) { skeletonRef = allSkinnedMeshes[si].skeleton; break; }
+    }
     group.userData.cpuSkin = {
         sourceScene: sourceScene,
-        skeleton: allSkinnedMeshes[0].skeleton,
+        skeleton: skeletonRef,
         meshes: meshDataArr,
         frameCount: 0,
         srcHeight: geoHeight,
