@@ -7717,7 +7717,7 @@ function showGLBDiag(msg) {
 }
 
 
-/* --- C4-setup: Process GLTF data into ONI group (GPU skinning via SkeletonUtils.clone) --- */
+/* --- C4-setup: Process GLTF data into ONI group --- */
 function processOniGLTF(group, gltf, stageId) {
     var sourceScene = gltf.scene;
     sourceScene.updateMatrixWorld(true);
@@ -7748,47 +7748,187 @@ function processOniGLTF(group, gltf, stageId) {
         });
     }
 
-    // === GPU SKINNING APPROACH: Use SkeletonUtils.clone for proper skeleton handling ===
-    var clonedScene = THREE.SkeletonUtils.clone(sourceScene);
-    clonedScene.updateMatrixWorld(true);
-
-    // Compute bounding box for scaling
-    var combinedBB = new THREE.Box3().setFromObject(clonedScene);
-    var geoHeight = combinedBB.max.y - combinedBB.min.y;
-    var geoMinY = combinedBB.min.y;
-    var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
-
-    var meshCount = 0;
-    var skinnedCount = 0;
-
-    // Replace ALL mesh materials with fresh MeshBasicMaterial + enable GPU skinning
-    clonedScene.traverse(function(child) {
-        if (child.isSkinnedMesh || child.isMesh) {
-            meshCount++;
-            if (child.isSkinnedMesh) skinnedCount++;
-
-            var origMat = child.material;
-            var firstMat = Array.isArray(origMat) ? origMat[0] : origMat;
-            var freshMat = new THREE.MeshBasicMaterial({
-                side: THREE.DoubleSide,
-                transparent: false,
-                alphaTest: 0,
-                depthWrite: true,
-                skinning: !!child.isSkinnedMesh
-            });
-            if (firstMat && firstMat.map) freshMat.map = firstMat.map;
-            if (firstMat && firstMat.color) freshMat.color.copy(firstMat.color);
-            child.material = freshMat;
-            child.frustumCulled = false;
+    // Find ALL meshes (SkinnedMesh + regular Mesh) for full-body rendering
+    var allSkinnedMeshes = [];
+    var allStaticMeshes = [];
+    sourceScene.traverse(function(child) {
+        if (child.isSkinnedMesh && child.geometry) {
+            allSkinnedMeshes.push(child);
+        } else if (child.isMesh && child.geometry) {
+            allStaticMeshes.push(child);
         }
     });
+    showGLBDiag('[ONI] SkinnedMeshes: ' + allSkinnedMeshes.length + ' StaticMeshes: ' + allStaticMeshes.length);
+    if (allSkinnedMeshes.length === 0 && allStaticMeshes.length === 0) {
+        showGLBDiag('[ONI] ERROR: No meshes found!');
+        return;
+    }
 
-    // Scale to 1.8 height and align feet to Y=0
-    clonedScene.scale.setScalar(meshScale);
-    clonedScene.position.y = -geoMinY * meshScale;
+    // Compute scale from SOURCE GEOMETRY bounding box (all meshes)
+    var combinedBB = new THREE.Box3();
+    allSkinnedMeshes.forEach(function(sm) {
+        sm.geometry.computeBoundingBox();
+        combinedBB.union(sm.geometry.boundingBox);
+    });
+    allStaticMeshes.forEach(function(sm) {
+        sm.geometry.computeBoundingBox();
+        var bb = sm.geometry.boundingBox.clone();
+        bb.applyMatrix4(sm.matrixWorld);
+        combinedBB.union(bb);
+    });
+    var geoHeight = combinedBB.max.y - combinedBB.min.y;
+    var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+    showGLBDiag('[ONI] geoH=' + geoHeight.toFixed(4) + ' meshScale=' + meshScale.toFixed(6));
 
-    showGLBDiag('[ONI] GPU Skinning: meshes=' + meshCount + ' skinned=' + skinnedCount +
-        ' geoH=' + geoHeight.toFixed(4) + ' scale=' + meshScale.toFixed(4));
+    // Create visible regular Mesh for EACH mesh (CPU skinning for SkinnedMesh)
+    var bodyGroup = new THREE.Group();
+    var meshDataArr = [];
+    var totalVertexCount = 0;
+
+    // Process SkinnedMeshes (with CPU skinning)
+    allSkinnedMeshes.forEach(function(origSM) {
+        var srcGeo = origSM.geometry;
+        var dstGeo = srcGeo.clone();
+        var srcPos = srcGeo.attributes.position;
+        var vtxCount = srcPos.count;
+        totalVertexCount += vtxCount;
+
+        // Create FRESH independent position buffer for dstGeo
+        var freshArr = new Float32Array(vtxCount * 3);
+        for (var pi = 0; pi < vtxCount; pi++) {
+            freshArr[pi*3]   = srcPos.getX(pi);
+            freshArr[pi*3+1] = srcPos.getY(pi);
+            freshArr[pi*3+2] = srcPos.getZ(pi);
+        }
+        dstGeo.setAttribute('position', new THREE.BufferAttribute(freshArr, 3));
+
+        // Remove morph attributes
+        if (dstGeo.morphAttributes) {
+            Object.keys(dstGeo.morphAttributes).forEach(function(k) { delete dstGeo.morphAttributes[k]; });
+        }
+
+        // Remove skin attributes from dstGeo (keep on srcGeo for CPU skinning reference)
+        dstGeo.deleteAttribute('skinIndex');
+        dstGeo.deleteAttribute('skinWeight');
+
+        // Keep essential attributes: position, normal, uv, uv2, color, tangent
+        var keepAttrs = ['position', 'normal', 'uv', 'uv2', 'color', 'tangent'];
+        Object.keys(dstGeo.attributes).forEach(function(name) {
+            if (keepAttrs.indexOf(name) === -1) dstGeo.deleteAttribute(name);
+        });
+
+        // Ensure index buffer is Uint32 for large meshes (Uint16 overflow at 65535)
+        if (vtxCount > 65535 && dstGeo.index && dstGeo.index.array instanceof Uint16Array) {
+            var oldIdx = dstGeo.index.array;
+            var newIdx = new Uint32Array(oldIdx.length);
+            for (var ii = 0; ii < oldIdx.length; ii++) newIdx[ii] = oldIdx[ii];
+            dstGeo.setIndex(new THREE.BufferAttribute(newIdx, 1));
+            showGLBDiag('[ONI] Upgraded index buffer to Uint32 (vtxCount=' + vtxCount + ')');
+        }
+
+        // === DIAGNOSTIC: Report original geometry state before modifications ===
+        var origDrawRange = srcGeo.drawRange;
+        var origGroups = srcGeo.groups || [];
+        var clonedGroups = dstGeo.groups || [];
+        var idxCount = dstGeo.index ? dstGeo.index.count : 0;
+        var idxType = dstGeo.index ? dstGeo.index.array.constructor.name : 'none';
+        console.log('[ONI-FIX] === GEOMETRY DIAGNOSTIC ===');
+        console.log('[ONI-FIX] vtxCount=' + vtxCount + ' idxCount=' + idxCount + ' idxType=' + idxType);
+        console.log('[ONI-FIX] SRC drawRange: start=' + origDrawRange.start + ' count=' + origDrawRange.count);
+        console.log('[ONI-FIX] SRC groups(' + origGroups.length + '): ' + JSON.stringify(origGroups));
+        console.log('[ONI-FIX] DST groups(' + clonedGroups.length + '): ' + JSON.stringify(clonedGroups));
+        showGLBDiag('[ONI-FIX] vtx=' + vtxCount + ' idx=' + idxCount + ' type=' + idxType +
+            ' srcGroups=' + origGroups.length + ' srcDR=[' + origDrawRange.start + ',' + origDrawRange.count + ']');
+
+        // === FIX: Clear ALL geometry groups - use single drawRange instead ===
+        // Groups can restrict rendering to only their covered index ranges.
+        // Any indices not covered by a group will NOT be drawn.
+        // By clearing groups, Three.js uses drawRange for the entire geometry.
+        dstGeo.clearGroups();
+        dstGeo.setDrawRange(0, Infinity);
+        console.log('[ONI-FIX] Cleared groups, drawRange set to [0, Infinity]');
+
+        // Recompute normals
+        dstGeo.computeVertexNormals();
+
+        // === Create FRESH MeshBasicMaterial (single material, no groups needed) ===
+        var origMat = origSM.material;
+        var singleMat;
+        if (Array.isArray(origMat)) {
+            // Use the first material's texture for the single material
+            var firstMat = origMat[0];
+            singleMat = new THREE.MeshBasicMaterial({
+                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+            });
+            if (firstMat && firstMat.map) singleMat.map = firstMat.map;
+            if (firstMat && firstMat.color) singleMat.color.copy(firstMat.color);
+        } else if (origMat) {
+            singleMat = new THREE.MeshBasicMaterial({
+                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+            });
+            if (origMat.map) singleMat.map = origMat.map;
+            if (origMat.color) singleMat.color.copy(origMat.color);
+        } else {
+            singleMat = new THREE.MeshBasicMaterial({
+                color: 0xcc44cc, side: THREE.DoubleSide
+            });
+        }
+
+        var bodyMesh = new THREE.Mesh(dstGeo, singleMat);
+        bodyMesh.frustumCulled = false;
+        bodyMesh.morphTargetInfluences = [];
+        bodyGroup.add(bodyMesh);
+
+        showGLBDiag('[ONI-FIX] Material: MeshBasicMaterial, map=' + (origMat && (Array.isArray(origMat) ? origMat[0] && origMat[0].map : origMat.map) ? 'YES' : 'NO') +
+            ' groups=CLEARED drawRange=[0,Inf]');
+
+        meshDataArr.push({
+            srcPositions: srcPos,
+            dstPositions: dstGeo.attributes.position,
+            skinIndex: srcGeo.attributes.skinIndex,
+            skinWeight: srcGeo.attributes.skinWeight,
+            bindMatrix: origSM.bindMatrix,
+            bindMatrixInverse: origSM.bindMatrixInverse,
+        });
+    });
+
+    // Process static (non-SkinnedMesh) meshes - clone geometry, apply world transform
+    allStaticMeshes.forEach(function(origMesh) {
+        var clonedGeo = origMesh.geometry.clone();
+        clonedGeo.applyMatrix4(origMesh.matrixWorld);
+
+        // Remove morph attributes
+        if (clonedGeo.morphAttributes) {
+            Object.keys(clonedGeo.morphAttributes).forEach(function(k) { delete clonedGeo.morphAttributes[k]; });
+        }
+
+        clonedGeo.clearGroups();
+        clonedGeo.setDrawRange(0, Infinity);
+        clonedGeo.computeVertexNormals();
+
+        var origMatS = origMesh.material;
+        var staticMat = new THREE.MeshBasicMaterial({
+            side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+        });
+        if (origMatS) {
+            var firstMatS = Array.isArray(origMatS) ? origMatS[0] : origMatS;
+            if (firstMatS && firstMatS.map) staticMat.map = firstMatS.map;
+            if (firstMatS && firstMatS.color) staticMat.color.copy(firstMatS.color);
+        }
+
+        var staticBodyMesh = new THREE.Mesh(clonedGeo, staticMat);
+        staticBodyMesh.frustumCulled = false;
+        bodyGroup.add(staticBodyMesh);
+        showGLBDiag('[ONI] Added static mesh: ' + (origMesh.name || 'unnamed') + ' vtx=' + clonedGeo.attributes.position.count);
+    });
+
+    // bodyGroup uses IDENTITY transform
+    var geoMinY = combinedBB.min.y;
+    bodyGroup.scale.setScalar(1);
+    bodyGroup.position.set(0, 0, 0);
+
+    // Keep sourceScene DETACHED
+    group.userData.sourceScene = sourceScene;
 
     // Remove ALL fallback children
     var toRemove = [];
@@ -7798,14 +7938,32 @@ function processOniGLTF(group, gltf, stageId) {
     group.userData.eyeL = null;
     group.userData.chestMesh = null;
 
-    group.add(clonedScene);
+    group.add(bodyGroup);
 
     group.userData.glbLoaded = true;
-    group.userData.glbModel = clonedScene;
-    group.userData.sourceScene = clonedScene; // Use clonedScene for animation retargeting
-    group.userData.cpuSkin = null; // No CPU skinning - GPU handles it
+    group.userData.glbModel = bodyGroup;
 
-    // Setup animation mixer on CLONED scene (drives cloned skeleton for GPU skinning)
+    var totalMeshes = allSkinnedMeshes.length + allStaticMeshes.length;
+    var diagMsg = '[ONI] OK: ' + totalMeshes + ' meshes (' + allSkinnedMeshes.length + ' skinned + ' + allStaticMeshes.length + ' static), geoH=' + geoHeight.toFixed(4) + ' geoMinY=' + geoMinY.toFixed(4);
+    console.log(diagMsg);
+    showGLBDiag(diagMsg);
+
+    // Setup CPU skinning data (use first available skeleton)
+    var skeletonRef = null;
+    for (var si = 0; si < allSkinnedMeshes.length; si++) {
+        if (allSkinnedMeshes[si].skeleton) { skeletonRef = allSkinnedMeshes[si].skeleton; break; }
+    }
+    group.userData.cpuSkin = {
+        sourceScene: sourceScene,
+        skeleton: skeletonRef,
+        meshes: meshDataArr,
+        frameCount: 0,
+        srcHeight: geoHeight,
+        _bodyGroup: bodyGroup,
+        _tempBuf: new Float32Array(totalVertexCount * 3)
+    };
+
+    // Setup animation mixer
     var mixer = null;
     var usedEmbedded = false;
     var walkClip = null;
@@ -7818,7 +7976,7 @@ function processOniGLTF(group, gltf, stageId) {
             }
         }
         if (walkClip) {
-            mixer = new THREE.AnimationMixer(clonedScene);
+            mixer = new THREE.AnimationMixer(sourceScene);
             group.userData.mixer = mixer;
             var embAction = mixer.clipAction(walkClip);
             embAction.play();
@@ -7829,13 +7987,23 @@ function processOniGLTF(group, gltf, stageId) {
     }
     if (!usedEmbedded) {
         if (sharedAnimationsLoaded) {
-            applySharedAnimation(group, clonedScene);
+            applySharedAnimation(group, sourceScene);
         } else {
             pendingAnimationGroups.push(group);
         }
     }
 
-    showGLBDiag('[ONI] GPU Skinning ready, anim: ' + (usedEmbedded ? 'embedded' : 'shared'));
+    // Setup direct bone animation
+    var animClipForDirect = walkClip;
+    if (!animClipForDirect && sharedAnimationsLoaded) {
+        var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+        if (sharedClip) {
+            animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+        }
+    }
+    if (animClipForDirect && group.userData.cpuSkin) {
+        group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
+    }
 
     if (group.userData.sceneLight) {
         scene.remove(group.userData.sceneLight);
