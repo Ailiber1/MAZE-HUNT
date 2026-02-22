@@ -7733,24 +7733,59 @@ function cpuSkinUpdate(cpuSkinData) {
             // Diagnostic on first few frames
             if (cpuSkinData.frameCount <= 4) {
                 var verMinY = Infinity, verMaxY = -Infinity;
+                var verMinX = Infinity, verMaxX = -Infinity;
+                var verMinZ = Infinity, verMaxZ = -Infinity;
+                // Y histogram: 10 bins from 0 to 1.8
+                var yHist = [0,0,0,0,0,0,0,0,0,0];
+                var nanCount = 0, infCount = 0;
                 for (var m = 0; m < meshDataArr.length; m++) {
                     var dp2 = meshDataArr[m].dstPositions;
                     for (var i = 0; i < dp2.count; i++) {
-                        var vy = dp2.getY(i);
+                        var vx = dp2.getX(i), vy = dp2.getY(i), vz = dp2.getZ(i);
+                        if (isNaN(vy)) { nanCount++; continue; }
+                        if (!isFinite(vy)) { infCount++; continue; }
                         if (vy < verMinY) verMinY = vy;
                         if (vy > verMaxY) verMaxY = vy;
+                        if (vx < verMinX) verMinX = vx;
+                        if (vx > verMaxX) verMaxX = vx;
+                        if (vz < verMinZ) verMinZ = vz;
+                        if (vz > verMaxZ) verMaxZ = vz;
+                        var bin = Math.min(9, Math.max(0, Math.floor(vy / 0.18)));
+                        yHist[bin]++;
                     }
                 }
                 var diagMsg = '[cpuSkin] f' + cpuSkinData.frameCount +
                     ' RAW=[' + globalMinY.toFixed(1) + ',' + globalMaxY.toFixed(1) + '] h=' + outHeight.toFixed(1) +
                     ' FINAL=[' + verMinY.toFixed(4) + ',' + verMaxY.toFixed(4) + '] h=' + (verMaxY-verMinY).toFixed(4) +
-                    ' bodyGrp: scale=1 pos=(0,0,0)';
+                    ' X=[' + verMinX.toFixed(2) + ',' + verMaxX.toFixed(2) + ']' +
+                    ' Z=[' + verMinZ.toFixed(2) + ',' + verMaxZ.toFixed(2) + ']' +
+                    ' NaN=' + nanCount + ' Inf=' + infCount;
                 console.log(diagMsg);
                 if (typeof showGLBDiag === 'function') showGLBDiag(diagMsg);
+
+                // Y histogram: bins 0-3 = lower body (0-0.72), 4-6 = mid, 7-9 = upper (1.26-1.8)
+                var histStr = '[cpuSkin-HIST] Y bins(0-1.8): ';
+                for (var hb = 0; hb < 10; hb++) {
+                    histStr += '[' + (hb*0.18).toFixed(1) + '-' + ((hb+1)*0.18).toFixed(1) + ']=' + yHist[hb] + ' ';
+                }
+                console.log(histStr);
+                if (typeof showGLBDiag === 'function') showGLBDiag(histStr);
+
                 if (cpuSkinData._bodyGroup && cpuSkinData._bodyGroup.parent) {
                     var gp = cpuSkinData._bodyGroup.parent.position;
                     if (typeof showGLBDiag === 'function')
                         showGLBDiag('[cpuSkin] grp.pos=(' + gp.x.toFixed(2) + ',' + gp.y.toFixed(2) + ',' + gp.z.toFixed(2) + ')');
+                }
+
+                // Count children of bodyGroup for debug
+                if (cpuSkinData._bodyGroup) {
+                    var childInfo = '[cpuSkin] bodyGroup children: ' + cpuSkinData._bodyGroup.children.length;
+                    cpuSkinData._bodyGroup.children.forEach(function(ch, idx) {
+                        childInfo += ' [' + idx + ']=' + ch.type +
+                            (ch.material ? ' mat=' + (ch.material.wireframe ? 'wire' : (ch.material.opacity < 1 ? 'semi' : 'solid')) : '');
+                    });
+                    console.log(childInfo);
+                    if (typeof showGLBDiag === 'function') showGLBDiag(childInfo);
                 }
             }
         }
@@ -8039,6 +8074,89 @@ function processOniGLTF(group, gltf, stageId) {
         bodyMesh.frustumCulled = false;
         bodyMesh.morphTargetInfluences = [];
         bodyGroup.add(bodyMesh);
+
+        // === DEBUG: Add wireframe overlay to visualize full geometry extent ===
+        var wireDebugMat = new THREE.MeshBasicMaterial({
+            color: 0xff00ff,
+            wireframe: true,
+            side: THREE.DoubleSide,
+            depthTest: true,
+            depthWrite: false
+        });
+        var wireDebugMesh = new THREE.Mesh(dstGeo, wireDebugMat);
+        wireDebugMesh.frustumCulled = false;
+        bodyGroup.add(wireDebugMesh);
+
+        // === DEBUG: Add solid-color overlay to rule out material issues ===
+        var solidDebugMat = new THREE.MeshBasicMaterial({
+            color: 0x00ccff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.3,
+            depthTest: true,
+            depthWrite: false
+        });
+        var solidDebugMesh = new THREE.Mesh(dstGeo, solidDebugMat);
+        solidDebugMesh.frustumCulled = false;
+        bodyGroup.add(solidDebugMesh);
+
+        // === DIAGNOSTIC: Analyze geometry vertex distribution ===
+        var posAttr = dstGeo.attributes.position;
+        var diagLowY = 0, diagHighY = 0, diagMinY = Infinity, diagMaxY = -Infinity;
+        for (var di = 0; di < posAttr.count; di++) {
+            var yVal = posAttr.getY(di);
+            if (yVal < diagMinY) diagMinY = yVal;
+            if (yVal > diagMaxY) diagMaxY = yVal;
+            if (yVal < (diagMaxY + diagMinY) / 2) diagLowY++; else diagHighY++;
+        }
+        // Re-count after knowing full range
+        var midY = (diagMinY + diagMaxY) / 2;
+        diagLowY = 0; diagHighY = 0;
+        for (var di2 = 0; di2 < posAttr.count; di2++) {
+            if (posAttr.getY(di2) < midY) diagLowY++; else diagHighY++;
+        }
+
+        var idxCount = dstGeo.index ? dstGeo.index.count : 0;
+        var triCount = dstGeo.index ? Math.floor(dstGeo.index.count / 3) : Math.floor(posAttr.count / 3);
+        // Count triangles that have at least one vertex in lower half
+        var lowerTriCount = 0;
+        if (dstGeo.index) {
+            var idxArr = dstGeo.index.array;
+            for (var ti = 0; ti < idxArr.length; ti += 3) {
+                var y0 = posAttr.getY(idxArr[ti]);
+                var y1 = posAttr.getY(idxArr[ti+1]);
+                var y2 = posAttr.getY(idxArr[ti+2]);
+                if (y0 < midY || y1 < midY || y2 < midY) lowerTriCount++;
+            }
+        }
+
+        var geoDiag = '[ONI-GEO] vtx=' + posAttr.count +
+            ' Y=[' + diagMinY.toFixed(3) + ',' + diagMaxY.toFixed(3) + ']' +
+            ' lowerVtx=' + diagLowY + ' upperVtx=' + diagHighY +
+            ' tris=' + triCount + ' lowerTris=' + lowerTriCount +
+            ' idx=' + idxCount +
+            ' idxType=' + (dstGeo.index ? dstGeo.index.array.constructor.name : 'none') +
+            ' groups=' + (dstGeo.groups ? dstGeo.groups.length : 0) +
+            ' drawRange=[' + dstGeo.drawRange.start + ',' + dstGeo.drawRange.count + ']' +
+            ' matIsArray=' + Array.isArray(bodyMat);
+        console.log(geoDiag);
+        showGLBDiag(geoDiag);
+
+        // Also log skinIndex/skinWeight range for lower-body vertices
+        var skinIdx = srcGeo.attributes.skinIndex;
+        var skinWgt = srcGeo.attributes.skinWeight;
+        if (skinIdx && skinWgt) {
+            var zeroWeightCount = 0;
+            var maxBoneIdx = 0;
+            for (var si2 = 0; si2 < skinIdx.count; si2++) {
+                var tw = skinWgt.getX(si2) + skinWgt.getY(si2) + skinWgt.getZ(si2) + skinWgt.getW(si2);
+                if (tw < 0.001) zeroWeightCount++;
+                var bmax = Math.max(skinIdx.getX(si2), skinIdx.getY(si2), skinIdx.getZ(si2), skinIdx.getW(si2));
+                if (bmax > maxBoneIdx) maxBoneIdx = bmax;
+            }
+            showGLBDiag('[ONI-SKIN] zeroWeightVtx=' + zeroWeightCount + '/' + skinIdx.count + ' maxBoneIdx=' + maxBoneIdx);
+        }
+
         meshDataArr.push({
             srcPositions: srcPos,
             dstPositions: dstGeo.attributes.position,
@@ -8119,6 +8237,12 @@ function processOniGLTF(group, gltf, stageId) {
     group.userData.chestMesh = null;
 
     group.add(bodyGroup);
+
+    // === DEBUG: BoxHelper to visualize mesh bounds ===
+    var boxHelper = new THREE.BoxHelper(bodyGroup, 0xffff00);
+    group.add(boxHelper);
+    group.userData._boxHelper = boxHelper;
+
     // Lighting for MeshStandardMaterial (these lights now actually affect the model)
     var ambLight = new THREE.AmbientLight(0xffffff, 0.6);
     group.add(ambLight);
@@ -8833,6 +8957,10 @@ function updateOniAI(delta) {
             if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
                 cpuSkinUpdate(oni.group.userData.cpuSkin);
             }
+        }
+        // Update debug BoxHelper
+        if (oni.group.userData._boxHelper) {
+            oni.group.userData._boxHelper.update();
         }
     });
 }
