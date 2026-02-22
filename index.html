@@ -2301,7 +2301,6 @@ body {
 
     <!-- ========== Game Screen ========== -->
     <div id="game-screen" class="screen">
-        <div id="glb-loading-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);color:#0f0;font-family:monospace;font-size:24px;justify-content:center;align-items:center;z-index:9999;flex-direction:column;">Loading...</div>
         <div id="game-canvas-container"></div>
         <div id="game-hud">
             <div id="hud-stage-label"></div>
@@ -4504,18 +4503,14 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     return new THREE.MeshBasicMaterial({
                         map: m.map || null,
                         color: m.map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xcc44cc)),
-                        side: THREE.DoubleSide,
-                        depthTest: false,
-                        depthWrite: false
+                        side: THREE.DoubleSide
                     });
                 });
             } else {
                 bodyMat = new THREE.MeshBasicMaterial({
                     map: origMatR ? origMatR.map : null,
                     color: (origMatR && origMatR.map) ? 0xffffff : 0xcc44cc,
-                    side: THREE.DoubleSide,
-                    depthTest: false,
-                    depthWrite: false
+                    side: THREE.DoubleSide
                 });
             }
             // Remove extra attributes (keep only position, normal, uv)
@@ -4527,7 +4522,6 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             });
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
-            bodyMesh.renderOrder = 999;
             bodyMesh.morphTargetInfluences = [];
 
             var bodyGroup = new THREE.Group();
@@ -7661,7 +7655,7 @@ function cpuSkinUpdate(cpuSkinData) {
                 var cnt = dp.count;
                 for (var i = 0; i < cnt; i++) {
                     var nx = (tempBuf[tempIdx]   - centerX)   * scaleFix;
-                    var ny = (tempBuf[tempIdx+1] - globalMinY) * scaleFix + 0.15;
+                    var ny = (tempBuf[tempIdx+1] - globalMinY) * scaleFix;
                     var nz = (tempBuf[tempIdx+2] - centerZ)   * scaleFix;
                     dp.setXYZ(i, nx, ny, nz);
                     tempIdx += 3;
@@ -7756,60 +7750,7 @@ function showGLBDiag(msg) {
     el._timer = setTimeout(function() { el.style.display = 'none'; }, 8000);
 }
 
-/* --- C4-pre: GLB cache and preload system --- */
-var glbCache = {};
-
-function preloadOniGLBs(stageId, callback) {
-    var modelIds = getOniModelsForStage(stageId);
-    var uniqueIds = [];
-    modelIds.forEach(function(id) {
-        if (uniqueIds.indexOf(id) === -1) uniqueIds.push(id);
-    });
-    if (uniqueIds.length === 0) { if (callback) callback(); return; }
-
-    var loader = new THREE.GLTFLoader();
-    var loaded = 0;
-    var total = uniqueIds.length;
-    var loadingDiv = document.getElementById('glb-loading-overlay');
-    if (loadingDiv) {
-        loadingDiv.style.display = 'flex';
-        loadingDiv.textContent = 'Loading... 0/' + total;
-    }
-
-    uniqueIds.forEach(function(charId) {
-        if (glbCache[charId]) {
-            loaded++;
-            if (loadingDiv) loadingDiv.textContent = 'Loading... ' + loaded + '/' + total;
-            if (loaded >= total) {
-                if (loadingDiv) loadingDiv.style.display = 'none';
-                if (callback) callback();
-            }
-            return;
-        }
-        var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
-        if (!enemy) { loaded++; if (loaded >= total && callback) callback(); return; }
-        loader.load(enemy.file, function(gltf) {
-            glbCache[charId] = gltf;
-            loaded++;
-            console.log('[PRELOAD] Loaded ' + charId + ' (' + loaded + '/' + total + ')');
-            if (loadingDiv) loadingDiv.textContent = 'Loading... ' + loaded + '/' + total;
-            if (loaded >= total) {
-                if (loadingDiv) loadingDiv.style.display = 'none';
-                if (callback) callback();
-            }
-        }, undefined, function(err) {
-            console.error('[PRELOAD] Failed to load ' + charId + ':', err);
-            loaded++;
-            if (loadingDiv) loadingDiv.textContent = 'Loading... ' + loaded + '/' + total;
-            if (loaded >= total) {
-                if (loadingDiv) loadingDiv.style.display = 'none';
-                if (callback) callback();
-            }
-        });
-    });
-}
-
-/* --- C4-setup: Process GLTF data into ONI group (shared by cache & async paths) --- */
+/* --- C4-setup: Process GLTF data into ONI group --- */
 function processOniGLTF(group, gltf, stageId) {
     var sourceScene = gltf.scene;
     sourceScene.updateMatrixWorld(true);
@@ -7889,17 +7830,26 @@ function processOniGLTF(group, gltf, stageId) {
         dstGeo.deleteAttribute('skinIndex');
         dstGeo.deleteAttribute('skinWeight');
 
-        // Material: depthTest=false to fix lower body occlusion by floor
+        // FIX: Properly handle multi-material models (upper/lower body use different textures)
         var origMat = origSM.material;
-        var singleMat = Array.isArray(origMat) ? origMat[0] : origMat;
-        var texMap = singleMat ? singleMat.map : null;
-        var bodyMat = new THREE.MeshBasicMaterial({
-            map: texMap,
-            color: texMap ? 0xffffff : 0xcc44cc,
-            side: THREE.DoubleSide,
-            depthTest: false,
-            depthWrite: false
-        });
+        var bodyMat;
+        if (Array.isArray(origMat)) {
+            bodyMat = origMat.map(function(m) {
+                return new THREE.MeshBasicMaterial({
+                    map: m.map || null,
+                    color: m.map ? 0xffffff : 0xcc44cc,
+                    side: THREE.DoubleSide
+                });
+            });
+            showGLBDiag('[ONI] Multi-material: ' + origMat.length + ' materials');
+        } else {
+            var texMap = origMat ? origMat.map : null;
+            bodyMat = new THREE.MeshBasicMaterial({
+                map: texMap,
+                color: texMap ? 0xffffff : 0xcc44cc,
+                side: THREE.DoubleSide
+            });
+        }
 
         // Keep only position, normal, uv
         var keepAttrs = ['position', 'normal', 'uv'];
@@ -7909,7 +7859,6 @@ function processOniGLTF(group, gltf, stageId) {
 
         var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
         bodyMesh.frustumCulled = false;
-        bodyMesh.renderOrder = 999;
         bodyMesh.morphTargetInfluences = [];
         bodyGroup.add(bodyMesh);
         meshDataArr.push({
@@ -8016,29 +7965,11 @@ function processOniGLTF(group, gltf, stageId) {
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
     if (!enemy) { showGLBDiag('[ONI] enemy not found: ' + charId); return; }
-
-    // Use cached GLTF if available (from preloadOniGLBs)
-    var cachedGltf = glbCache[charId];
-    if (cachedGltf) {
-        showGLBDiag('[ONI] Using cached: ' + enemy.file);
-        try {
-            // Clone scene for independent skeleton/bones per ONI instance
-            var clonedScene = THREE.SkeletonUtils.clone(cachedGltf.scene);
-            var clonedGltf = { scene: clonedScene, animations: cachedGltf.animations || [] };
-            processOniGLTF(group, clonedGltf, stageId);
-        } catch(e) {
-            console.error('[ONI] Cache clone error:', e.message, e.stack);
-            showGLBDiag('[ONI] CACHE ERROR: ' + e.message);
-        }
-        return;
-    }
-
     showGLBDiag('[ONI] Loading: ' + enemy.file);
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
         try {
             showGLBDiag('[ONI] GLB callback fired');
-            glbCache[charId] = gltf; // Cache for future use
             processOniGLTF(group, gltf, stageId);
         } catch(e) {
             console.error('[ONI] Error:', e.message, e.stack);
@@ -11775,93 +11706,90 @@ function startGame(stageId) {
     // Setup lighting
     setupLighting(stageId);
 
-    // Preload shared Mixamo animations (can run in parallel with ONI preload)
-    preloadSharedAnimations();
+    // Spawn ONI enemies (GLBs load asynchronously, fallback model shows until loaded)
+    spawnOnis(stageId);
+
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
+    // Preload shared Mixamo animations (Running/Walking/Idle)
+    preloadSharedAnimations();
 
-    // Preload ONI GLBs, then start game
-    preloadOniGLBs(stageId, function() {
-        // GLBs cached - spawn ONIs (will use cache for instant setup)
-        spawnOnis(stageId);
+    // Place EXIT (story mode)
+    if (stageId !== 'scoreAttack') {
+        const exitInfo = placeExit(cols, rows, stageId, GameState.mazeFloors.length);
+        GameState.exitPosition = { x: exitInfo.x, z: exitInfo.z };
+        GameState.exitFloor = exitInfo.floor;
+        GameState.exitReached = false;
+        GameState.exitGroup = createExitZone(exitInfo.x, exitInfo.z, exitInfo.floor);
+        scene.add(GameState.exitGroup);
+    } else {
+        GameState.exitPosition = null;
+        GameState.exitGroup = null;
+    }
+    GameState.score = 0;
+    GameState.totalTime = 0;
+    GameState.captureInProgress = false;
+    GameState.nearestOniDistance = Infinity;
+    GameState.currentBPM = 72;
 
-        // Place EXIT (story mode)
-        if (stageId !== 'scoreAttack') {
-            const exitInfo = placeExit(cols, rows, stageId, GameState.mazeFloors.length);
-            GameState.exitPosition = { x: exitInfo.x, z: exitInfo.z };
-            GameState.exitFloor = exitInfo.floor;
-            GameState.exitReached = false;
-            GameState.exitGroup = createExitZone(exitInfo.x, exitInfo.z, exitInfo.floor);
-            scene.add(GameState.exitGroup);
-        } else {
-            GameState.exitPosition = null;
-            GameState.exitGroup = null;
-        }
-        GameState.score = 0;
-        GameState.totalTime = 0;
-        GameState.captureInProgress = false;
-        GameState.nearestOniDistance = Infinity;
-        GameState.currentBPM = 72;
+    // Set player start position
+    camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
+    GameState.playerRotationY = 0;
+    GameState.playerPosition = { x: CL * 1.5, y: PLAYER_HEIGHT, z: CL * 1.5 };
+    GameState.stamina = 100;
+    GameState.sprintLocked = false;
+    GameState.alive = true;
+    GameState.moveForward = false;
+    GameState.moveBackward = false;
+    GameState.turnLeft = false;
+    GameState.turnRight = false;
+    GameState.sprint = false;
+    headBobTimer = 0;
 
-        // Set player start position
-        camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
-        GameState.playerRotationY = 0;
-        GameState.playerPosition = { x: CL * 1.5, y: PLAYER_HEIGHT, z: CL * 1.5 };
-        GameState.stamina = 100;
-        GameState.sprintLocked = false;
-        GameState.alive = true;
-        GameState.moveForward = false;
-        GameState.moveBackward = false;
-        GameState.turnLeft = false;
-        GameState.turnRight = false;
-        GameState.sprint = false;
-        headBobTimer = 0;
+    // Setup controls
+    GameState.isMobile = isMobile();
+    if (GameState.isMobile) {
+        initMobileControls();
+        initKeyInput();
+    } else {
+        initPointerLock();
+        initKeyInput();
+    }
 
-        // Setup controls
-        GameState.isMobile = isMobile();
+    // Start timer
+    if (timeLimit > 0) {
+        startTimer(timeLimit);
+    } else {
+        document.getElementById('hud-timer').textContent = '--:--';
+    }
+
+    // Show pointer lock hint (desktop only)
+    const hint = document.getElementById('pointer-lock-hint');
+    if (hint) {
         if (GameState.isMobile) {
-            initMobileControls();
-            initKeyInput();
+            hint.classList.remove('visible');
         } else {
-            initPointerLock();
-            initKeyInput();
+            hint.classList.add('visible');
         }
+    }
 
-        // Start timer
-        if (timeLimit > 0) {
-            startTimer(timeLimit);
-        } else {
-            document.getElementById('hud-timer').textContent = '--:--';
-        }
+    // Phase 7: Initialize sound & effects
+    prevMovementState = 'idle';
+    FootstepManager.stop();
+    FootstepManager.wasSprintingLastFrame = false;
+    OniFootstepManager.start();
+    HeartbeatManager.start();
+    AmbientSoundManager.init(stageId);
+    Navigator.setLanguage(GameState.language);
+    Navigator.reset();
+    Navigator.add('gameStart');
+    createDustParticles(stageId, GameState.mazeFloors.length);
+    if (SoundManager.bgmEnabled) SoundManager.playBGM(stageId);
 
-        // Show pointer lock hint (desktop only)
-        const hint = document.getElementById('pointer-lock-hint');
-        if (hint) {
-            if (GameState.isMobile) {
-                hint.classList.remove('visible');
-            } else {
-                hint.classList.add('visible');
-            }
-        }
-
-        // Phase 7: Initialize sound & effects
-        prevMovementState = 'idle';
-        FootstepManager.stop();
-        FootstepManager.wasSprintingLastFrame = false;
-        OniFootstepManager.start();
-        HeartbeatManager.start();
-        AmbientSoundManager.init(stageId);
-        Navigator.setLanguage(GameState.language);
-        Navigator.reset();
-        Navigator.add('gameStart');
-        createDustParticles(stageId, GameState.mazeFloors.length);
-        if (SoundManager.bgmEnabled) SoundManager.playBGM(stageId);
-
-        // Activate game
-        GameState.gameActive = true;
-        clock.start();
-        gameLoop();
-    });
+    // Activate game
+    GameState.gameActive = true;
+    clock.start();
+    gameLoop();
 }
 
 /* --- Cleanup Game (for returning to title) --- */
