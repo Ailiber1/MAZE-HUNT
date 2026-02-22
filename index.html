@@ -7581,6 +7581,63 @@ function cpuSkinUpdate(cpuSkinData) {
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
+        // === ONE-TIME DIAGNOSTIC (frame 2 only) ===
+        if (cpuSkinData.frameCount === 2 && cpuSkinData.meshes) {
+            var md0 = cpuSkinData.meshes[0];
+            var diagSI = md0.skinIndex;
+            var diagSW = md0.skinWeight;
+            var diagSrcPos = md0.srcPositions;
+            var boneCount = skeleton.bones.length;
+            var bmLen = bm.length / 16;
+            var siType = diagSI.array ? diagSI.array.constructor.name : 'unknown';
+            var swType = diagSW.array ? diagSW.array.constructor.name : 'unknown';
+            var swNorm = diagSW.normalized ? 'YES' : 'NO';
+            console.log('[DIAG] boneCount=' + boneCount + ' bmLen=' + bmLen +
+                ' siType=' + siType + ' swType=' + swType + ' swNormalized=' + swNorm);
+
+            // Find max skinIndex and check for out-of-bounds
+            var maxSI = 0, oobCount = 0;
+            for (var di = 0; di < diagSI.count; di++) {
+                var s0 = diagSI.getX(di), s1 = diagSI.getY(di), s2 = diagSI.getZ(di), s3 = diagSI.getW(di);
+                var mx = Math.max(s0, s1, s2, s3);
+                if (mx > maxSI) maxSI = mx;
+                if (s0 >= boneCount || s1 >= boneCount || s2 >= boneCount || s3 >= boneCount) oobCount++;
+            }
+            console.log('[DIAG] maxSkinIndex=' + maxSI + ' oobCount=' + oobCount);
+
+            // Sample lower body (srcY < 0.5) and upper body (srcY > 1.0) vertices
+            var srcH = cpuSkinData.srcHeight || 1.8;
+            var midY = srcH * 0.5;
+            var lowerSamples = [], upperSamples = [];
+            for (var di = 0; di < diagSrcPos.count && (lowerSamples.length < 3 || upperSamples.length < 3); di++) {
+                var sy = diagSrcPos.getY(di);
+                if (sy < midY && lowerSamples.length < 3) {
+                    lowerSamples.push({idx: di, srcY: sy,
+                        si: [diagSI.getX(di), diagSI.getY(di), diagSI.getZ(di), diagSI.getW(di)],
+                        sw: [diagSW.getX(di), diagSW.getY(di), diagSW.getZ(di), diagSW.getW(di)]});
+                } else if (sy > srcH * 0.7 && upperSamples.length < 3) {
+                    upperSamples.push({idx: di, srcY: sy,
+                        si: [diagSI.getX(di), diagSI.getY(di), diagSI.getZ(di), diagSI.getW(di)],
+                        sw: [diagSW.getX(di), diagSW.getY(di), diagSW.getZ(di), diagSW.getW(di)]});
+                }
+            }
+            console.log('[DIAG] Lower body vertices (srcY<' + midY.toFixed(2) + '):');
+            lowerSamples.forEach(function(s) {
+                console.log('  vtx[' + s.idx + '] srcY=' + s.srcY.toFixed(4) +
+                    ' si=[' + s.si.join(',') + '] sw=[' + s.sw.map(function(v){return v.toFixed(4)}).join(',') + ']');
+            });
+            console.log('[DIAG] Upper body vertices (srcY>' + (srcH*0.7).toFixed(2) + '):');
+            upperSamples.forEach(function(s) {
+                console.log('  vtx[' + s.idx + '] srcY=' + s.srcY.toFixed(4) +
+                    ' si=[' + s.si.join(',') + '] sw=[' + s.sw.map(function(v){return v.toFixed(4)}).join(',') + ']');
+            });
+
+            // Log bone names for matching analysis
+            var boneNames = [];
+            skeleton.bones.forEach(function(b) { if (b) boneNames.push(b.name); });
+            console.log('[DIAG] Bone names (' + boneNames.length + '): ' + boneNames.join(', '));
+        }
+
         var _boneMat = new THREE.Matrix4();
         var _v = new THREE.Vector4();
         var _temp = new THREE.Vector4();
@@ -7650,6 +7707,24 @@ function cpuSkinUpdate(cpuSkinData) {
                 if (_result.y > globalMaxY) globalMaxY = _result.y;
                 if (_result.z < globalMinZ) globalMinZ = _result.z;
                 if (_result.z > globalMaxZ) globalMaxZ = _result.z;
+            }
+        }
+
+        // === ONE-TIME DIAGNOSTIC: Y range after PASS 1 ===
+        if (cpuSkinData.frameCount === 2) {
+            console.log('[DIAG-PASS1] Y range: ' + globalMinY.toFixed(4) + ' to ' + globalMaxY.toFixed(4) +
+                ' | X: ' + globalMinX.toFixed(4) + ' to ' + globalMaxX.toFixed(4) +
+                ' | Z: ' + globalMinZ.toFixed(4) + ' to ' + globalMaxZ.toFixed(4));
+            // Y histogram (10 buckets)
+            var buckets = [0,0,0,0,0,0,0,0,0,0];
+            var rangeY = globalMaxY - globalMinY;
+            if (rangeY > 0.001) {
+                for (var hi = 0; hi < tempIdx; hi += 3) {
+                    var by = Math.floor(((tempBuf[hi+1] - globalMinY) / rangeY) * 9.999);
+                    if (by < 0) by = 0; if (by > 9) by = 9;
+                    buckets[by]++;
+                }
+                console.log('[DIAG-PASS1] Y histogram (0=bottom, 9=top): ' + buckets.join(', '));
             }
         }
 
