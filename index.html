@@ -7722,23 +7722,6 @@ function processOniGLTF(group, gltf, stageId) {
     var sourceScene = gltf.scene;
     sourceScene.updateMatrixWorld(true);
 
-    // === GLB MODEL STRUCTURE DEBUG ===
-    console.log('=== ONI GLB MODEL STRUCTURE ===');
-    var meshIndex = 0;
-    sourceScene.traverse(function(child) {
-        if (child.isMesh || child.isSkinnedMesh) {
-            var geo = child.geometry;
-            var posAttr = geo && geo.attributes && geo.attributes.position;
-            var vertexCount = posAttr ? posAttr.count : 0;
-            console.log('MESH[' + meshIndex + '] name="' + child.name + '"' +
-                ' type=' + (child.isSkinnedMesh ? 'SkinnedMesh' : 'Mesh') +
-                ' visible=' + child.visible +
-                ' vertices=' + vertexCount);
-            meshIndex++;
-        }
-    });
-    console.log('=== TOTAL MESHES: ' + meshIndex + ' ===');
-
     // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
     sourceScene.traverse(function(child) {
         if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
@@ -7780,6 +7763,20 @@ function processOniGLTF(group, gltf, stageId) {
         showGLBDiag('[ONI] ERROR: No meshes found!');
         return;
     }
+
+    // === FIX 1: Ensure bindMode is "attached" ===
+    // === FIX 2: Recalculate inverse bind matrices ===
+    // === FIX 3: Reset skeleton to bind pose ===
+    allSkinnedMeshes.forEach(function(sm) {
+        if (sm.bindMode !== 'attached') {
+            console.log('[ONI-FIX] bindMode was "' + sm.bindMode + '", setting to "attached"');
+            sm.bindMode = 'attached';
+        }
+        if (sm.skeleton) {
+            sm.skeleton.calculateInverses();
+            sm.skeleton.pose();
+        }
+    });
 
     // Compute scale from SOURCE GEOMETRY bounding box (all meshes)
     var combinedBB = new THREE.Box3();
@@ -7843,27 +7840,8 @@ function processOniGLTF(group, gltf, stageId) {
             showGLBDiag('[ONI] Upgraded index buffer to Uint32 (vtxCount=' + vtxCount + ')');
         }
 
-        // === DIAGNOSTIC: Report original geometry state before modifications ===
-        var origDrawRange = srcGeo.drawRange;
-        var origGroups = srcGeo.groups || [];
-        var clonedGroups = dstGeo.groups || [];
-        var idxCount = dstGeo.index ? dstGeo.index.count : 0;
-        var idxType = dstGeo.index ? dstGeo.index.array.constructor.name : 'none';
-        console.log('[ONI-FIX] === GEOMETRY DIAGNOSTIC ===');
-        console.log('[ONI-FIX] vtxCount=' + vtxCount + ' idxCount=' + idxCount + ' idxType=' + idxType);
-        console.log('[ONI-FIX] SRC drawRange: start=' + origDrawRange.start + ' count=' + origDrawRange.count);
-        console.log('[ONI-FIX] SRC groups(' + origGroups.length + '): ' + JSON.stringify(origGroups));
-        console.log('[ONI-FIX] DST groups(' + clonedGroups.length + '): ' + JSON.stringify(clonedGroups));
-        showGLBDiag('[ONI-FIX] vtx=' + vtxCount + ' idx=' + idxCount + ' type=' + idxType +
-            ' srcGroups=' + origGroups.length + ' srcDR=[' + origDrawRange.start + ',' + origDrawRange.count + ']');
-
-        // === FIX: Clear ALL geometry groups - use single drawRange instead ===
-        // Groups can restrict rendering to only their covered index ranges.
-        // Any indices not covered by a group will NOT be drawn.
-        // By clearing groups, Three.js uses drawRange for the entire geometry.
         dstGeo.clearGroups();
         dstGeo.setDrawRange(0, Infinity);
-        console.log('[ONI-FIX] Cleared groups, drawRange set to [0, Infinity]');
 
         // Recompute normals
         dstGeo.computeVertexNormals();
@@ -7895,9 +7873,6 @@ function processOniGLTF(group, gltf, stageId) {
         bodyMesh.frustumCulled = false;
         bodyMesh.morphTargetInfluences = [];
         bodyGroup.add(bodyMesh);
-
-        showGLBDiag('[ONI-FIX] Material: MeshBasicMaterial, map=' + (origMat && (Array.isArray(origMat) ? origMat[0] && origMat[0].map : origMat.map) ? 'YES' : 'NO') +
-            ' groups=CLEARED drawRange=[0,Inf]');
 
         meshDataArr.push({
             srcPositions: srcPos,
