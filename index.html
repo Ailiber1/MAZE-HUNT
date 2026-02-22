@@ -2301,6 +2301,7 @@ body {
 
     <!-- ========== Game Screen ========== -->
     <div id="game-screen" class="screen">
+        <div id="glb-loading-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);color:#0f0;font-family:monospace;font-size:24px;justify-content:center;align-items:center;z-index:9999;flex-direction:column;">Loading...</div>
         <div id="game-canvas-container"></div>
         <div id="game-hud">
             <div id="hud-stage-label"></div>
@@ -4504,9 +4505,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                         map: m.map || null,
                         color: m.map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xcc44cc)),
                         side: THREE.DoubleSide,
-                        polygonOffset: true,
-                        polygonOffsetFactor: -4,
-                        polygonOffsetUnits: -4
+                        depthTest: false,
+                        depthWrite: false
                     });
                 });
             } else {
@@ -4514,9 +4514,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     map: origMatR ? origMatR.map : null,
                     color: (origMatR && origMatR.map) ? 0xffffff : 0xcc44cc,
                     side: THREE.DoubleSide,
-                    polygonOffset: true,
-                    polygonOffsetFactor: -4,
-                    polygonOffsetUnits: -4
+                    depthTest: false,
+                    depthWrite: false
                 });
             }
             // Remove extra attributes (keep only position, normal, uv)
@@ -4528,7 +4527,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             });
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
-            bodyMesh.renderOrder = 1;
+            bodyMesh.renderOrder = 999;
             bodyMesh.morphTargetInfluences = [];
 
             var bodyGroup = new THREE.Group();
@@ -7757,233 +7756,290 @@ function showGLBDiag(msg) {
     el._timer = setTimeout(function() { el.style.display = 'none'; }, 8000);
 }
 
+/* --- C4-pre: GLB cache and preload system --- */
+var glbCache = {};
+
+function preloadOniGLBs(stageId, callback) {
+    var modelIds = getOniModelsForStage(stageId);
+    var uniqueIds = [];
+    modelIds.forEach(function(id) {
+        if (uniqueIds.indexOf(id) === -1) uniqueIds.push(id);
+    });
+    if (uniqueIds.length === 0) { if (callback) callback(); return; }
+
+    var loader = new THREE.GLTFLoader();
+    var loaded = 0;
+    var total = uniqueIds.length;
+    var loadingDiv = document.getElementById('glb-loading-overlay');
+    if (loadingDiv) {
+        loadingDiv.style.display = 'flex';
+        loadingDiv.textContent = 'Loading... 0/' + total;
+    }
+
+    uniqueIds.forEach(function(charId) {
+        if (glbCache[charId]) {
+            loaded++;
+            if (loadingDiv) loadingDiv.textContent = 'Loading... ' + loaded + '/' + total;
+            if (loaded >= total) {
+                if (loadingDiv) loadingDiv.style.display = 'none';
+                if (callback) callback();
+            }
+            return;
+        }
+        var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
+        if (!enemy) { loaded++; if (loaded >= total && callback) callback(); return; }
+        loader.load(enemy.file, function(gltf) {
+            glbCache[charId] = gltf;
+            loaded++;
+            console.log('[PRELOAD] Loaded ' + charId + ' (' + loaded + '/' + total + ')');
+            if (loadingDiv) loadingDiv.textContent = 'Loading... ' + loaded + '/' + total;
+            if (loaded >= total) {
+                if (loadingDiv) loadingDiv.style.display = 'none';
+                if (callback) callback();
+            }
+        }, undefined, function(err) {
+            console.error('[PRELOAD] Failed to load ' + charId + ':', err);
+            loaded++;
+            if (loadingDiv) loadingDiv.textContent = 'Loading... ' + loaded + '/' + total;
+            if (loaded >= total) {
+                if (loadingDiv) loadingDiv.style.display = 'none';
+                if (callback) callback();
+            }
+        });
+    });
+}
+
+/* --- C4-setup: Process GLTF data into ONI group (shared by cache & async paths) --- */
+function processOniGLTF(group, gltf, stageId) {
+    var sourceScene = gltf.scene;
+    sourceScene.updateMatrixWorld(true);
+
+    // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
+    sourceScene.traverse(function(child) {
+        if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
+            child.name = child.name.replace(/:/g, '');
+        }
+    });
+
+    // Sanitize embedded animation track names to match sanitized bones
+    if (gltf.animations) {
+        gltf.animations.forEach(function(clip) {
+            clip.tracks.forEach(function(track) {
+                track.name = track.name.replace(/:/g, '');
+                var dotIdx = track.name.lastIndexOf('.');
+                if (dotIdx !== -1) {
+                    var objectPath = track.name.substring(0, dotIdx);
+                    var property = track.name.substring(dotIdx + 1);
+                    var slashIdx = objectPath.lastIndexOf('/');
+                    if (slashIdx !== -1) {
+                        objectPath = objectPath.substring(slashIdx + 1);
+                    }
+                    track.name = objectPath + '.' + property;
+                }
+            });
+        });
+    }
+
+    // Find ALL SkinnedMeshes for full-body CPU skinning
+    var allSkinnedMeshes = [];
+    sourceScene.traverse(function(child) {
+        if (child.isSkinnedMesh && child.geometry) allSkinnedMeshes.push(child);
+    });
+    showGLBDiag('[ONI] SkinnedMeshes found: ' + allSkinnedMeshes.length);
+    if (allSkinnedMeshes.length === 0) { showGLBDiag('[ONI] ERROR: No SkinnedMesh!'); return; }
+
+    // Compute scale from SOURCE GEOMETRY bounding box
+    var combinedBB = new THREE.Box3();
+    allSkinnedMeshes.forEach(function(sm) {
+        sm.geometry.computeBoundingBox();
+        combinedBB.union(sm.geometry.boundingBox);
+    });
+    var geoHeight = combinedBB.max.y - combinedBB.min.y;
+    var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
+    showGLBDiag('[ONI] geoH=' + geoHeight.toFixed(4) + ' meshScale=' + meshScale.toFixed(6));
+
+    // Create visible regular Mesh for EACH SkinnedMesh (CPU skinning)
+    var bodyGroup = new THREE.Group();
+    var meshDataArr = [];
+    var totalVertexCount = 0;
+    allSkinnedMeshes.forEach(function(origSM) {
+        var srcGeo = origSM.geometry;
+        var dstGeo = srcGeo.clone();
+        var srcPos = srcGeo.attributes.position;
+        var vtxCount = srcPos.count;
+        totalVertexCount += vtxCount;
+
+        // Create FRESH independent position buffer for dstGeo
+        var freshArr = new Float32Array(vtxCount * 3);
+        for (var pi = 0; pi < vtxCount; pi++) {
+            freshArr[pi*3]   = srcPos.getX(pi);
+            freshArr[pi*3+1] = srcPos.getY(pi);
+            freshArr[pi*3+2] = srcPos.getZ(pi);
+        }
+        dstGeo.setAttribute('position', new THREE.BufferAttribute(freshArr, 3));
+
+        // Remove morph attributes
+        if (dstGeo.morphAttributes) {
+            var morphKeys = Object.keys(dstGeo.morphAttributes);
+            if (morphKeys.length > 0) {
+                morphKeys.forEach(function(k) { delete dstGeo.morphAttributes[k]; });
+            }
+        }
+        // Remove skin attributes
+        dstGeo.deleteAttribute('skinIndex');
+        dstGeo.deleteAttribute('skinWeight');
+
+        // Material: depthTest=false to fix lower body occlusion by floor
+        var origMat = origSM.material;
+        var singleMat = Array.isArray(origMat) ? origMat[0] : origMat;
+        var texMap = singleMat ? singleMat.map : null;
+        var bodyMat = new THREE.MeshBasicMaterial({
+            map: texMap,
+            color: texMap ? 0xffffff : 0xcc44cc,
+            side: THREE.DoubleSide,
+            depthTest: false,
+            depthWrite: false
+        });
+
+        // Keep only position, normal, uv
+        var keepAttrs = ['position', 'normal', 'uv'];
+        Object.keys(dstGeo.attributes).forEach(function(name) {
+            if (keepAttrs.indexOf(name) === -1) dstGeo.deleteAttribute(name);
+        });
+
+        var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
+        bodyMesh.frustumCulled = false;
+        bodyMesh.renderOrder = 999;
+        bodyMesh.morphTargetInfluences = [];
+        bodyGroup.add(bodyMesh);
+        meshDataArr.push({
+            srcPositions: srcPos,
+            dstPositions: dstGeo.attributes.position,
+            skinIndex: srcGeo.attributes.skinIndex,
+            skinWeight: srcGeo.attributes.skinWeight,
+            bindMatrix: origSM.bindMatrix,
+            bindMatrixInverse: origSM.bindMatrixInverse,
+        });
+    });
+
+    // bodyGroup uses IDENTITY transform
+    var geoMinY = combinedBB.min.y;
+    bodyGroup.scale.setScalar(1);
+    bodyGroup.position.set(0, 0, 0);
+
+    // Keep sourceScene DETACHED
+    group.userData.sourceScene = sourceScene;
+
+    // Remove ALL fallback children
+    var toRemove = [];
+    group.children.forEach(function(child) { toRemove.push(child); });
+    toRemove.forEach(function(child) { group.remove(child); });
+    group.userData.eyeR = null;
+    group.userData.eyeL = null;
+    group.userData.chestMesh = null;
+
+    group.add(bodyGroup);
+    var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
+    bodyLight.position.set(0, 1.2, 0);
+    group.add(bodyLight);
+    var lowerLight = new THREE.PointLight(0xffffff, 0.8, 5);
+    lowerLight.position.set(0, 0.3, 0.5);
+    group.add(lowerLight);
+
+    group.userData.glbLoaded = true;
+    group.userData.glbModel = bodyGroup;
+
+    var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, geoH=' + geoHeight.toFixed(4) + ' geoMinY=' + geoMinY.toFixed(4);
+    console.log(diagMsg);
+    showGLBDiag(diagMsg);
+
+    // Setup CPU skinning data
+    group.userData.cpuSkin = {
+        sourceScene: sourceScene,
+        skeleton: allSkinnedMeshes[0].skeleton,
+        meshes: meshDataArr,
+        frameCount: 0,
+        srcHeight: geoHeight,
+        _bodyGroup: bodyGroup,
+        _tempBuf: new Float32Array(totalVertexCount * 3)
+    };
+
+    // Setup animation mixer
+    var mixer = null;
+    var usedEmbedded = false;
+    var walkClip = null;
+    if (gltf.animations && gltf.animations.length > 0) {
+        group.userData.animations = gltf.animations;
+        for (var i = 0; i < gltf.animations.length; i++) {
+            var aname = gltf.animations[i].name.toLowerCase();
+            if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
+                walkClip = gltf.animations[i]; break;
+            }
+        }
+        if (walkClip) {
+            mixer = new THREE.AnimationMixer(sourceScene);
+            group.userData.mixer = mixer;
+            var embAction = mixer.clipAction(walkClip);
+            embAction.play();
+            group.userData.currentAction = embAction;
+            group.userData.currentAnimState = 'run';
+            usedEmbedded = true;
+        }
+    }
+    if (!usedEmbedded) {
+        if (sharedAnimationsLoaded) {
+            applySharedAnimation(group, sourceScene);
+        } else {
+            pendingAnimationGroups.push(group);
+        }
+    }
+
+    // Setup direct bone animation
+    var animClipForDirect = walkClip;
+    if (!animClipForDirect && sharedAnimationsLoaded) {
+        var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
+        if (sharedClip) {
+            animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
+        }
+    }
+    if (animClipForDirect && group.userData.cpuSkin) {
+        group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
+    }
+
+    if (group.userData.sceneLight) {
+        scene.remove(group.userData.sceneLight);
+        group.userData.sceneLight = null;
+    }
+}
+
 /* --- C4: Load GLB model into ONI group (multi-mesh support) --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
     if (!enemy) { showGLBDiag('[ONI] enemy not found: ' + charId); return; }
+
+    // Use cached GLTF if available (from preloadOniGLBs)
+    var cachedGltf = glbCache[charId];
+    if (cachedGltf) {
+        showGLBDiag('[ONI] Using cached: ' + enemy.file);
+        try {
+            // Clone scene for independent skeleton/bones per ONI instance
+            var clonedScene = THREE.SkeletonUtils.clone(cachedGltf.scene);
+            var clonedGltf = { scene: clonedScene, animations: cachedGltf.animations || [] };
+            processOniGLTF(group, clonedGltf, stageId);
+        } catch(e) {
+            console.error('[ONI] Cache clone error:', e.message, e.stack);
+            showGLBDiag('[ONI] CACHE ERROR: ' + e.message);
+        }
+        return;
+    }
+
     showGLBDiag('[ONI] Loading: ' + enemy.file);
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
         try {
             showGLBDiag('[ONI] GLB callback fired');
-            var sourceScene = gltf.scene;
-            sourceScene.updateMatrixWorld(true);
-
-            // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
-            sourceScene.traverse(function(child) {
-                if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
-                    child.name = child.name.replace(/:/g, '');
-                }
-            });
-
-            // Sanitize embedded animation track names to match sanitized bones
-            if (gltf.animations) {
-                gltf.animations.forEach(function(clip) {
-                    clip.tracks.forEach(function(track) {
-                        track.name = track.name.replace(/:/g, '');
-                        var dotIdx = track.name.lastIndexOf('.');
-                        if (dotIdx !== -1) {
-                            var objectPath = track.name.substring(0, dotIdx);
-                            var property = track.name.substring(dotIdx + 1);
-                            var slashIdx = objectPath.lastIndexOf('/');
-                            if (slashIdx !== -1) {
-                                objectPath = objectPath.substring(slashIdx + 1);
-                            }
-                            track.name = objectPath + '.' + property;
-                        }
-                    });
-                });
-            }
-
-            // Find ALL SkinnedMeshes for full-body CPU skinning
-            var allSkinnedMeshes = [];
-            sourceScene.traverse(function(child) {
-                if (child.isSkinnedMesh && child.geometry) allSkinnedMeshes.push(child);
-            });
-            showGLBDiag('[ONI] SkinnedMeshes found: ' + allSkinnedMeshes.length);
-            if (allSkinnedMeshes.length === 0) { showGLBDiag('[ONI] ERROR: No SkinnedMesh!'); return; }
-
-            // Compute scale from SOURCE GEOMETRY bounding box (stable, matches b550155)
-            var combinedBB = new THREE.Box3();
-            allSkinnedMeshes.forEach(function(sm) {
-                sm.geometry.computeBoundingBox();
-                combinedBB.union(sm.geometry.boundingBox);
-            });
-            var geoHeight = combinedBB.max.y - combinedBB.min.y;
-            var meshScale = (geoHeight > 0.001) ? (1.8 / geoHeight) : 100;
-            showGLBDiag('[ONI] geoH=' + geoHeight.toFixed(4) + ' meshScale=' + meshScale.toFixed(6));
-
-            // Create visible regular Mesh for EACH SkinnedMesh (CPU skinning)
-            var bodyGroup = new THREE.Group();
-            var meshDataArr = [];
-            var totalVertexCount = 0;
-            allSkinnedMeshes.forEach(function(origSM) {
-                var srcGeo = origSM.geometry;
-                var dstGeo = srcGeo.clone();
-                var srcPos = srcGeo.attributes.position;
-                var vtxCount = srcPos.count;
-                totalVertexCount += vtxCount;
-
-                // ALWAYS create a FRESH independent position buffer for dstGeo
-                // (prevents shared-array bug if clone() doesn't deep-copy)
-                var freshArr = new Float32Array(vtxCount * 3);
-                for (var pi = 0; pi < vtxCount; pi++) {
-                    freshArr[pi*3]   = srcPos.getX(pi);
-                    freshArr[pi*3+1] = srcPos.getY(pi);
-                    freshArr[pi*3+2] = srcPos.getZ(pi);
-                }
-                dstGeo.setAttribute('position', new THREE.BufferAttribute(freshArr, 3));
-                var sameArr = (srcPos.array === dstGeo.attributes.position.array);
-                showGLBDiag('[ONI] Fresh pos buf: ' + vtxCount + ' verts, shared=' + sameArr);
-
-                // Remove morph attributes (prevent GPU morph deformation shifting vertices)
-                if (dstGeo.morphAttributes) {
-                    var morphKeys = Object.keys(dstGeo.morphAttributes);
-                    if (morphKeys.length > 0) {
-                        showGLBDiag('[ONI] REMOVING morphAttributes: ' + morphKeys.join(','));
-                        morphKeys.forEach(function(k) { delete dstGeo.morphAttributes[k]; });
-                    }
-                }
-
-                // Remove skin attributes (not needed for regular Mesh, prevents GPU skinning)
-                dstGeo.deleteAttribute('skinIndex');
-                dstGeo.deleteAttribute('skinWeight');
-
-                // Log remaining attributes
-                var attrNames = Object.keys(dstGeo.attributes);
-                showGLBDiag('[ONI] dstGeo attrs: ' + attrNames.join(','));
-
-                // FIX: Use MeshBasicMaterial with polygonOffset to prevent depth-buffer occlusion
-                // Root cause: floor plane at Y=0 occludes model's lower body in Z-buffer
-                var origMat = origSM.material;
-                var singleMat = Array.isArray(origMat) ? origMat[0] : origMat;
-                var texMap = singleMat ? singleMat.map : null;
-                var bodyMat = new THREE.MeshBasicMaterial({
-                    map: texMap,
-                    color: texMap ? 0xffffff : 0xcc44cc,
-                    side: THREE.DoubleSide,
-                    // Aggressive polygon offset: push model toward camera in depth buffer
-                    polygonOffset: true,
-                    polygonOffsetFactor: -4,
-                    polygonOffsetUnits: -4
-                });
-
-                // Remove suspicious extra attributes that might confuse the vertex shader
-                var keepAttrs = ['position', 'normal', 'uv'];
-                var allAttrNames = Object.keys(dstGeo.attributes);
-                allAttrNames.forEach(function(name) {
-                    if (keepAttrs.indexOf(name) === -1) {
-                        dstGeo.deleteAttribute(name);
-                    }
-                });
-                showGLBDiag('[ONI] Cleaned attrs: ' + Object.keys(dstGeo.attributes).join(','));
-
-                var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
-                bodyMesh.frustumCulled = false;
-                bodyMesh.renderOrder = 1; // render after floor (renderOrder=0)
-                bodyMesh.morphTargetInfluences = [];
-                bodyGroup.add(bodyMesh);
-                meshDataArr.push({
-                    srcPositions: srcPos,
-                    dstPositions: dstGeo.attributes.position,
-                    skinIndex: srcGeo.attributes.skinIndex,
-                    skinWeight: srcGeo.attributes.skinWeight,
-                    bindMatrix: origSM.bindMatrix,
-                    bindMatrixInverse: origSM.bindMatrixInverse,
-                });
-            });
-
-            // bodyGroup uses IDENTITY transform — cpuSkinUpdate normalizes vertices directly
-            var geoMinY = combinedBB.min.y;
-            bodyGroup.scale.setScalar(1);
-            bodyGroup.position.set(0, 0, 0);
-            showGLBDiag('[ONI] geoMinY=' + geoMinY.toFixed(4) + ' bodyGroup=IDENTITY (vertices normalized by cpuSkinUpdate)');
-
-            // Keep sourceScene DETACHED (not added to group) to prevent
-            // parent transform contamination in bone world matrices.
-            group.userData.sourceScene = sourceScene;
-
-            // Remove ALL fallback children including eyes (GLB model has its own face)
-            var toRemove = [];
-            group.children.forEach(function(child) { toRemove.push(child); });
-            toRemove.forEach(function(child) { group.remove(child); });
-            group.userData.eyeR = null;
-            group.userData.eyeL = null;
-            group.userData.chestMesh = null; // prevent breathing anim on removed mesh
-
-            group.add(bodyGroup);
-            // Lights: upper body + lower body for visibility in dark scenes
-            var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
-            bodyLight.position.set(0, 1.2, 0);
-            group.add(bodyLight);
-            var lowerLight = new THREE.PointLight(0xffffff, 0.8, 5);
-            lowerLight.position.set(0, 0.3, 0.5);
-            group.add(lowerLight);
-
-            group.userData.glbLoaded = true;
-            group.userData.glbModel = bodyGroup;
-
-            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, geoH=' + geoHeight.toFixed(4) + ' geoMinY=' + geoMinY.toFixed(4) + ' bodyGroup=IDENTITY';
-            console.log(diagMsg);
-            showGLBDiag(diagMsg);
-
-            // Setup CPU skinning data — bodyGroup transforms will be set dynamically
-            group.userData.cpuSkin = {
-                sourceScene: sourceScene,
-                skeleton: allSkinnedMeshes[0].skeleton,
-                meshes: meshDataArr,
-                frameCount: 0,
-                srcHeight: geoHeight,
-                _bodyGroup: bodyGroup,
-                _tempBuf: new Float32Array(totalVertexCount * 3) // temp buffer for CPU skinning
-            };
-
-            // Setup animation mixer on the ORIGINAL sourceScene (unchanged)
-            var mixer = null;
-            var usedEmbedded = false;
-            var walkClip = null;
-            if (gltf.animations && gltf.animations.length > 0) {
-                group.userData.animations = gltf.animations;
-                for (var i = 0; i < gltf.animations.length; i++) {
-                    var aname = gltf.animations[i].name.toLowerCase();
-                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
-                        walkClip = gltf.animations[i]; break;
-                    }
-                }
-                if (walkClip) {
-                    mixer = new THREE.AnimationMixer(sourceScene);
-                    group.userData.mixer = mixer;
-                    var embAction = mixer.clipAction(walkClip);
-                    embAction.play();
-                    group.userData.currentAction = embAction;
-                    group.userData.currentAnimState = 'run';
-                    usedEmbedded = true;
-                }
-            }
-            if (!usedEmbedded) {
-                if (sharedAnimationsLoaded) {
-                    applySharedAnimation(group, sourceScene);
-                } else {
-                    pendingAnimationGroups.push(group);
-                }
-            }
-
-            // Setup direct bone animation (bypasses PropertyBinding)
-            var animClipForDirect = walkClip;
-            if (!animClipForDirect && sharedAnimationsLoaded) {
-                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-                if (sharedClip) {
-                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
-                }
-            }
-            if (animClipForDirect && group.userData.cpuSkin) {
-                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
-            }
-
-            if (group.userData.sceneLight) {
-                scene.remove(group.userData.sceneLight);
-                group.userData.sceneLight = null;
-            }
+            glbCache[charId] = gltf; // Cache for future use
+            processOniGLTF(group, gltf, stageId);
         } catch(e) {
             console.error('[ONI] Error:', e.message, e.stack);
             showGLBDiag('[ONI] EXCEPTION: ' + e.message);
@@ -11719,90 +11775,93 @@ function startGame(stageId) {
     // Setup lighting
     setupLighting(stageId);
 
-    // Spawn ONI enemies
-    spawnOnis(stageId);
-
+    // Preload shared Mixamo animations (can run in parallel with ONI preload)
+    preloadSharedAnimations();
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
-    // Preload shared Mixamo animations (Running/Walking/Idle)
-    preloadSharedAnimations();
 
-    // Place EXIT (story mode)
-    if (stageId !== 'scoreAttack') {
-        const exitInfo = placeExit(cols, rows, stageId, GameState.mazeFloors.length);
-        GameState.exitPosition = { x: exitInfo.x, z: exitInfo.z };
-        GameState.exitFloor = exitInfo.floor;
-        GameState.exitReached = false;
-        GameState.exitGroup = createExitZone(exitInfo.x, exitInfo.z, exitInfo.floor);
-        scene.add(GameState.exitGroup);
-    } else {
-        GameState.exitPosition = null;
-        GameState.exitGroup = null;
-    }
-    GameState.score = 0;
-    GameState.totalTime = 0;
-    GameState.captureInProgress = false;
-    GameState.nearestOniDistance = Infinity;
-    GameState.currentBPM = 72;
+    // Preload ONI GLBs, then start game
+    preloadOniGLBs(stageId, function() {
+        // GLBs cached - spawn ONIs (will use cache for instant setup)
+        spawnOnis(stageId);
 
-    // Set player start position
-    camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
-    GameState.playerRotationY = 0;
-    GameState.playerPosition = { x: CL * 1.5, y: PLAYER_HEIGHT, z: CL * 1.5 };
-    GameState.stamina = 100;
-    GameState.sprintLocked = false;
-    GameState.alive = true;
-    GameState.moveForward = false;
-    GameState.moveBackward = false;
-    GameState.turnLeft = false;
-    GameState.turnRight = false;
-    GameState.sprint = false;
-    headBobTimer = 0;
-
-    // Setup controls
-    GameState.isMobile = isMobile();
-    if (GameState.isMobile) {
-        initMobileControls();
-        initKeyInput();
-    } else {
-        initPointerLock();
-        initKeyInput();
-    }
-
-    // Start timer
-    if (timeLimit > 0) {
-        startTimer(timeLimit);
-    } else {
-        document.getElementById('hud-timer').textContent = '--:--';
-    }
-
-    // Show pointer lock hint (desktop only)
-    const hint = document.getElementById('pointer-lock-hint');
-    if (hint) {
-        if (GameState.isMobile) {
-            hint.classList.remove('visible');
+        // Place EXIT (story mode)
+        if (stageId !== 'scoreAttack') {
+            const exitInfo = placeExit(cols, rows, stageId, GameState.mazeFloors.length);
+            GameState.exitPosition = { x: exitInfo.x, z: exitInfo.z };
+            GameState.exitFloor = exitInfo.floor;
+            GameState.exitReached = false;
+            GameState.exitGroup = createExitZone(exitInfo.x, exitInfo.z, exitInfo.floor);
+            scene.add(GameState.exitGroup);
         } else {
-            hint.classList.add('visible');
+            GameState.exitPosition = null;
+            GameState.exitGroup = null;
         }
-    }
+        GameState.score = 0;
+        GameState.totalTime = 0;
+        GameState.captureInProgress = false;
+        GameState.nearestOniDistance = Infinity;
+        GameState.currentBPM = 72;
 
-    // Phase 7: Initialize sound & effects
-    prevMovementState = 'idle';
-    FootstepManager.stop();
-    FootstepManager.wasSprintingLastFrame = false;
-    OniFootstepManager.start();
-    HeartbeatManager.start();
-    AmbientSoundManager.init(stageId);
-    Navigator.setLanguage(GameState.language);
-    Navigator.reset();
-    Navigator.add('gameStart');
-    createDustParticles(stageId, GameState.mazeFloors.length);
-    if (SoundManager.bgmEnabled) SoundManager.playBGM(stageId);
+        // Set player start position
+        camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
+        GameState.playerRotationY = 0;
+        GameState.playerPosition = { x: CL * 1.5, y: PLAYER_HEIGHT, z: CL * 1.5 };
+        GameState.stamina = 100;
+        GameState.sprintLocked = false;
+        GameState.alive = true;
+        GameState.moveForward = false;
+        GameState.moveBackward = false;
+        GameState.turnLeft = false;
+        GameState.turnRight = false;
+        GameState.sprint = false;
+        headBobTimer = 0;
 
-    // Activate game
-    GameState.gameActive = true;
-    clock.start();
-    gameLoop();
+        // Setup controls
+        GameState.isMobile = isMobile();
+        if (GameState.isMobile) {
+            initMobileControls();
+            initKeyInput();
+        } else {
+            initPointerLock();
+            initKeyInput();
+        }
+
+        // Start timer
+        if (timeLimit > 0) {
+            startTimer(timeLimit);
+        } else {
+            document.getElementById('hud-timer').textContent = '--:--';
+        }
+
+        // Show pointer lock hint (desktop only)
+        const hint = document.getElementById('pointer-lock-hint');
+        if (hint) {
+            if (GameState.isMobile) {
+                hint.classList.remove('visible');
+            } else {
+                hint.classList.add('visible');
+            }
+        }
+
+        // Phase 7: Initialize sound & effects
+        prevMovementState = 'idle';
+        FootstepManager.stop();
+        FootstepManager.wasSprintingLastFrame = false;
+        OniFootstepManager.start();
+        HeartbeatManager.start();
+        AmbientSoundManager.init(stageId);
+        Navigator.setLanguage(GameState.language);
+        Navigator.reset();
+        Navigator.add('gameStart');
+        createDustParticles(stageId, GameState.mazeFloors.length);
+        if (SoundManager.bgmEnabled) SoundManager.playBGM(stageId);
+
+        // Activate game
+        GameState.gameActive = true;
+        clock.start();
+        gameLoop();
+    });
 }
 
 /* --- Cleanup Game (for returning to title) --- */
