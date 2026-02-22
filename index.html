@@ -4477,27 +4477,34 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             var srcGeoHeight = srcBB.max.y - srcBB.min.y;
             var cpuMeshScale = (srcGeoHeight > 0.001) ? (1.8 / srcGeoHeight) : 100;
 
-            // Create visible regular Mesh with cloned geometry and materials
+            // Create visible regular Mesh with fresh independent position buffer
             var dstGeo = srcGeo.clone();
-            // CRITICAL FIX: Force position to regular BufferAttribute
-            var clonedPosR = dstGeo.attributes.position;
-            if (clonedPosR.isInterleavedBufferAttribute) {
-                console.log('[RemotePlayer] Deinterleaving position attribute');
-                var arrR = new Float32Array(clonedPosR.count * 3);
-                for (var ri = 0; ri < clonedPosR.count; ri++) {
-                    arrR[ri*3]   = clonedPosR.getX(ri);
-                    arrR[ri*3+1] = clonedPosR.getY(ri);
-                    arrR[ri*3+2] = clonedPosR.getZ(ri);
-                }
-                dstGeo.setAttribute('position', new THREE.BufferAttribute(arrR, 3));
+            var srcPosR = srcGeo.attributes.position;
+            var vtxCountR = srcPosR.count;
+            var freshArrR = new Float32Array(vtxCountR * 3);
+            for (var ri = 0; ri < vtxCountR; ri++) {
+                freshArrR[ri*3]   = srcPosR.getX(ri);
+                freshArrR[ri*3+1] = srcPosR.getY(ri);
+                freshArrR[ri*3+2] = srcPosR.getZ(ri);
             }
+            dstGeo.setAttribute('position', new THREE.BufferAttribute(freshArrR, 3));
+            // Remove morph/skin attributes
+            if (dstGeo.morphAttributes) {
+                Object.keys(dstGeo.morphAttributes).forEach(function(k) { delete dstGeo.morphAttributes[k]; });
+            }
+            dstGeo.deleteAttribute('skinIndex');
+            dstGeo.deleteAttribute('skinWeight');
+
             var bodyMat = cloneMatForRemote(origSkinned.material);
+            bodyMat.morphTargets = false;
+            bodyMat.morphNormals = false;
+            bodyMat.skinning = false;
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
+            bodyMesh.morphTargetInfluences = [];
 
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
-            // bodyGroup uses IDENTITY — cpuSkinUpdate normalizes vertices directly
             bodyGroup.scale.setScalar(1);
             bodyGroup.position.set(0, 0, 0);
 
@@ -4506,19 +4513,18 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
             removeFallbackChildren();
             group.add(bodyGroup);
-            // Light on PARENT group (always at correct world position)
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
             bodyLight.position.set(0, 1.2, 0);
             group.add(bodyLight);
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Setup CPU skinning data — bodyGroup transforms set dynamically
+            // Setup CPU skinning data
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
                 meshes: [{
-                    srcPositions: srcGeo.attributes.position,
+                    srcPositions: srcPosR,
                     dstPositions: dstGeo.attributes.position,
                     skinIndex: srcGeo.attributes.skinIndex,
                     skinWeight: srcGeo.attributes.skinWeight,
@@ -4527,7 +4533,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 }],
                 frameCount: 0,
                 srcHeight: srcGeoHeight,
-                _bodyGroup: bodyGroup
+                _bodyGroup: bodyGroup,
+                _tempBuf: new Float32Array(vtxCountR * 3)
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene
@@ -7563,11 +7570,14 @@ function cpuSkinUpdate(cpuSkinData) {
         var globalMinX = Infinity, globalMaxX = -Infinity;
         var globalMinZ = Infinity, globalMaxZ = -Infinity;
 
-        // PASS 1: CPU skinning — compute animated vertex positions + track full bounds
+        // Use temp buffer to avoid writing amplified values to GPU buffer
+        var tempBuf = cpuSkinData._tempBuf;
+        var tempIdx = 0;
+
+        // PASS 1: CPU skinning → write to TEMP buffer (NOT dstPos)
         for (var m = 0; m < meshDataArr.length; m++) {
             var md = meshDataArr[m];
             var srcPos = md.srcPositions;
-            var dstPos = md.dstPositions;
             var si = md.skinIndex;
             var sw = md.skinWeight;
             var bindMatrix = md.bindMatrix;
@@ -7595,7 +7605,12 @@ function cpuSkinUpdate(cpuSkinData) {
                 if (_result.y !== _result.y) _result.y = srcPos.getY(i);
                 if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
 
-                dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+                // Write to TEMP buffer, not dstPos
+                tempBuf[tempIdx]   = _result.x;
+                tempBuf[tempIdx+1] = _result.y;
+                tempBuf[tempIdx+2] = _result.z;
+                tempIdx += 3;
+
                 if (_result.x < globalMinX) globalMinX = _result.x;
                 if (_result.x > globalMaxX) globalMaxX = _result.x;
                 if (_result.y < globalMinY) globalMinY = _result.y;
@@ -7605,8 +7620,7 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // PASS 2: Normalize vertices IN-PLACE to final world-local positions
-        // Eliminates need for bodyGroup transforms entirely
+        // SINGLE WRITE: Normalize from temp buffer → dstPos (only final values hit GPU)
         var outHeight = globalMaxY - globalMinY;
         if (outHeight > 0.01) {
             var targetH = 1.8;
@@ -7614,18 +7628,25 @@ function cpuSkinUpdate(cpuSkinData) {
             var centerX = (globalMinX + globalMaxX) / 2;
             var centerZ = (globalMinZ + globalMaxZ) / 2;
 
+            tempIdx = 0;
             for (var m = 0; m < meshDataArr.length; m++) {
                 var dp = meshDataArr[m].dstPositions;
                 var cnt = dp.count;
                 for (var i = 0; i < cnt; i++) {
-                    var nx = (dp.getX(i) - centerX) * scaleFix;
-                    var ny = (dp.getY(i) - globalMinY) * scaleFix;
-                    var nz = (dp.getZ(i) - centerZ) * scaleFix;
+                    var nx = (tempBuf[tempIdx]   - centerX)   * scaleFix;
+                    var ny = (tempBuf[tempIdx+1] - globalMinY) * scaleFix;
+                    var nz = (tempBuf[tempIdx+2] - centerZ)   * scaleFix;
                     dp.setXYZ(i, nx, ny, nz);
+                    tempIdx += 3;
+                }
+                // Recompute bounding sphere for correct frustum culling
+                if (dp.count > 0 && meshDataArr[m].dstPositions === dp) {
+                    var geo = cpuSkinData._bodyGroup.children[m];
+                    if (geo && geo.geometry) geo.geometry.computeBoundingSphere();
                 }
             }
 
-            // CRITICAL: bodyGroup uses IDENTITY transform — all positioning is in vertices
+            // CRITICAL: bodyGroup uses IDENTITY transform
             if (cpuSkinData._bodyGroup) {
                 cpuSkinData._bodyGroup.scale.setScalar(1);
                 cpuSkinData._bodyGroup.position.set(0, 0, 0);
@@ -7633,35 +7654,25 @@ function cpuSkinUpdate(cpuSkinData) {
 
             // Diagnostic on first few frames
             if (cpuSkinData.frameCount <= 4) {
-                // Verify normalized range
                 var verMinY = Infinity, verMaxY = -Infinity;
-                var verMinX = Infinity, verMaxX = -Infinity;
                 for (var m = 0; m < meshDataArr.length; m++) {
                     var dp2 = meshDataArr[m].dstPositions;
                     for (var i = 0; i < dp2.count; i++) {
-                        var vx = dp2.getX(i), vy = dp2.getY(i);
+                        var vy = dp2.getY(i);
                         if (vy < verMinY) verMinY = vy;
                         if (vy > verMaxY) verMaxY = vy;
-                        if (vx < verMinX) verMinX = vx;
-                        if (vx > verMaxX) verMaxX = vx;
                     }
                 }
                 var diagMsg = '[cpuSkin] f' + cpuSkinData.frameCount +
                     ' RAW=[' + globalMinY.toFixed(1) + ',' + globalMaxY.toFixed(1) + '] h=' + outHeight.toFixed(1) +
                     ' FINAL=[' + verMinY.toFixed(4) + ',' + verMaxY.toFixed(4) + '] h=' + (verMaxY-verMinY).toFixed(4) +
-                    ' X=[' + verMinX.toFixed(3) + ',' + verMaxX.toFixed(3) + ']' +
                     ' bodyGrp: scale=1 pos=(0,0,0)';
                 console.log(diagMsg);
                 if (typeof showGLBDiag === 'function') showGLBDiag(diagMsg);
-
-                // Log group world position to verify ONI placement
                 if (cpuSkinData._bodyGroup && cpuSkinData._bodyGroup.parent) {
-                    var grp = cpuSkinData._bodyGroup.parent;
-                    var gp = grp.position;
-                    console.log('[cpuSkin] group.pos=(' + gp.x.toFixed(2) + ',' + gp.y.toFixed(2) + ',' + gp.z.toFixed(2) + ')');
-                    if (typeof showGLBDiag === 'function') {
+                    var gp = cpuSkinData._bodyGroup.parent.position;
+                    if (typeof showGLBDiag === 'function')
                         showGLBDiag('[cpuSkin] grp.pos=(' + gp.x.toFixed(2) + ',' + gp.y.toFixed(2) + ',' + gp.z.toFixed(2) + ')');
-                    }
                 }
             }
         }
@@ -7682,22 +7693,19 @@ function cpuSkinUpdate(cpuSkinData) {
 
 /* --- C4-helper: Clone material for ONI (disable GPU skinning, boost emissive) --- */
 function cloneMatForOni(origMat) {
-    if (Array.isArray(origMat)) {
-        return origMat.map(function(m) {
-            var cm = m.clone();
-            cm.skinning = false;
-            cm.side = THREE.DoubleSide;
-            if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
-            if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
-            return cm;
-        });
-    } else if (origMat) {
-        var cm = origMat.clone();
+    function fixMat(cm) {
         cm.skinning = false;
+        cm.morphTargets = false;
+        cm.morphNormals = false;
         cm.side = THREE.DoubleSide;
         if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
         if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
         return cm;
+    }
+    if (Array.isArray(origMat)) {
+        return origMat.map(function(m) { return fixMat(m.clone()); });
+    } else if (origMat) {
+        return fixMat(origMat.clone());
     } else {
         return new THREE.MeshBasicMaterial({
             color: ONI_CONFIG.bodyEmissive,
@@ -7780,30 +7788,55 @@ function loadOniGLB(group, charId, stageId) {
             // Create visible regular Mesh for EACH SkinnedMesh (CPU skinning)
             var bodyGroup = new THREE.Group();
             var meshDataArr = [];
+            var totalVertexCount = 0;
             allSkinnedMeshes.forEach(function(origSM) {
                 var srcGeo = origSM.geometry;
                 var dstGeo = srcGeo.clone();
-                // CRITICAL FIX: Force position to regular BufferAttribute
-                // (InterleavedBufferAttribute.needsUpdate doesn't trigger GPU upload)
-                var clonedPos = dstGeo.attributes.position;
-                if (clonedPos.isInterleavedBufferAttribute) {
-                    showGLBDiag('[ONI] Deinterleaving position attribute (was IBA)');
-                    var arr = new Float32Array(clonedPos.count * 3);
-                    for (var pi = 0; pi < clonedPos.count; pi++) {
-                        arr[pi*3]   = clonedPos.getX(pi);
-                        arr[pi*3+1] = clonedPos.getY(pi);
-                        arr[pi*3+2] = clonedPos.getZ(pi);
-                    }
-                    dstGeo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
-                } else {
-                    showGLBDiag('[ONI] Position is regular BufferAttribute (OK)');
+                var srcPos = srcGeo.attributes.position;
+                var vtxCount = srcPos.count;
+                totalVertexCount += vtxCount;
+
+                // ALWAYS create a FRESH independent position buffer for dstGeo
+                // (prevents shared-array bug if clone() doesn't deep-copy)
+                var freshArr = new Float32Array(vtxCount * 3);
+                for (var pi = 0; pi < vtxCount; pi++) {
+                    freshArr[pi*3]   = srcPos.getX(pi);
+                    freshArr[pi*3+1] = srcPos.getY(pi);
+                    freshArr[pi*3+2] = srcPos.getZ(pi);
                 }
+                dstGeo.setAttribute('position', new THREE.BufferAttribute(freshArr, 3));
+                var sameArr = (srcPos.array === dstGeo.attributes.position.array);
+                showGLBDiag('[ONI] Fresh pos buf: ' + vtxCount + ' verts, shared=' + sameArr);
+
+                // Remove morph attributes (prevent GPU morph deformation shifting vertices)
+                if (dstGeo.morphAttributes) {
+                    var morphKeys = Object.keys(dstGeo.morphAttributes);
+                    if (morphKeys.length > 0) {
+                        showGLBDiag('[ONI] REMOVING morphAttributes: ' + morphKeys.join(','));
+                        morphKeys.forEach(function(k) { delete dstGeo.morphAttributes[k]; });
+                    }
+                }
+
+                // Remove skin attributes (not needed for regular Mesh, prevents GPU skinning)
+                dstGeo.deleteAttribute('skinIndex');
+                dstGeo.deleteAttribute('skinWeight');
+
+                // Log remaining attributes
+                var attrNames = Object.keys(dstGeo.attributes);
+                showGLBDiag('[ONI] dstGeo attrs: ' + attrNames.join(','));
+
+                // Material: disable ALL special vertex deformations
                 var bodyMat = cloneMatForOni(origSM.material);
+                bodyMat.morphTargets = false;
+                bodyMat.morphNormals = false;
+                bodyMat.skinning = false;
+
                 var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
                 bodyMesh.frustumCulled = false;
+                bodyMesh.morphTargetInfluences = []; // explicitly empty
                 bodyGroup.add(bodyMesh);
                 meshDataArr.push({
-                    srcPositions: srcGeo.attributes.position,
+                    srcPositions: srcPos,
                     dstPositions: dstGeo.attributes.position,
                     skinIndex: srcGeo.attributes.skinIndex,
                     skinWeight: srcGeo.attributes.skinWeight,
@@ -7866,7 +7899,8 @@ function loadOniGLB(group, charId, stageId) {
                 meshes: meshDataArr,
                 frameCount: 0,
                 srcHeight: geoHeight,
-                _bodyGroup: bodyGroup
+                _bodyGroup: bodyGroup,
+                _tempBuf: new Float32Array(totalVertexCount * 3) // temp buffer for CPU skinning
             };
 
             // Setup animation mixer on the ORIGINAL sourceScene (unchanged)
