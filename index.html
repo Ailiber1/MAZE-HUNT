@@ -4545,14 +4545,17 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 dstGeo.setDrawRange(0, Infinity);
             }
 
-            var bodyMat = new THREE.MeshBasicMaterial({
+            // KEY FIX: MeshStandardMaterial (responds to lights) for remote ONI
+            var bodyMat = new THREE.MeshStandardMaterial({
                 map: texMapR,
                 color: texMapR ? 0xffffff : 0xcc44cc,
                 side: THREE.DoubleSide,
                 transparent: false,
                 alphaTest: 0,
-                depthTest: true,
-                depthWrite: true
+                emissive: new THREE.Color(0x444444),
+                emissiveIntensity: 1.0,
+                roughness: 0.7,
+                metalness: 0.0
             });
 
             // Remove extra attributes (keep only position, normal, uv)
@@ -4576,9 +4579,18 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
             removeFallbackChildren();
             group.add(bodyGroup);
-            var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
-            bodyLight.position.set(0, 1.2, 0);
-            group.add(bodyLight);
+            // Lighting for MeshStandardMaterial (remote ONI)
+            var rAmbLight = new THREE.AmbientLight(0xffffff, 0.6);
+            group.add(rAmbLight);
+            var rBodyLight = new THREE.PointLight(0xffffff, 2.0, 10);
+            rBodyLight.position.set(0, 1.2, 0.5);
+            group.add(rBodyLight);
+            var rLowerLight = new THREE.PointLight(0xffffff, 1.5, 8);
+            rLowerLight.position.set(0, 0.3, 0.8);
+            group.add(rLowerLight);
+            var rBackLight = new THREE.PointLight(0xffffff, 1.0, 8);
+            rBackLight.position.set(0, 0.9, -0.5);
+            group.add(rBackLight);
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
@@ -7890,7 +7902,7 @@ function processOniGLTF(group, gltf, stageId) {
                 ' map=' + (texMap ? 'YES' : 'NO'));
         }
 
-        // FIX: Force alpha=255 on texture to prevent invisible pixels
+        // FIX: Force alpha=255 on texture + analyze brightness
         if (texMap && texMap.image) {
             try {
                 var tImg = texMap.image;
@@ -7902,12 +7914,20 @@ function processOniGLTF(group, gltf, stageId) {
                 var tImgData = tCtx.getImageData(0, 0, tCanvas.width, tCanvas.height);
                 var tPixels = tImgData.data;
                 var transparentCount = 0;
-                for (var px = 3; px < tPixels.length; px += 4) {
-                    if (tPixels[px] < 255) { transparentCount++; tPixels[px] = 255; }
+                var totalBrightness = 0;
+                var darkPixelCount = 0;
+                var totalPixels = tPixels.length / 4;
+                for (var px = 0; px < tPixels.length; px += 4) {
+                    var brightness = (tPixels[px] + tPixels[px+1] + tPixels[px+2]) / 3;
+                    totalBrightness += brightness;
+                    if (brightness < 10) darkPixelCount++;
+                    if (tPixels[px+3] < 255) { transparentCount++; tPixels[px+3] = 255; }
                 }
                 tCtx.putImageData(tImgData, 0, 0);
                 showGLBDiag('[ONI-DIAG] Texture ' + tCanvas.width + 'x' + tCanvas.height +
-                    ' forced ' + transparentCount + '/' + (tPixels.length / 4) + ' pixels alpha=255');
+                    ' transparent=' + transparentCount + '/' + totalPixels +
+                    ' avgBright=' + (totalBrightness/totalPixels).toFixed(1) +
+                    ' darkPx(<10)=' + darkPixelCount + '/' + totalPixels);
                 var newTex = new THREE.CanvasTexture(tCanvas);
                 newTex.encoding = texMap.encoding;
                 newTex.flipY = texMap.flipY;
@@ -7922,29 +7942,32 @@ function processOniGLTF(group, gltf, stageId) {
         }
 
         // FIX: Clear geometry groups to prevent partial rendering
-        var geoGroupCount = dstGeo.groups ? dstGeo.groups.length : 0;
-        if (geoGroupCount > 0) {
-            showGLBDiag('[ONI-DIAG] Clearing ' + geoGroupCount + ' geometry groups');
+        if (dstGeo.groups && dstGeo.groups.length > 0) {
+            showGLBDiag('[ONI-DIAG] Clearing ' + dstGeo.groups.length + ' geometry groups');
             dstGeo.clearGroups();
         }
 
         // FIX: Ensure drawRange covers all geometry
         if (dstGeo.index) {
             dstGeo.setDrawRange(0, dstGeo.index.count);
-            showGLBDiag('[ONI-DIAG] drawRange: 0-' + dstGeo.index.count + ' (indexed)');
         } else {
             dstGeo.setDrawRange(0, Infinity);
         }
 
-        var bodyMat = new THREE.MeshBasicMaterial({
+        // KEY FIX: MeshStandardMaterial (responds to lights) instead of MeshBasicMaterial (ignores lights)
+        // MeshBasicMaterial made dark texture regions invisible against dark backgrounds
+        var bodyMat = new THREE.MeshStandardMaterial({
             map: texMap,
             color: texMap ? 0xffffff : 0xcc44cc,
             side: THREE.DoubleSide,
             transparent: false,
             alphaTest: 0,
-            depthTest: true,
-            depthWrite: true
+            emissive: new THREE.Color(0x444444),
+            emissiveIntensity: 1.0,
+            roughness: 0.7,
+            metalness: 0.0
         });
+        showGLBDiag('[ONI-DIAG] Using MeshStandardMaterial + emissive=0x444444');
 
         // Keep only position, normal, uv
         var keepAttrs = ['position', 'normal', 'uv'];
@@ -7983,12 +8006,18 @@ function processOniGLTF(group, gltf, stageId) {
     group.userData.chestMesh = null;
 
     group.add(bodyGroup);
-    var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
-    bodyLight.position.set(0, 1.2, 0);
+    // Lighting for MeshStandardMaterial (these lights now actually affect the model)
+    var ambLight = new THREE.AmbientLight(0xffffff, 0.6);
+    group.add(ambLight);
+    var bodyLight = new THREE.PointLight(0xffffff, 2.0, 10);
+    bodyLight.position.set(0, 1.2, 0.5);
     group.add(bodyLight);
-    var lowerLight = new THREE.PointLight(0xffffff, 0.8, 5);
-    lowerLight.position.set(0, 0.3, 0.5);
+    var lowerLight = new THREE.PointLight(0xffffff, 1.5, 8);
+    lowerLight.position.set(0, 0.3, 0.8);
     group.add(lowerLight);
+    var backLight = new THREE.PointLight(0xffffff, 1.0, 8);
+    backLight.position.set(0, 0.9, -0.5);
+    group.add(backLight);
 
     group.userData.glbLoaded = true;
     group.userData.glbModel = bodyGroup;
