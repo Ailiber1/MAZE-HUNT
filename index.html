@@ -4495,16 +4495,26 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             dstGeo.deleteAttribute('skinIndex');
             dstGeo.deleteAttribute('skinWeight');
 
-            // DIAGNOSTIC TEST: Fresh MeshBasicMaterial + depthTest:false (same as local ONI)
-            var bodyMat = new THREE.MeshBasicMaterial({
-                color: 0xcc44cc, side: THREE.DoubleSide,
-                depthTest: false, depthWrite: false
-            });
+            // FIX: Use MeshBasicMaterial with original texture (not cloned MeshStandardMaterial)
+            var origMatR = origSkinned.material;
+            var bodyMat;
+            if (Array.isArray(origMatR)) {
+                bodyMat = origMatR.map(function(m) {
+                    return new THREE.MeshBasicMaterial({
+                        map: m.map || null,
+                        color: m.map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xcc44cc)),
+                        side: THREE.DoubleSide
+                    });
+                });
+            } else {
+                bodyMat = new THREE.MeshBasicMaterial({
+                    map: origMatR ? origMatR.map : null,
+                    color: (origMatR && origMatR.map) ? 0xffffff : 0xcc44cc,
+                    side: THREE.DoubleSide
+                });
+            }
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
-            bodyMesh.renderOrder = 500;
-            bodyMesh.position.set(0, 0, 0);
-            bodyMesh.scale.setScalar(1);
             bodyMesh.morphTargetInfluences = [];
 
             var bodyGroup = new THREE.Group();
@@ -7678,49 +7688,6 @@ function cpuSkinUpdate(cpuSkinData) {
                     if (typeof showGLBDiag === 'function')
                         showGLBDiag('[cpuSkin] grp.pos=(' + gp.x.toFixed(2) + ',' + gp.y.toFixed(2) + ',' + gp.z.toFixed(2) + ')');
                 }
-                // ====== DEEP DIAGNOSTIC: Raw buffer + matrixWorld ======
-                if (cpuSkinData.frameCount === 4 && typeof showGLBDiag === 'function') {
-                    // 1. Raw Float32Array values (bypass BufferAttribute getters)
-                    var firstDP = meshDataArr[0].dstPositions;
-                    var rawArr = firstDP.array;
-                    var rawYvals = '';
-                    for (var ri = 0; ri < Math.min(5, firstDP.count); ri++) {
-                        rawYvals += rawArr[ri * 3 + 1].toFixed(3) + ' ';
-                    }
-                    showGLBDiag('[DEEP] rawArr Y[0..4]: ' + rawYvals);
-
-                    // 2. bodyMesh matrixWorld
-                    var bg = cpuSkinData._bodyGroup;
-                    if (bg && bg.children[0]) {
-                        var bMesh = bg.children[0];
-                        bMesh.updateMatrixWorld(true);
-                        var mw = bMesh.matrixWorld.elements;
-                        showGLBDiag('[DEEP] bodyMesh.pos=(' + bMesh.position.x.toFixed(3) + ',' +
-                            bMesh.position.y.toFixed(3) + ',' + bMesh.position.z.toFixed(3) + ')');
-                        showGLBDiag('[DEEP] bodyMesh.matrixWorld[13]=' + mw[13].toFixed(4) +
-                            ' [12]=' + mw[12].toFixed(4) + ' [14]=' + mw[14].toFixed(4));
-                        showGLBDiag('[DEEP] bodyMesh.scale=(' + bMesh.scale.x.toFixed(3) + ',' +
-                            bMesh.scale.y.toFixed(3) + ',' + bMesh.scale.z.toFixed(3) + ')');
-                    }
-                    // 3. bodyGroup matrixWorld
-                    if (bg) {
-                        bg.updateMatrixWorld(true);
-                        var bgmw = bg.matrixWorld.elements;
-                        showGLBDiag('[DEEP] bodyGroup.matrixWorld[13]=' + bgmw[13].toFixed(4) +
-                            ' scale=(' + bg.scale.x.toFixed(3) + ',' + bg.scale.y.toFixed(3) + ',' + bg.scale.z.toFixed(3) + ')');
-                    }
-                    // 4. Count vertices by Y range
-                    var below05 = 0, above05 = 0, total = 0;
-                    for (var m2 = 0; m2 < meshDataArr.length; m2++) {
-                        var dp3 = meshDataArr[m2].dstPositions;
-                        for (var i2 = 0; i2 < dp3.count; i2++) {
-                            total++;
-                            if (dp3.getY(i2) < 0.5) below05++;
-                            else above05++;
-                        }
-                    }
-                    showGLBDiag('[DEEP] verts Y<0.5: ' + below05 + ' Y>=0.5: ' + above05 + ' total: ' + total);
-                }
             }
         }
 
@@ -7771,9 +7738,9 @@ function showGLBDiag(msg) {
         document.body.appendChild(el);
     }
     el.textContent += msg + '\n';
-    // Auto-hide after 30 seconds
+    // Auto-hide after 8 seconds
     clearTimeout(el._timer);
-    el._timer = setTimeout(function() { el.style.display = 'none'; }, 30000);
+    el._timer = setTimeout(function() { el.style.display = 'none'; }, 8000);
 }
 
 /* --- C4: Load GLB model into ONI group (multi-mesh support) --- */
@@ -7872,34 +7839,29 @@ function loadOniGLB(group, charId, stageId) {
                 var attrNames = Object.keys(dstGeo.attributes);
                 showGLBDiag('[ONI] dstGeo attrs: ' + attrNames.join(','));
 
-                // ====== DIAGNOSTIC TEST: Fresh MeshBasicMaterial + depthTest:false ======
-                // Hypothesis A: Cloned SkinnedMesh material shader causes sinking
-                // Hypothesis B: Floor Z-buffer occludes model lower half
-                var bodyMat = new THREE.MeshBasicMaterial({
-                    color: 0xcc44cc,
-                    side: THREE.DoubleSide,
-                    depthTest: false,  // TEST: bypass depth buffer entirely
-                    depthWrite: false
-                });
+                // FIX: Use MeshBasicMaterial (not cloned MeshStandardMaterial from SkinnedMesh)
+                // Root cause: cloned SkinnedMesh material's shader causes vertex displacement
+                var origMat = origSM.material;
+                var bodyMat;
+                if (Array.isArray(origMat)) {
+                    bodyMat = origMat.map(function(m) {
+                        return new THREE.MeshBasicMaterial({
+                            map: m.map || null,
+                            color: m.map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xcc44cc)),
+                            side: THREE.DoubleSide
+                        });
+                    });
+                } else {
+                    bodyMat = new THREE.MeshBasicMaterial({
+                        map: origMat ? origMat.map : null,
+                        color: (origMat && origMat.map) ? 0xffffff : 0xcc44cc,
+                        side: THREE.DoubleSide
+                    });
+                }
 
                 var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
                 bodyMesh.frustumCulled = false;
-                bodyMesh.renderOrder = 500;
-                bodyMesh.position.set(0, 0, 0); // explicit identity
-                bodyMesh.scale.setScalar(1);     // explicit identity
                 bodyMesh.morphTargetInfluences = [];
-                bodyGroup.add(bodyMesh);
-
-                // DIAGNOSTIC: Wireframe ghost (cyan) with depthTest:false
-                // Uses SAME geometry — shows exact vertex positions
-                var ghostMat = new THREE.MeshBasicMaterial({
-                    color: 0x00ffff, wireframe: true,
-                    depthTest: false, transparent: true, opacity: 0.5
-                });
-                var ghostMesh = new THREE.Mesh(dstGeo, ghostMat);
-                ghostMesh.frustumCulled = false;
-                ghostMesh.renderOrder = 999;
-                bodyGroup.add(ghostMesh);
                 meshDataArr.push({
                     srcPositions: srcPos,
                     dstPositions: dstGeo.attributes.position,
@@ -7929,26 +7891,13 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.chestMesh = null; // prevent breathing anim on removed mesh
 
             group.add(bodyGroup);
+            // Lights: upper body + lower body for visibility in dark scenes
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
             bodyLight.position.set(0, 1.2, 0);
             group.add(bodyLight);
-
-            // DEBUG: Red wireframe reference box (Y=0 to 1.8) in group space
-            // This box is INDEPENDENT of bodyGroup — shows where the model SHOULD be
-            var debugBoxGeo = new THREE.BoxGeometry(0.5, 1.8, 0.5);
-            debugBoxGeo.translate(0, 0.9, 0); // center at Y=0.9 so box spans Y=0 to 1.8
-            var debugBoxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true, depthTest: false });
-            var debugBox = new THREE.Mesh(debugBoxGeo, debugBoxMat);
-            debugBox.renderOrder = 999;
-            group.add(debugBox);
-            // Green floor marker sphere at Y=0 in group space
-            var floorMarker = new THREE.Mesh(
-                new THREE.SphereGeometry(0.15, 8, 8),
-                new THREE.MeshBasicMaterial({ color: 0x00ff00, depthTest: false })
-            );
-            floorMarker.renderOrder = 999;
-            group.add(floorMarker);
-            showGLBDiag('[ONI] DEBUG: Red box Y=[0,1.8] + Green sphere Y=0 added to group');
+            var lowerLight = new THREE.PointLight(0xffffff, 0.8, 5);
+            lowerLight.position.set(0, 0.3, 0.5);
+            group.add(lowerLight);
 
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
