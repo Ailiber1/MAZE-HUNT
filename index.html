@@ -4497,10 +4497,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
-            // Use source geometry scale + Y-offset from source geometry BB
-            bodyGroup.scale.setScalar(cpuMeshScale);
-            var geoMinYR = srcBB.min.y;
-            bodyGroup.position.y = -geoMinYR * cpuMeshScale;
+            // bodyGroup uses IDENTITY — cpuSkinUpdate normalizes vertices directly
+            bodyGroup.scale.setScalar(1);
+            bodyGroup.position.set(0, 0, 0);
 
             // Keep sourceScene DETACHED (not added to group)
             group.userData.sourceScene = sourceScene;
@@ -7561,8 +7560,10 @@ function cpuSkinUpdate(cpuSkinData) {
         }
 
         var globalMinY = Infinity, globalMaxY = -Infinity;
+        var globalMinX = Infinity, globalMaxX = -Infinity;
+        var globalMinZ = Infinity, globalMaxZ = -Infinity;
 
-        // Process EACH mesh independently (same skeleton, per-mesh bind matrices)
+        // PASS 1: CPU skinning — compute animated vertex positions + track full bounds
         for (var m = 0; m < meshDataArr.length; m++) {
             var md = meshDataArr[m];
             var srcPos = md.srcPositions;
@@ -7595,33 +7596,73 @@ function cpuSkinUpdate(cpuSkinData) {
                 if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
 
                 dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+                if (_result.x < globalMinX) globalMinX = _result.x;
+                if (_result.x > globalMaxX) globalMaxX = _result.x;
                 if (_result.y < globalMinY) globalMinY = _result.y;
                 if (_result.y > globalMaxY) globalMaxY = _result.y;
+                if (_result.z < globalMinZ) globalMinZ = _result.z;
+                if (_result.z > globalMaxZ) globalMaxZ = _result.z;
             }
         }
 
-        // NEW APPROACH: Don't modify vertices. Use bodyGroup transforms instead.
-        // The diagnostic bypass (copying source positions) displayed correctly
-        // using bodyGroup transforms. Apply the same principle to CPU skinning:
-        // upload RAW output to GPU, let bodyGroup scale/position handle the rest.
+        // PASS 2: Normalize vertices IN-PLACE to final world-local positions
+        // Eliminates need for bodyGroup transforms entirely
         var outHeight = globalMaxY - globalMinY;
-        if (outHeight > 0.01 && cpuSkinData._bodyGroup) {
+        if (outHeight > 0.01) {
             var targetH = 1.8;
-            var dynamicScale = targetH / outHeight;
-            var dynamicOffsetY = -globalMinY * dynamicScale;
-            cpuSkinData._bodyGroup.scale.setScalar(dynamicScale);
-            cpuSkinData._bodyGroup.position.y = dynamicOffsetY;
+            var scaleFix = targetH / outHeight;
+            var centerX = (globalMinX + globalMaxX) / 2;
+            var centerZ = (globalMinZ + globalMaxZ) / 2;
+
+            for (var m = 0; m < meshDataArr.length; m++) {
+                var dp = meshDataArr[m].dstPositions;
+                var cnt = dp.count;
+                for (var i = 0; i < cnt; i++) {
+                    var nx = (dp.getX(i) - centerX) * scaleFix;
+                    var ny = (dp.getY(i) - globalMinY) * scaleFix;
+                    var nz = (dp.getZ(i) - centerZ) * scaleFix;
+                    dp.setXYZ(i, nx, ny, nz);
+                }
+            }
+
+            // CRITICAL: bodyGroup uses IDENTITY transform — all positioning is in vertices
+            if (cpuSkinData._bodyGroup) {
+                cpuSkinData._bodyGroup.scale.setScalar(1);
+                cpuSkinData._bodyGroup.position.set(0, 0, 0);
+            }
 
             // Diagnostic on first few frames
-            if (cpuSkinData.frameCount <= 2) {
+            if (cpuSkinData.frameCount <= 4) {
+                // Verify normalized range
+                var verMinY = Infinity, verMaxY = -Infinity;
+                var verMinX = Infinity, verMaxX = -Infinity;
+                for (var m = 0; m < meshDataArr.length; m++) {
+                    var dp2 = meshDataArr[m].dstPositions;
+                    for (var i = 0; i < dp2.count; i++) {
+                        var vx = dp2.getX(i), vy = dp2.getY(i);
+                        if (vy < verMinY) verMinY = vy;
+                        if (vy > verMaxY) verMaxY = vy;
+                        if (vx < verMinX) verMinX = vx;
+                        if (vx > verMaxX) verMaxX = vx;
+                    }
+                }
                 var diagMsg = '[cpuSkin] f' + cpuSkinData.frameCount +
-                    ' TRANSFORM: outH=' + outHeight.toFixed(1) +
-                    ' minY=' + globalMinY.toFixed(1) +
-                    ' maxY=' + globalMaxY.toFixed(1) +
-                    ' scale=' + dynamicScale.toFixed(6) +
-                    ' offY=' + dynamicOffsetY.toFixed(4);
+                    ' RAW=[' + globalMinY.toFixed(1) + ',' + globalMaxY.toFixed(1) + '] h=' + outHeight.toFixed(1) +
+                    ' FINAL=[' + verMinY.toFixed(4) + ',' + verMaxY.toFixed(4) + '] h=' + (verMaxY-verMinY).toFixed(4) +
+                    ' X=[' + verMinX.toFixed(3) + ',' + verMaxX.toFixed(3) + ']' +
+                    ' bodyGrp: scale=1 pos=(0,0,0)';
                 console.log(diagMsg);
                 if (typeof showGLBDiag === 'function') showGLBDiag(diagMsg);
+
+                // Log group world position to verify ONI placement
+                if (cpuSkinData._bodyGroup && cpuSkinData._bodyGroup.parent) {
+                    var grp = cpuSkinData._bodyGroup.parent;
+                    var gp = grp.position;
+                    console.log('[cpuSkin] group.pos=(' + gp.x.toFixed(2) + ',' + gp.y.toFixed(2) + ',' + gp.z.toFixed(2) + ')');
+                    if (typeof showGLBDiag === 'function') {
+                        showGLBDiag('[cpuSkin] grp.pos=(' + gp.x.toFixed(2) + ',' + gp.y.toFixed(2) + ',' + gp.z.toFixed(2) + ')');
+                    }
+                }
             }
         }
 
@@ -7771,12 +7812,11 @@ function loadOniGLB(group, charId, stageId) {
                 });
             });
 
-            // Compute correct Y-offset from source geometry BB
+            // bodyGroup uses IDENTITY transform — cpuSkinUpdate normalizes vertices directly
             var geoMinY = combinedBB.min.y;
-            var geoOffsetY = -geoMinY * meshScale;
-            bodyGroup.scale.setScalar(meshScale);
-            bodyGroup.position.y = geoOffsetY;
-            showGLBDiag('[ONI] geoMinY=' + geoMinY.toFixed(4) + ' geoOffsetY=' + geoOffsetY.toFixed(4));
+            bodyGroup.scale.setScalar(1);
+            bodyGroup.position.set(0, 0, 0);
+            showGLBDiag('[ONI] geoMinY=' + geoMinY.toFixed(4) + ' bodyGroup=IDENTITY (vertices normalized by cpuSkinUpdate)');
 
             // Keep sourceScene DETACHED (not added to group) to prevent
             // parent transform contamination in bone world matrices.
@@ -7788,11 +7828,29 @@ function loadOniGLB(group, charId, stageId) {
             toRemove.forEach(function(child) { group.remove(child); });
             group.userData.eyeR = null;
             group.userData.eyeL = null;
+            group.userData.chestMesh = null; // prevent breathing anim on removed mesh
 
             group.add(bodyGroup);
             var bodyLight = new THREE.PointLight(0xffffff, 1.5, 8);
             bodyLight.position.set(0, 1.2, 0);
             group.add(bodyLight);
+
+            // DEBUG: Red wireframe reference box (Y=0 to 1.8) in group space
+            // This box is INDEPENDENT of bodyGroup — shows where the model SHOULD be
+            var debugBoxGeo = new THREE.BoxGeometry(0.5, 1.8, 0.5);
+            debugBoxGeo.translate(0, 0.9, 0); // center at Y=0.9 so box spans Y=0 to 1.8
+            var debugBoxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true, depthTest: false });
+            var debugBox = new THREE.Mesh(debugBoxGeo, debugBoxMat);
+            debugBox.renderOrder = 999;
+            group.add(debugBox);
+            // Green floor marker sphere at Y=0 in group space
+            var floorMarker = new THREE.Mesh(
+                new THREE.SphereGeometry(0.15, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0x00ff00, depthTest: false })
+            );
+            floorMarker.renderOrder = 999;
+            group.add(floorMarker);
+            showGLBDiag('[ONI] DEBUG: Red box Y=[0,1.8] + Green sphere Y=0 added to group');
 
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
