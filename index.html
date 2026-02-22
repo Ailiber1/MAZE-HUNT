@@ -4503,18 +4503,32 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     return new THREE.MeshBasicMaterial({
                         map: m.map || null,
                         color: m.map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xcc44cc)),
-                        side: THREE.DoubleSide
+                        side: THREE.DoubleSide,
+                        polygonOffset: true,
+                        polygonOffsetFactor: -4,
+                        polygonOffsetUnits: -4
                     });
                 });
             } else {
                 bodyMat = new THREE.MeshBasicMaterial({
                     map: origMatR ? origMatR.map : null,
                     color: (origMatR && origMatR.map) ? 0xffffff : 0xcc44cc,
-                    side: THREE.DoubleSide
+                    side: THREE.DoubleSide,
+                    polygonOffset: true,
+                    polygonOffsetFactor: -4,
+                    polygonOffsetUnits: -4
                 });
             }
+            // Remove extra attributes (keep only position, normal, uv)
+            var keepAttrsR = ['position', 'normal', 'uv'];
+            Object.keys(dstGeo.attributes).forEach(function(name) {
+                if (keepAttrsR.indexOf(name) === -1) {
+                    dstGeo.deleteAttribute(name);
+                }
+            });
             var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
             bodyMesh.frustumCulled = false;
+            bodyMesh.renderOrder = 1;
             bodyMesh.morphTargetInfluences = [];
 
             var bodyGroup = new THREE.Group();
@@ -7648,7 +7662,7 @@ function cpuSkinUpdate(cpuSkinData) {
                 var cnt = dp.count;
                 for (var i = 0; i < cnt; i++) {
                     var nx = (tempBuf[tempIdx]   - centerX)   * scaleFix;
-                    var ny = (tempBuf[tempIdx+1] - globalMinY) * scaleFix;
+                    var ny = (tempBuf[tempIdx+1] - globalMinY) * scaleFix + 0.15;
                     var nz = (tempBuf[tempIdx+2] - centerZ)   * scaleFix;
                     dp.setXYZ(i, nx, ny, nz);
                     tempIdx += 3;
@@ -7839,28 +7853,34 @@ function loadOniGLB(group, charId, stageId) {
                 var attrNames = Object.keys(dstGeo.attributes);
                 showGLBDiag('[ONI] dstGeo attrs: ' + attrNames.join(','));
 
-                // FIX: Use MeshBasicMaterial (not cloned MeshStandardMaterial from SkinnedMesh)
-                // Root cause: cloned SkinnedMesh material's shader causes vertex displacement
+                // FIX: Use MeshBasicMaterial with polygonOffset to prevent depth-buffer occlusion
+                // Root cause: floor plane at Y=0 occludes model's lower body in Z-buffer
                 var origMat = origSM.material;
-                var bodyMat;
-                if (Array.isArray(origMat)) {
-                    bodyMat = origMat.map(function(m) {
-                        return new THREE.MeshBasicMaterial({
-                            map: m.map || null,
-                            color: m.map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xcc44cc)),
-                            side: THREE.DoubleSide
-                        });
-                    });
-                } else {
-                    bodyMat = new THREE.MeshBasicMaterial({
-                        map: origMat ? origMat.map : null,
-                        color: (origMat && origMat.map) ? 0xffffff : 0xcc44cc,
-                        side: THREE.DoubleSide
-                    });
-                }
+                var singleMat = Array.isArray(origMat) ? origMat[0] : origMat;
+                var texMap = singleMat ? singleMat.map : null;
+                var bodyMat = new THREE.MeshBasicMaterial({
+                    map: texMap,
+                    color: texMap ? 0xffffff : 0xcc44cc,
+                    side: THREE.DoubleSide,
+                    // Aggressive polygon offset: push model toward camera in depth buffer
+                    polygonOffset: true,
+                    polygonOffsetFactor: -4,
+                    polygonOffsetUnits: -4
+                });
+
+                // Remove suspicious extra attributes that might confuse the vertex shader
+                var keepAttrs = ['position', 'normal', 'uv'];
+                var allAttrNames = Object.keys(dstGeo.attributes);
+                allAttrNames.forEach(function(name) {
+                    if (keepAttrs.indexOf(name) === -1) {
+                        dstGeo.deleteAttribute(name);
+                    }
+                });
+                showGLBDiag('[ONI] Cleaned attrs: ' + Object.keys(dstGeo.attributes).join(','));
 
                 var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
                 bodyMesh.frustumCulled = false;
+                bodyMesh.renderOrder = 1; // render after floor (renderOrder=0)
                 bodyMesh.morphTargetInfluences = [];
                 bodyGroup.add(bodyMesh);
                 meshDataArr.push({
