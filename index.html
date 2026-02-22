@@ -4339,49 +4339,27 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
             });
 
-            // Helper: clone material with emissive for visibility + force texture alpha
+            // Helper: create fresh MeshBasicMaterial (NOT cloned from SkinnedMesh)
             function cloneMatForRemote(mat) {
-                // Helper: fix alpha on all textures in a material
-                function fixMatTextures(m) {
-                    if (typeof forceTextureAlpha === 'function') {
-                        var texProps = ['map', 'emissiveMap', 'normalMap', 'aoMap', 'roughnessMap', 'metalnessMap'];
-                        texProps.forEach(function(prop) {
-                            if (m[prop]) m[prop] = forceTextureAlpha(m[prop]);
-                        });
-                    }
-                }
                 if (Array.isArray(mat)) {
                     return mat.map(function(m) {
-                        var cm = m.clone();
-                        cm.skinning = false;
-                        cm.morphTargets = false;
-                        cm.side = THREE.DoubleSide;
-                        cm.transparent = false;
-                        cm.alphaTest = 0;
-                        cm.depthWrite = true;
-                        fixMatTextures(cm);
-                        // Add emissive so model is visible even in dark areas
-                        if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
-                        if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
-                        return cm;
+                        var fm = new THREE.MeshBasicMaterial({
+                            side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+                        });
+                        if (m.map) fm.map = m.map;
+                        if (m.color) fm.color.copy(m.color);
+                        return fm;
                     });
                 } else if (mat) {
-                    var cm = mat.clone();
-                    cm.skinning = false;
-                    cm.morphTargets = false;
-                    cm.side = THREE.DoubleSide;
-                    cm.transparent = false;
-                    cm.alphaTest = 0;
-                    cm.depthWrite = true;
-                    fixMatTextures(cm);
-                    if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
-                    if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
-                    return cm;
+                    var fm = new THREE.MeshBasicMaterial({
+                        side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+                    });
+                    if (mat.map) fm.map = mat.map;
+                    if (mat.color) fm.color.copy(mat.color);
+                    return fm;
                 }
-                return new THREE.MeshStandardMaterial({
-                    color: 0x888888, side: THREE.DoubleSide,
-                    transparent: false, alphaTest: 0, depthWrite: true,
-                    emissive: new THREE.Color(0x222222), emissiveIntensity: 0.3
+                return new THREE.MeshBasicMaterial({
+                    color: 0x888888, side: THREE.DoubleSide
                 });
             }
 
@@ -7730,64 +7708,6 @@ function cpuSkinUpdate(cpuSkinData) {
                 cpuSkinData._bodyGroup.position.set(0, 0, 0);
             }
 
-            // Diagnostic on first few frames
-            if (cpuSkinData.frameCount <= 4) {
-                var verMinY = Infinity, verMaxY = -Infinity;
-                var verMinX = Infinity, verMaxX = -Infinity;
-                var verMinZ = Infinity, verMaxZ = -Infinity;
-                // Y histogram: 10 bins from 0 to 1.8
-                var yHist = [0,0,0,0,0,0,0,0,0,0];
-                var nanCount = 0, infCount = 0;
-                for (var m = 0; m < meshDataArr.length; m++) {
-                    var dp2 = meshDataArr[m].dstPositions;
-                    for (var i = 0; i < dp2.count; i++) {
-                        var vx = dp2.getX(i), vy = dp2.getY(i), vz = dp2.getZ(i);
-                        if (isNaN(vy)) { nanCount++; continue; }
-                        if (!isFinite(vy)) { infCount++; continue; }
-                        if (vy < verMinY) verMinY = vy;
-                        if (vy > verMaxY) verMaxY = vy;
-                        if (vx < verMinX) verMinX = vx;
-                        if (vx > verMaxX) verMaxX = vx;
-                        if (vz < verMinZ) verMinZ = vz;
-                        if (vz > verMaxZ) verMaxZ = vz;
-                        var bin = Math.min(9, Math.max(0, Math.floor(vy / 0.18)));
-                        yHist[bin]++;
-                    }
-                }
-                var diagMsg = '[cpuSkin] f' + cpuSkinData.frameCount +
-                    ' RAW=[' + globalMinY.toFixed(1) + ',' + globalMaxY.toFixed(1) + '] h=' + outHeight.toFixed(1) +
-                    ' FINAL=[' + verMinY.toFixed(4) + ',' + verMaxY.toFixed(4) + '] h=' + (verMaxY-verMinY).toFixed(4) +
-                    ' X=[' + verMinX.toFixed(2) + ',' + verMaxX.toFixed(2) + ']' +
-                    ' Z=[' + verMinZ.toFixed(2) + ',' + verMaxZ.toFixed(2) + ']' +
-                    ' NaN=' + nanCount + ' Inf=' + infCount;
-                console.log(diagMsg);
-                if (typeof showGLBDiag === 'function') showGLBDiag(diagMsg);
-
-                // Y histogram: bins 0-3 = lower body (0-0.72), 4-6 = mid, 7-9 = upper (1.26-1.8)
-                var histStr = '[cpuSkin-HIST] Y bins(0-1.8): ';
-                for (var hb = 0; hb < 10; hb++) {
-                    histStr += '[' + (hb*0.18).toFixed(1) + '-' + ((hb+1)*0.18).toFixed(1) + ']=' + yHist[hb] + ' ';
-                }
-                console.log(histStr);
-                if (typeof showGLBDiag === 'function') showGLBDiag(histStr);
-
-                if (cpuSkinData._bodyGroup && cpuSkinData._bodyGroup.parent) {
-                    var gp = cpuSkinData._bodyGroup.parent.position;
-                    if (typeof showGLBDiag === 'function')
-                        showGLBDiag('[cpuSkin] grp.pos=(' + gp.x.toFixed(2) + ',' + gp.y.toFixed(2) + ',' + gp.z.toFixed(2) + ')');
-                }
-
-                // Count children of bodyGroup for debug
-                if (cpuSkinData._bodyGroup) {
-                    var childInfo = '[cpuSkin] bodyGroup children: ' + cpuSkinData._bodyGroup.children.length;
-                    cpuSkinData._bodyGroup.children.forEach(function(ch, idx) {
-                        childInfo += ' [' + idx + ']=' + ch.type +
-                            (ch.material ? ' mat=' + (ch.material.wireframe ? 'wire' : (ch.material.opacity < 1 ? 'semi' : 'solid')) : '');
-                    });
-                    console.log(childInfo);
-                    if (typeof showGLBDiag === 'function') showGLBDiag(childInfo);
-                }
-            }
         }
 
         // Mark ALL destination buffers for GPU upload
@@ -7801,29 +7721,6 @@ function cpuSkinUpdate(cpuSkinData) {
         // Note: frameCount is incremented by the game loop caller, not here
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
-    }
-}
-
-/* --- C4-helper: Clone material for ONI (disable GPU skinning, boost emissive) --- */
-function cloneMatForOni(origMat) {
-    function fixMat(cm) {
-        cm.skinning = false;
-        cm.morphTargets = false;
-        cm.morphNormals = false;
-        cm.side = THREE.DoubleSide;
-        if (cm.emissive) cm.emissive.setScalar(Math.max(cm.emissive.r, 0.12));
-        if (cm.emissiveIntensity !== undefined) cm.emissiveIntensity = Math.max(cm.emissiveIntensity, 0.2);
-        return cm;
-    }
-    if (Array.isArray(origMat)) {
-        return origMat.map(function(m) { return fixMat(m.clone()); });
-    } else if (origMat) {
-        return fixMat(origMat.clone());
-    } else {
-        return new THREE.MeshBasicMaterial({
-            color: ONI_CONFIG.bodyEmissive,
-            side: THREE.DoubleSide
-        });
     }
 }
 
@@ -7842,36 +7739,6 @@ function showGLBDiag(msg) {
     el._timer = setTimeout(function() { el.style.display = 'none'; }, 8000);
 }
 
-/* --- C4-fix: Force all texture pixels to fully opaque (alpha=255) --- */
-function forceTextureAlpha(texture) {
-    if (!texture || !texture.image) return texture;
-    var img = texture.image;
-    var w = img.width || img.naturalWidth || 256;
-    var h = img.height || img.naturalHeight || 256;
-    if (w === 0 || h === 0) return texture;
-    try {
-        var canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        var ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, w, h);
-        var imageData = ctx.getImageData(0, 0, w, h);
-        var data = imageData.data;
-        var fixedCount = 0;
-        for (var i = 3; i < data.length; i += 4) {
-            if (data[i] < 255) { fixedCount++; data[i] = 255; }
-        }
-        if (fixedCount > 0) {
-            ctx.putImageData(imageData, 0, 0);
-            texture.image = canvas;
-            texture.needsUpdate = true;
-            showGLBDiag('[ONI] Fixed ' + fixedCount + '/' + (data.length/4) + ' pixels with alpha < 255');
-        }
-    } catch(e) {
-        showGLBDiag('[ONI] forceTextureAlpha error: ' + e.message);
-    }
-    return texture;
-}
 
 /* --- C4-setup: Process GLTF data into ONI group --- */
 function processOniGLTF(group, gltf, stageId) {
@@ -7918,15 +7785,6 @@ function processOniGLTF(group, gltf, stageId) {
     if (allSkinnedMeshes.length === 0 && allStaticMeshes.length === 0) {
         showGLBDiag('[ONI] ERROR: No meshes found!');
         return;
-    }
-
-    // Helper: force alpha on all textures in a material
-    function fixMaterialTextures(mat) {
-        if (!mat) return;
-        var texProps = ['map', 'emissiveMap', 'normalMap', 'aoMap', 'roughnessMap', 'metalnessMap'];
-        texProps.forEach(function(prop) {
-            if (mat[prop]) mat[prop] = forceTextureAlpha(mat[prop]);
-        });
     }
 
     // Compute scale from SOURCE GEOMETRY bounding box (all meshes)
@@ -8006,43 +7864,30 @@ function processOniGLTF(group, gltf, stageId) {
         var hasUV = !!dstGeo.attributes.uv;
         showGLBDiag('[ONI-DIAG] UV=' + hasUV + (hasUV ? ' count=' + dstGeo.attributes.uv.count : ''));
 
-        // === Create material from ORIGINAL with forced alpha fix ===
+        // === Create FRESH MeshBasicMaterial (NOT cloned from SkinnedMesh) ===
+        // Cloning MeshStandardMaterial from SkinnedMesh retains internal shader state
+        // that causes lower body to not render on regular Mesh. Use MeshBasicMaterial instead.
         var origMat = origSM.material;
         var bodyMat;
 
-        if (Array.isArray(origMat)) {
-            // Multi-material: clone each, fix textures, force opaque
-            bodyMat = origMat.map(function(m) {
-                var cm = m.clone();
-                cm.skinning = false;
-                cm.morphTargets = false;
-                cm.side = THREE.DoubleSide;
-                cm.transparent = false;
-                cm.alphaTest = 0;
-                cm.depthWrite = true;
-                fixMaterialTextures(cm);
-                cm.emissive = new THREE.Color(0x333333);
-                cm.emissiveIntensity = 0.3;
-                return cm;
+        function createFreshMat(srcMat) {
+            var mat = new THREE.MeshBasicMaterial({
+                side: THREE.DoubleSide,
+                transparent: false,
+                alphaTest: 0,
+                depthWrite: true
             });
-            showGLBDiag('[ONI-DIAG] Multi-material: ' + bodyMat.length + ' materials (alpha forced)');
+            if (srcMat) {
+                if (srcMat.map) mat.map = srcMat.map;
+                if (srcMat.color) mat.color.copy(srcMat.color);
+            }
+            return mat;
+        }
+
+        if (Array.isArray(origMat)) {
+            bodyMat = origMat.map(function(m) { return createFreshMat(m); });
         } else if (origMat) {
-            var cm = origMat.clone();
-            cm.skinning = false;
-            cm.morphTargets = false;
-            cm.side = THREE.DoubleSide;
-            cm.transparent = false;
-            cm.alphaTest = 0;
-            cm.depthWrite = true;
-            fixMaterialTextures(cm);
-            cm.emissive = new THREE.Color(0x333333);
-            cm.emissiveIntensity = 0.3;
-
-            showGLBDiag('[ONI-DIAG] origMat: type=' + origMat.type +
-                ' map=' + (cm.map ? 'YES' : 'NO') +
-                ' groups=' + (dstGeo.groups ? dstGeo.groups.length : 0));
-
-            // If geometry has groups referencing different materialIndex, create array
+            var cm = createFreshMat(origMat);
             if (dstGeo.groups && dstGeo.groups.length > 0) {
                 var maxMatIdx = 0;
                 dstGeo.groups.forEach(function(g) {
@@ -8051,9 +7896,8 @@ function processOniGLTF(group, gltf, stageId) {
                 if (maxMatIdx > 0) {
                     bodyMat = [];
                     for (var mIdx = 0; mIdx <= maxMatIdx; mIdx++) {
-                        bodyMat.push(cm.clone());
+                        bodyMat.push(createFreshMat(origMat));
                     }
-                    showGLBDiag('[ONI-DIAG] Created material array: ' + bodyMat.length + ' entries for groups');
                 } else {
                     bodyMat = cm;
                 }
@@ -8061,13 +7905,10 @@ function processOniGLTF(group, gltf, stageId) {
                 bodyMat = cm;
             }
         } else {
-            bodyMat = new THREE.MeshStandardMaterial({
+            bodyMat = new THREE.MeshBasicMaterial({
                 color: 0xcc44cc,
-                side: THREE.DoubleSide,
-                emissive: new THREE.Color(0x333333),
-                emissiveIntensity: 0.3
+                side: THREE.DoubleSide
             });
-            showGLBDiag('[ONI-DIAG] Fallback: no original material');
         }
 
         var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
@@ -8075,87 +7916,7 @@ function processOniGLTF(group, gltf, stageId) {
         bodyMesh.morphTargetInfluences = [];
         bodyGroup.add(bodyMesh);
 
-        // === DEBUG: Add wireframe overlay to visualize full geometry extent ===
-        var wireDebugMat = new THREE.MeshBasicMaterial({
-            color: 0xff00ff,
-            wireframe: true,
-            side: THREE.DoubleSide,
-            depthTest: true,
-            depthWrite: false
-        });
-        var wireDebugMesh = new THREE.Mesh(dstGeo, wireDebugMat);
-        wireDebugMesh.frustumCulled = false;
-        bodyGroup.add(wireDebugMesh);
-
-        // === DEBUG: Add solid-color overlay to rule out material issues ===
-        var solidDebugMat = new THREE.MeshBasicMaterial({
-            color: 0x00ccff,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.3,
-            depthTest: true,
-            depthWrite: false
-        });
-        var solidDebugMesh = new THREE.Mesh(dstGeo, solidDebugMat);
-        solidDebugMesh.frustumCulled = false;
-        bodyGroup.add(solidDebugMesh);
-
-        // === DIAGNOSTIC: Analyze geometry vertex distribution ===
-        var posAttr = dstGeo.attributes.position;
-        var diagLowY = 0, diagHighY = 0, diagMinY = Infinity, diagMaxY = -Infinity;
-        for (var di = 0; di < posAttr.count; di++) {
-            var yVal = posAttr.getY(di);
-            if (yVal < diagMinY) diagMinY = yVal;
-            if (yVal > diagMaxY) diagMaxY = yVal;
-            if (yVal < (diagMaxY + diagMinY) / 2) diagLowY++; else diagHighY++;
-        }
-        // Re-count after knowing full range
-        var midY = (diagMinY + diagMaxY) / 2;
-        diagLowY = 0; diagHighY = 0;
-        for (var di2 = 0; di2 < posAttr.count; di2++) {
-            if (posAttr.getY(di2) < midY) diagLowY++; else diagHighY++;
-        }
-
-        var idxCount = dstGeo.index ? dstGeo.index.count : 0;
-        var triCount = dstGeo.index ? Math.floor(dstGeo.index.count / 3) : Math.floor(posAttr.count / 3);
-        // Count triangles that have at least one vertex in lower half
-        var lowerTriCount = 0;
-        if (dstGeo.index) {
-            var idxArr = dstGeo.index.array;
-            for (var ti = 0; ti < idxArr.length; ti += 3) {
-                var y0 = posAttr.getY(idxArr[ti]);
-                var y1 = posAttr.getY(idxArr[ti+1]);
-                var y2 = posAttr.getY(idxArr[ti+2]);
-                if (y0 < midY || y1 < midY || y2 < midY) lowerTriCount++;
-            }
-        }
-
-        var geoDiag = '[ONI-GEO] vtx=' + posAttr.count +
-            ' Y=[' + diagMinY.toFixed(3) + ',' + diagMaxY.toFixed(3) + ']' +
-            ' lowerVtx=' + diagLowY + ' upperVtx=' + diagHighY +
-            ' tris=' + triCount + ' lowerTris=' + lowerTriCount +
-            ' idx=' + idxCount +
-            ' idxType=' + (dstGeo.index ? dstGeo.index.array.constructor.name : 'none') +
-            ' groups=' + (dstGeo.groups ? dstGeo.groups.length : 0) +
-            ' drawRange=[' + dstGeo.drawRange.start + ',' + dstGeo.drawRange.count + ']' +
-            ' matIsArray=' + Array.isArray(bodyMat);
-        console.log(geoDiag);
-        showGLBDiag(geoDiag);
-
-        // Also log skinIndex/skinWeight range for lower-body vertices
-        var skinIdx = srcGeo.attributes.skinIndex;
-        var skinWgt = srcGeo.attributes.skinWeight;
-        if (skinIdx && skinWgt) {
-            var zeroWeightCount = 0;
-            var maxBoneIdx = 0;
-            for (var si2 = 0; si2 < skinIdx.count; si2++) {
-                var tw = skinWgt.getX(si2) + skinWgt.getY(si2) + skinWgt.getZ(si2) + skinWgt.getW(si2);
-                if (tw < 0.001) zeroWeightCount++;
-                var bmax = Math.max(skinIdx.getX(si2), skinIdx.getY(si2), skinIdx.getZ(si2), skinIdx.getW(si2));
-                if (bmax > maxBoneIdx) maxBoneIdx = bmax;
-            }
-            showGLBDiag('[ONI-SKIN] zeroWeightVtx=' + zeroWeightCount + '/' + skinIdx.count + ' maxBoneIdx=' + maxBoneIdx);
-        }
+        showGLBDiag('[ONI] Material: MeshBasicMaterial, map=' + (origMat && origMat.map ? 'YES' : 'NO'));
 
         meshDataArr.push({
             srcPositions: srcPos,
@@ -8183,34 +7944,22 @@ function processOniGLTF(group, gltf, stageId) {
         var staticMat;
         if (Array.isArray(origMatS)) {
             staticMat = origMatS.map(function(m) {
-                var cm = m.clone();
-                cm.skinning = false;
-                cm.morphTargets = false;
-                cm.side = THREE.DoubleSide;
-                cm.transparent = false;
-                cm.alphaTest = 0;
-                cm.depthWrite = true;
-                fixMaterialTextures(cm);
-                cm.emissive = new THREE.Color(0x333333);
-                cm.emissiveIntensity = 0.3;
-                return cm;
+                var sm = new THREE.MeshBasicMaterial({
+                    side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+                });
+                if (m.map) sm.map = m.map;
+                if (m.color) sm.color.copy(m.color);
+                return sm;
             });
         } else if (origMatS) {
-            var cms = origMatS.clone();
-            cms.skinning = false;
-            cms.morphTargets = false;
-            cms.side = THREE.DoubleSide;
-            cms.transparent = false;
-            cms.alphaTest = 0;
-            cms.depthWrite = true;
-            fixMaterialTextures(cms);
-            cms.emissive = new THREE.Color(0x333333);
-            cms.emissiveIntensity = 0.3;
-            staticMat = cms;
+            staticMat = new THREE.MeshBasicMaterial({
+                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+            });
+            if (origMatS.map) staticMat.map = origMatS.map;
+            if (origMatS.color) staticMat.color.copy(origMatS.color);
         } else {
-            staticMat = new THREE.MeshStandardMaterial({
-                color: 0xcc44cc, side: THREE.DoubleSide,
-                emissive: new THREE.Color(0x333333), emissiveIntensity: 0.3
+            staticMat = new THREE.MeshBasicMaterial({
+                color: 0xcc44cc, side: THREE.DoubleSide
             });
         }
 
@@ -8237,24 +7986,6 @@ function processOniGLTF(group, gltf, stageId) {
     group.userData.chestMesh = null;
 
     group.add(bodyGroup);
-
-    // === DEBUG: BoxHelper to visualize mesh bounds ===
-    var boxHelper = new THREE.BoxHelper(bodyGroup, 0xffff00);
-    group.add(boxHelper);
-    group.userData._boxHelper = boxHelper;
-
-    // Lighting for MeshStandardMaterial (these lights now actually affect the model)
-    var ambLight = new THREE.AmbientLight(0xffffff, 0.6);
-    group.add(ambLight);
-    var bodyLight = new THREE.PointLight(0xffffff, 2.0, 10);
-    bodyLight.position.set(0, 1.2, 0.5);
-    group.add(bodyLight);
-    var lowerLight = new THREE.PointLight(0xffffff, 1.5, 8);
-    lowerLight.position.set(0, 0.3, 0.8);
-    group.add(lowerLight);
-    var backLight = new THREE.PointLight(0xffffff, 1.0, 8);
-    backLight.position.set(0, 0.9, -0.5);
-    group.add(backLight);
 
     group.userData.glbLoaded = true;
     group.userData.glbModel = bodyGroup;
@@ -8957,10 +8688,6 @@ function updateOniAI(delta) {
             if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
                 cpuSkinUpdate(oni.group.userData.cpuSkin);
             }
-        }
-        // Update debug BoxHelper
-        if (oni.group.userData._boxHelper) {
-            oni.group.userData._boxHelper.update();
         }
     });
 }
