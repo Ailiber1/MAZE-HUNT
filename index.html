@@ -7862,6 +7862,7 @@ function loadOniGLB(group, charId, stageId) {
                 var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
                 bodyMesh.frustumCulled = false;
                 bodyMesh.morphTargetInfluences = [];
+                bodyGroup.add(bodyMesh);
                 meshDataArr.push({
                     srcPositions: srcPos,
                     dstPositions: dstGeo.attributes.position,
