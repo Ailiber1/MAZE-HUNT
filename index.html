@@ -7722,6 +7722,23 @@ function processOniGLTF(group, gltf, stageId) {
     var sourceScene = gltf.scene;
     sourceScene.updateMatrixWorld(true);
 
+    // === GLB MODEL STRUCTURE DEBUG ===
+    console.log('=== ONI GLB MODEL STRUCTURE ===');
+    var meshIndex = 0;
+    sourceScene.traverse(function(child) {
+        if (child.isMesh || child.isSkinnedMesh) {
+            var geo = child.geometry;
+            var posAttr = geo && geo.attributes && geo.attributes.position;
+            var vertexCount = posAttr ? posAttr.count : 0;
+            console.log('MESH[' + meshIndex + '] name="' + child.name + '"' +
+                ' type=' + (child.isSkinnedMesh ? 'SkinnedMesh' : 'Mesh') +
+                ' visible=' + child.visible +
+                ' vertices=' + vertexCount);
+            meshIndex++;
+        }
+    });
+    console.log('=== TOTAL MESHES: ' + meshIndex + ' ===');
+
     // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
     sourceScene.traverse(function(child) {
         if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
