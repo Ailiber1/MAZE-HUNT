@@ -7855,7 +7855,7 @@ function loadOniGLB(group, charId, stageId) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, meshScale=' + meshScale.toFixed(6) + ' geoH=' + geoHeight.toFixed(4) + ' offY=' + geoOffsetY.toFixed(4);
+            var diagMsg = '[ONI] OK: ' + allSkinnedMeshes.length + ' meshes, geoH=' + geoHeight.toFixed(4) + ' geoMinY=' + geoMinY.toFixed(4) + ' bodyGroup=IDENTITY';
             console.log(diagMsg);
             showGLBDiag(diagMsg);
 
