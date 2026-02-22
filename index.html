@@ -4495,24 +4495,66 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             dstGeo.deleteAttribute('skinIndex');
             dstGeo.deleteAttribute('skinWeight');
 
-            // FIX: Use MeshBasicMaterial with original texture (not cloned MeshStandardMaterial)
+            // === FIX: Force texture full opacity + clear geometry groups (remote) ===
             var origMatR = origSkinned.material;
-            var bodyMat;
+            var texMapR = null;
             if (Array.isArray(origMatR)) {
-                bodyMat = origMatR.map(function(m) {
-                    return new THREE.MeshBasicMaterial({
-                        map: m.map || null,
-                        color: m.map ? 0xffffff : (m.color ? m.color.clone() : new THREE.Color(0xcc44cc)),
-                        side: THREE.DoubleSide
-                    });
-                });
-            } else {
-                bodyMat = new THREE.MeshBasicMaterial({
-                    map: origMatR ? origMatR.map : null,
-                    color: (origMatR && origMatR.map) ? 0xffffff : 0xcc44cc,
-                    side: THREE.DoubleSide
-                });
+                for (var mri = 0; mri < origMatR.length; mri++) {
+                    if (origMatR[mri] && origMatR[mri].map) { texMapR = origMatR[mri].map; break; }
+                }
+            } else if (origMatR) {
+                texMapR = origMatR.map || null;
             }
+
+            // FIX: Force alpha=255 on texture
+            if (texMapR && texMapR.image) {
+                try {
+                    var rImg = texMapR.image;
+                    var rCanvas = document.createElement('canvas');
+                    rCanvas.width = rImg.naturalWidth || rImg.width || 512;
+                    rCanvas.height = rImg.naturalHeight || rImg.height || 512;
+                    var rCtx = rCanvas.getContext('2d');
+                    rCtx.drawImage(rImg, 0, 0, rCanvas.width, rCanvas.height);
+                    var rImgData = rCtx.getImageData(0, 0, rCanvas.width, rCanvas.height);
+                    var rPixels = rImgData.data;
+                    for (var rpx = 3; rpx < rPixels.length; rpx += 4) {
+                        if (rPixels[rpx] < 255) rPixels[rpx] = 255;
+                    }
+                    rCtx.putImageData(rImgData, 0, 0);
+                    var newTexR = new THREE.CanvasTexture(rCanvas);
+                    newTexR.encoding = texMapR.encoding;
+                    newTexR.flipY = texMapR.flipY;
+                    newTexR.wrapS = texMapR.wrapS;
+                    newTexR.wrapT = texMapR.wrapT;
+                    newTexR.minFilter = texMapR.minFilter;
+                    newTexR.magFilter = texMapR.magFilter;
+                    texMapR = newTexR;
+                } catch (rTexErr) {
+                    console.warn('[ONI-Remote] Texture fix error:', rTexErr);
+                }
+            }
+
+            // FIX: Clear geometry groups
+            if (dstGeo.groups && dstGeo.groups.length > 0) {
+                dstGeo.clearGroups();
+            }
+            // FIX: Ensure drawRange covers all
+            if (dstGeo.index) {
+                dstGeo.setDrawRange(0, dstGeo.index.count);
+            } else {
+                dstGeo.setDrawRange(0, Infinity);
+            }
+
+            var bodyMat = new THREE.MeshBasicMaterial({
+                map: texMapR,
+                color: texMapR ? 0xffffff : 0xcc44cc,
+                side: THREE.DoubleSide,
+                transparent: false,
+                alphaTest: 0,
+                depthTest: true,
+                depthWrite: true
+            });
+
             // Remove extra attributes (keep only position, normal, uv)
             var keepAttrsR = ['position', 'normal', 'uv'];
             Object.keys(dstGeo.attributes).forEach(function(name) {
@@ -7830,26 +7872,79 @@ function processOniGLTF(group, gltf, stageId) {
         dstGeo.deleteAttribute('skinIndex');
         dstGeo.deleteAttribute('skinWeight');
 
-        // FIX: Properly handle multi-material models (upper/lower body use different textures)
+        // === FIX: Force texture full opacity + clear geometry groups ===
         var origMat = origSM.material;
-        var bodyMat;
+        var texMap = null;
+
+        // Extract texture from material (handle array or single)
         if (Array.isArray(origMat)) {
-            bodyMat = origMat.map(function(m) {
-                return new THREE.MeshBasicMaterial({
-                    map: m.map || null,
-                    color: m.map ? 0xffffff : 0xcc44cc,
-                    side: THREE.DoubleSide
-                });
-            });
-            showGLBDiag('[ONI] Multi-material: ' + origMat.length + ' materials');
-        } else {
-            var texMap = origMat ? origMat.map : null;
-            bodyMat = new THREE.MeshBasicMaterial({
-                map: texMap,
-                color: texMap ? 0xffffff : 0xcc44cc,
-                side: THREE.DoubleSide
-            });
+            showGLBDiag('[ONI-DIAG] Multi-material: ' + origMat.length);
+            // Use first material's texture
+            for (var mi = 0; mi < origMat.length; mi++) {
+                if (origMat[mi] && origMat[mi].map) { texMap = origMat[mi].map; break; }
+            }
+        } else if (origMat) {
+            texMap = origMat.map || null;
+            showGLBDiag('[ONI-DIAG] mat: transparent=' + origMat.transparent +
+                ' alphaTest=' + origMat.alphaTest +
+                ' map=' + (texMap ? 'YES' : 'NO'));
         }
+
+        // FIX: Force alpha=255 on texture to prevent invisible pixels
+        if (texMap && texMap.image) {
+            try {
+                var tImg = texMap.image;
+                var tCanvas = document.createElement('canvas');
+                tCanvas.width = tImg.naturalWidth || tImg.width || 512;
+                tCanvas.height = tImg.naturalHeight || tImg.height || 512;
+                var tCtx = tCanvas.getContext('2d');
+                tCtx.drawImage(tImg, 0, 0, tCanvas.width, tCanvas.height);
+                var tImgData = tCtx.getImageData(0, 0, tCanvas.width, tCanvas.height);
+                var tPixels = tImgData.data;
+                var transparentCount = 0;
+                for (var px = 3; px < tPixels.length; px += 4) {
+                    if (tPixels[px] < 255) { transparentCount++; tPixels[px] = 255; }
+                }
+                tCtx.putImageData(tImgData, 0, 0);
+                showGLBDiag('[ONI-DIAG] Texture ' + tCanvas.width + 'x' + tCanvas.height +
+                    ' forced ' + transparentCount + '/' + (tPixels.length / 4) + ' pixels alpha=255');
+                var newTex = new THREE.CanvasTexture(tCanvas);
+                newTex.encoding = texMap.encoding;
+                newTex.flipY = texMap.flipY;
+                newTex.wrapS = texMap.wrapS;
+                newTex.wrapT = texMap.wrapT;
+                newTex.minFilter = texMap.minFilter;
+                newTex.magFilter = texMap.magFilter;
+                texMap = newTex;
+            } catch (texErr) {
+                showGLBDiag('[ONI-DIAG] Texture fix error: ' + texErr.message);
+            }
+        }
+
+        // FIX: Clear geometry groups to prevent partial rendering
+        var geoGroupCount = dstGeo.groups ? dstGeo.groups.length : 0;
+        if (geoGroupCount > 0) {
+            showGLBDiag('[ONI-DIAG] Clearing ' + geoGroupCount + ' geometry groups');
+            dstGeo.clearGroups();
+        }
+
+        // FIX: Ensure drawRange covers all geometry
+        if (dstGeo.index) {
+            dstGeo.setDrawRange(0, dstGeo.index.count);
+            showGLBDiag('[ONI-DIAG] drawRange: 0-' + dstGeo.index.count + ' (indexed)');
+        } else {
+            dstGeo.setDrawRange(0, Infinity);
+        }
+
+        var bodyMat = new THREE.MeshBasicMaterial({
+            map: texMap,
+            color: texMap ? 0xffffff : 0xcc44cc,
+            side: THREE.DoubleSide,
+            transparent: false,
+            alphaTest: 0,
+            depthTest: true,
+            depthWrite: true
+        });
 
         // Keep only position, normal, uv
         var keepAttrs = ['position', 'normal', 'uv'];
