@@ -7842,20 +7842,32 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
         }
     }
 
-    // Helper: find bone entries by name (returns array of all matching bone objects)
+    // Helper: find ALL bone entries matching name across ALL keys.
+    // Models may have "LeftArm" AND "mixamorigLeftArm" as separate keys
+    // (different skeletons). Must collect bones from ALL matching keys.
     function findBones(partialName) {
         var lower = partialName.toLowerCase();
+        var result = [];
+        // Collect from exact match AND stripped-prefix match
         for (var n in rp) {
-            if (n.toLowerCase() === lower) return rp[n];
-        }
-        for (var n in rp) {
+            var keyLower = n.toLowerCase();
             var stripped = n.replace(/^mixamorig[_:]?/i, '').toLowerCase();
-            if (stripped === lower) return rp[n];
+            if (keyLower === lower || stripped === lower) {
+                for (var bi = 0; bi < rp[n].length; bi++) {
+                    result.push(rp[n][bi]);
+                }
+            }
         }
+        if (result.length > 0) return result;
+        // Fallback: substring match
         for (var n in rp) {
-            if (n.toLowerCase().indexOf(lower) !== -1) return rp[n];
+            if (n.toLowerCase().indexOf(lower) !== -1) {
+                for (var bi = 0; bi < rp[n].length; bi++) {
+                    result.push(rp[n][bi]);
+                }
+            }
         }
-        return null;
+        return result.length > 0 ? result : null;
     }
 
     // Helper: apply DELTA rotation to ALL bone objects with matching name.
