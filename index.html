@@ -7528,6 +7528,19 @@ function directBoneAnimUpdate(cpuSkinData) {
     var da = cpuSkinData._directAnim;
     if (!da || !da.bindings || da.bindings.length === 0) return;
 
+    // STEP 1: Restore ALL bones to bind pose (position + scale).
+    // This undoes any damage from mixer.update() or previous animation frames.
+    // We only want to change quaternions (rotation), not position or scale.
+    var allBones = cpuSkinData._allBones;
+    if (allBones) {
+        for (var bi = 0; bi < allBones.length; bi++) {
+            var bone = allBones[bi];
+            if (bone._bindPos) bone.position.copy(bone._bindPos);
+            if (bone._bindScale) bone.scale.copy(bone._bindScale);
+        }
+    }
+
+    // STEP 2: Advance animation time
     var now = performance.now() * 0.001;
     if (!da._lastTime) da._lastTime = now;
     var dt = Math.min(now - da._lastTime, 0.1); // cap delta to prevent jumps
@@ -7537,23 +7550,38 @@ function directBoneAnimUpdate(cpuSkinData) {
         da.time = da.time % da.clip.duration;
     }
 
+    // STEP 3: Apply ONLY quaternion tracks from animation.
+    // Position tracks are SKIPPED (scale mismatch between shared anims and model).
+    // Scale tracks are SKIPPED (animation may set non-unity scales that corrupt the model).
     for (var i = 0; i < da.bindings.length; i++) {
         var b = da.bindings[i];
         if (!b.bone) continue;
-        var result = b.interpolant.evaluate(da.time);
         if (b.propName === 'quaternion') {
+            var result = b.interpolant.evaluate(da.time);
             b.bone.quaternion.set(result[0], result[1], result[2], result[3]);
-        } else if (b.propName === 'position') {
-            // FIX: Do NOT apply animation position values — shared animations use
-            // a different coordinate scale (cm vs m), causing bones to shift wildly.
-            // Instead, restore the original bind pose position every frame.
-            // This undoes any damage from mixer.update() and keeps bones at correct positions.
-            // Only quaternion (rotation) tracks drive the animation.
-            if (b.bone._bindPos) {
-                b.bone.position.copy(b.bone._bindPos);
+        }
+        // Position and scale: SKIP — bind values already restored in STEP 1
+    }
+
+    // One-time diagnostic: log scale track values from animation
+    if (!da._scaleDiagDone) {
+        da._scaleDiagDone = true;
+        var scaleInfo = [];
+        for (var i = 0; i < da.bindings.length; i++) {
+            var b = da.bindings[i];
+            if (b.propName === 'scale' && b.bone) {
+                var sv = b.interpolant.evaluate(0);
+                var isUnit = (Math.abs(sv[0]-1)<0.01 && Math.abs(sv[1]-1)<0.01 && Math.abs(sv[2]-1)<0.01);
+                if (!isUnit) {
+                    scaleInfo.push(b.bone.name + '=[' + sv[0].toFixed(3) + ',' + sv[1].toFixed(3) + ',' + sv[2].toFixed(3) + ']');
+                }
             }
-        } else if (b.propName === 'scale') {
-            b.bone.scale.set(result[0], result[1], result[2]);
+        }
+        if (scaleInfo.length > 0) {
+            console.log('[ANIM] Non-unity scale tracks: ' + scaleInfo.join(', '));
+            showGLBDiag('[ANIM] NON-UNIT SCALES: ' + scaleInfo.length + '\n' + scaleInfo.slice(0,5).join('\n'));
+        } else {
+            console.log('[ANIM] All scale tracks are unity (1,1,1)');
         }
     }
 }
@@ -7588,8 +7616,33 @@ function buildDirectAnimData(sourceScene, clip) {
             bindings.push(binding);
         }
     }
+    // Log unmatched tracks (for debugging bone name mismatches)
+    var unmatchedNames = [];
+    var matchedQuat = 0, unmatchedQuat = 0;
+    for (var ui = 0; ui < clip.tracks.length; ui++) {
+        var ut = clip.tracks[ui];
+        var udot = ut.name.lastIndexOf('.');
+        if (udot === -1) continue;
+        var ubone = ut.name.substring(0, udot);
+        var uprop = ut.name.substring(udot + 1);
+        if (!boneMap[ubone]) {
+            unmatchedNames.push(ubone + '.' + uprop);
+            if (uprop === 'quaternion') unmatchedQuat++;
+        } else {
+            if (uprop === 'quaternion') matchedQuat++;
+        }
+    }
     console.log('[DirectAnim] Built: ' + matched + '/' + clip.tracks.length +
-        ' tracks matched, clip=' + clip.name + ' dur=' + clip.duration.toFixed(2));
+        ' tracks matched (' + matchedQuat + 'Q matched, ' + unmatchedQuat + 'Q unmatched), clip=' + clip.name + ' dur=' + clip.duration.toFixed(2));
+    if (unmatchedNames.length > 0) {
+        // Show first 15 unmatched track names
+        console.log('[DirectAnim] UNMATCHED tracks (' + unmatchedNames.length + '):\n' +
+            unmatchedNames.slice(0, 15).join('\n') + (unmatchedNames.length > 15 ? '\n... +' + (unmatchedNames.length - 15) + ' more' : ''));
+        // Also show model bone names for comparison
+        var modelBones = Object.keys(boneMap).sort();
+        console.log('[DirectAnim] Model bones (' + modelBones.length + '):\n' + modelBones.join(', '));
+        showGLBDiag('[TRACK-DIAG] ' + matchedQuat + '/' + (matchedQuat+unmatchedQuat) + ' quat matched\nUnmatched: ' + unmatchedNames.slice(0,5).map(function(n){return n.split('.')[0];}).join(', '));
+    }
     if (matched === 0) return null;
     return { clip: clip, time: 0, bindings: bindings };
 }
@@ -7606,10 +7659,24 @@ function cpuSkinUpdate(cpuSkinData) {
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        // One-time bone world position diagnostic
+        // One-time bone world position diagnostic + bindMatrix check
         if (!cpuSkinData._boneDiagDone) {
             cpuSkinData._boneDiagDone = true;
-            var _keyBones = ['Hips', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightUpLeg', 'Spine'];
+
+            // Log bindMatrix info
+            if (cpuSkinData.meshes && cpuSkinData.meshes.length > 0) {
+                var bm0 = cpuSkinData.meshes[0].bindMatrix;
+                var bmi0 = cpuSkinData.meshes[0].bindMatrixInverse;
+                if (bm0) {
+                    var e = bm0.elements;
+                    var scX = Math.sqrt(e[0]*e[0]+e[1]*e[1]+e[2]*e[2]);
+                    var scY = Math.sqrt(e[4]*e[4]+e[5]*e[5]+e[6]*e[6]);
+                    console.log('[BIND] bindMatrix scale: X=' + scX.toFixed(4) + ' Y=' + scY.toFixed(4));
+                    showGLBDiag('[BIND] bindMat scale: ' + scX.toFixed(4) + ',' + scY.toFixed(4));
+                }
+            }
+
+            var _keyBones = ['Hips', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightUpLeg', 'Spine', 'Head', 'Neck'];
             var _diagLines = [];
             var _wp = new THREE.Vector3();
             cpuSkinData.sourceScene.traverse(function(c) {
@@ -7861,9 +7928,9 @@ function showGLBDiag(msg) {
         document.body.appendChild(el);
     }
     el.textContent += msg + '\n';
-    // Auto-hide after 8 seconds
+    // Auto-hide after 30 seconds (extended for debugging)
     clearTimeout(el._timer);
-    el._timer = setTimeout(function() { el.style.display = 'none'; }, 8000);
+    el._timer = setTimeout(function() { el.style.display = 'none'; }, 30000);
 }
 
 
@@ -7873,16 +7940,21 @@ function processOniGLTF(group, gltf, stageId) {
     sourceScene.updateMatrixWorld(true);
 
     // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
-    // Also save bind pose positions BEFORE any animation runs (for cpuSkinUpdate)
+    // Also save bind pose transforms BEFORE any animation runs (for cpuSkinUpdate)
+    var allBonesList = [];
     sourceScene.traverse(function(child) {
         if (child.isBone) {
             if (child.name && child.name.indexOf(':') !== -1) {
                 child.name = child.name.replace(/:/g, '');
             }
-            // Save original bind pose position (GLTF loader values)
+            // Save original bind pose (GLTF loader values)
             child._bindPos = child.position.clone();
+            child._bindScale = child.scale.clone();
+            child._bindQuat = child.quaternion.clone();
+            allBonesList.push(child);
         }
     });
+    console.log('[ONI] Bones found: ' + allBonesList.length + ' names: ' + allBonesList.map(function(b){return b.name;}).join(', '));
 
     // Sanitize embedded animation track names to match sanitized bones
     if (gltf.animations) {
@@ -8116,7 +8188,8 @@ function processOniGLTF(group, gltf, stageId) {
         srcHeight: geoHeight,
         _srcMinY: combinedBB.min.y,
         _bodyGroup: bodyGroup,
-        _tempBuf: new Float32Array(totalVertexCount * 3)
+        _tempBuf: new Float32Array(totalVertexCount * 3),
+        _allBones: allBonesList
     };
 
     // Setup animation mixer
