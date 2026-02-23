@@ -11088,36 +11088,28 @@ const HeartbeatManager = {
 
 /* --- 7.6 AmbientSoundManager --- */
 const AMBIENT_CONFIGS = {
-    1: { // Lab
-        layers: [
-            { type: 'drone', waveform: 'sine', freq: 100, volume: 0.04, label: 'HVAC hum' },
-        ],
+    1: { // Lab — BGMがあるのでドローン不要、短い効果音のみ
+        layers: [],
         events: [
             { type: 'beep', freq: 1000, waveform: 'sine', duration: 0.05, volume: 0.06, interval: [8000, 15000] },
         ]
     },
     2: { // Factory
-        layers: [
-            { type: 'drone', waveform: 'sawtooth', freq: 65, volume: 0.03, label: 'gear drone' },
-        ],
+        layers: [],
         events: [
             { type: 'creak', freq: 200, waveform: 'triangle', duration: 0.3, volume: 0.05, interval: [6000, 12000] },
             { type: 'steam', noise: true, duration: 0.2, volume: 0.08, interval: [10000, 20000] },
         ]
     },
     3: { // Night Streets
-        layers: [
-            { type: 'drone', waveform: 'sine', freq: 80, volume: 0.02, label: 'wind' },
-        ],
+        layers: [],
         events: [
             { type: 'bell', freq: 440, waveform: 'sine', duration: 1.0, volume: 0.04, interval: [15000, 30000] },
             { type: 'crow', freq: 600, waveform: 'sawtooth', duration: 0.15, volume: 0.05, interval: [12000, 25000] },
         ]
     },
     4: { // Edo Village
-        layers: [
-            { type: 'drone', waveform: 'sine', freq: 65, volume: 0.012, label: 'night wind' },
-        ],
+        layers: [],
         events: [
             { type: 'chime', freq: 2000, waveform: 'sine', duration: 0.5, volume: 0.04, interval: [8000, 18000] },
             { type: 'howl', freq: 150, waveform: 'sine', duration: 0.6, volume: 0.04, interval: [20000, 40000] },
@@ -11125,28 +11117,21 @@ const AMBIENT_CONFIGS = {
         ]
     },
     5: { // Data Center
-        layers: [
-            { type: 'drone', waveform: 'triangle', freq: 120, volume: 0.03, label: 'fan drone' },
-        ],
+        layers: [],
         events: [
             { type: 'spark', noise: true, duration: 0.05, volume: 0.1, interval: [5000, 12000] },
             { type: 'collapse', freq: 40, waveform: 'sine', duration: 0.4, volume: 0.06, interval: [15000, 30000] },
         ]
     },
     hidden: { // Temple
-        layers: [
-            { type: 'drone', waveform: 'sine', freq: 110, volume: 0.03, label: 'chanting' },
-            { type: 'drone', waveform: 'sine', freq: 55, volume: 0.025, label: 'heartbeat' },
-        ],
+        layers: [],
         events: [
             { type: 'bell', freq: 330, waveform: 'sine', duration: 1.5, volume: 0.05, interval: [10000, 20000] },
             { type: 'taiko', freq: 60, waveform: 'sine', duration: 0.3, volume: 0.08, interval: [8000, 16000] },
         ]
     },
     scoreAttack: {
-        layers: [
-            { type: 'drone', waveform: 'sine', freq: 90, volume: 0.03, label: 'base drone' },
-        ],
+        layers: [],
         events: [
             { type: 'beep', freq: 800, waveform: 'square', duration: 0.03, volume: 0.05, interval: [10000, 20000] },
         ]
@@ -11654,32 +11639,8 @@ let dangerDroneOsc = null;
 let dangerDroneGain = null;
 
 function updateDangerDrone() {
-    if (!SoundManager.seEnabled) {
-        stopDangerDrone();
-        return;
-    }
-    const dist = GameState.nearestOniDistance;
-
-    if (dist < 12 && GameState.alive) {
-        const ctx = SoundManager.getCtx();
-        if (!ctx) return;
-
-        if (!dangerDroneOsc) {
-            dangerDroneOsc = ctx.createOscillator();
-            dangerDroneGain = ctx.createGain();
-            dangerDroneOsc.type = 'sine';
-            dangerDroneOsc.frequency.value = 35;
-            dangerDroneGain.gain.value = 0;
-            dangerDroneOsc.connect(dangerDroneGain);
-            dangerDroneGain.connect(ctx.destination);
-            dangerDroneOsc.start();
-        }
-
-        const volume = Math.min(0.15, (1 - dist / 12) * 0.15);
-        dangerDroneGain.gain.setTargetAtTime(volume, ctx.currentTime, 0.1);
-    } else {
-        stopDangerDrone();
-    }
+    // Disabled: BGMがあるのでドローン音は不要
+    stopDangerDrone();
 }
 
 function stopDangerDrone() {
