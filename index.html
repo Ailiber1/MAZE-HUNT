@@ -7503,6 +7503,20 @@ function setCharacterAnimation(group, state) {
     newAction.reset().fadeIn(0.25).play();
     group.userData.currentAction = newAction;
     group.userData.currentAnimState = state;
+
+    // FIX: Also update directAnim clip for cpuSkinUpdate to stay in sync
+    if (group.userData.cpuSkin) {
+        var sourceScene = group.userData.cpuSkin.sourceScene;
+        if (sourceScene) {
+            var newDirectAnim = buildDirectAnimData(sourceScene, clip);
+            if (newDirectAnim) {
+                // Preserve current animation time for smooth transition
+                var oldTime = group.userData.cpuSkin._directAnim ? group.userData.cpuSkin._directAnim.time : 0;
+                newDirectAnim.time = oldTime % (newDirectAnim.clip.duration || 1);
+                group.userData.cpuSkin._directAnim = newDirectAnim;
+            }
+        }
+    }
 }
 
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
@@ -7529,7 +7543,17 @@ function directBoneAnimUpdate(cpuSkinData) {
         if (b.propName === 'quaternion') {
             b.bone.quaternion.set(result[0], result[1], result[2], result[3]);
         } else if (b.propName === 'position') {
-            b.bone.position.set(result[0], result[1], result[2]);
+            // FIX: Apply position as DELTA from animation rest, added to bind pose.
+            // This handles shared animations at different scales than the model.
+            if (b.bindPos && b.animRestPos) {
+                b.bone.position.set(
+                    b.bindPos[0] + (result[0] - b.animRestPos[0]),
+                    b.bindPos[1] + (result[1] - b.animRestPos[1]),
+                    b.bindPos[2] + (result[2] - b.animRestPos[2])
+                );
+            } else {
+                b.bone.position.set(result[0], result[1], result[2]);
+            }
         } else if (b.propName === 'scale') {
             b.bone.scale.set(result[0], result[1], result[2]);
         }
@@ -7556,11 +7580,21 @@ function buildDirectAnimData(sourceScene, clip) {
         var bone = boneMap[boneName];
         if (bone) {
             matched++;
-            bindings.push({
+            var binding = {
                 bone: bone,
                 propName: propName,
                 interpolant: track.createInterpolant()
-            });
+            };
+            // FIX: For position tracks, store the bind pose position and animation rest position.
+            // Shared animations may be at a different scale than the model (e.g., Hips at Y=95
+            // in animation vs Y=0.9 in model). We apply positions as DELTAS from animation rest,
+            // added to the model's bind pose position.
+            if (propName === 'position') {
+                binding.bindPos = [bone.position.x, bone.position.y, bone.position.z];
+                // Animation rest position = first keyframe values
+                binding.animRestPos = [track.values[0], track.values[1], track.values[2]];
+            }
+            bindings.push(binding);
         }
     }
     console.log('[DirectAnim] Built: ' + matched + '/' + clip.tracks.length +
