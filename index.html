@@ -6702,24 +6702,37 @@ function placeStairs(floors, cols, rows, numStairs) {
 
         if (!cell) continue;
 
-        // Choose stair direction aligned with existing maze openings
-        // Prefer axis where BOTH floors already have openings (minimizes maze disruption)
+        // Choose stair direction based on entry accessibility
+        // For dir 'X': lower floor entry from opposite(X), upper floor entry from X
+        // Score = how many entry sides already have openings in the maze
         const fromCell = floors[fromFloor][cell.z][cell.x];
         const toCell = floors[toFloor][cell.z][cell.x];
-        const nsOpenFrom = !fromCell.top || !fromCell.bottom;
-        const nsOpenTo = !toCell.top || !toCell.bottom;
-        const ewOpenFrom = !fromCell.left || !fromCell.right;
-        const ewOpenTo = !toCell.left || !toCell.right;
-        let preferredDirs = [];
-        if (nsOpenFrom && nsOpenTo) preferredDirs.push('north', 'south');
-        if (ewOpenFrom && ewOpenTo) preferredDirs.push('east', 'west');
-        if (preferredDirs.length === 0) {
-            // Fallback: prefer any axis with at least one floor open
-            if (nsOpenFrom || nsOpenTo) preferredDirs.push('north', 'south');
-            if (ewOpenFrom || ewOpenTo) preferredDirs.push('east', 'west');
+        let bestDirs = [];
+        let bestScore = -1;
+        for (const d of directions) {
+            let score = 0;
+            // Lower floor entry: from opposite direction
+            // dir='north' → entry from south → check !bottom
+            // dir='south' → entry from north → check !top
+            // dir='east'  → entry from west  → check !left
+            // dir='west'  → entry from east  → check !right
+            if (d === 'north' && !fromCell.bottom) score++;
+            if (d === 'south' && !fromCell.top) score++;
+            if (d === 'east' && !fromCell.left) score++;
+            if (d === 'west' && !fromCell.right) score++;
+            // Upper floor entry: from dir direction
+            // dir='north' → upper entry from north → check !top
+            // dir='south' → upper entry from south → check !bottom
+            // dir='east'  → upper entry from east  → check !right
+            // dir='west'  → upper entry from west  → check !left
+            if (d === 'north' && !toCell.top) score++;
+            if (d === 'south' && !toCell.bottom) score++;
+            if (d === 'east' && !toCell.right) score++;
+            if (d === 'west' && !toCell.left) score++;
+            if (score > bestScore) { bestScore = score; bestDirs = [d]; }
+            else if (score === bestScore) bestDirs.push(d);
         }
-        if (preferredDirs.length === 0) preferredDirs = directions.slice();
-        const dir = preferredDirs[Math.floor(Math.random() * preferredDirs.length)];
+        const dir = bestDirs[Math.floor(Math.random() * bestDirs.length)];
         const oppositeDir = { north: 'south', south: 'north', east: 'west', west: 'east' }[dir];
 
         // Mark stair cells on both floors
@@ -6752,13 +6765,6 @@ function isDeadEnd(grid, x, z) {
     return openings <= 1;
 }
 
-function removeWallsAroundCell(grid, cols, rows, x, z) {
-    const cell = grid[z][x];
-    if (z > 0) { cell.top = false; grid[z - 1][x].bottom = false; }
-    if (z < rows - 1) { cell.bottom = false; grid[z + 1][x].top = false; }
-    if (x > 0) { cell.left = false; grid[z][x - 1].right = false; }
-    if (x < cols - 1) { cell.right = false; grid[z][x + 1].left = false; }
-}
 
 /* Remove only entry/exit direction walls for stairs.
    Keeps side walls to prevent walking off the side of stairs. */
@@ -6861,9 +6867,11 @@ function getStairProgress(pos, direction) {
     }
 }
 
-var _stairTransitionCooldown = 0;
-var _stairMinProgress = 1.0; // Track minimum progress seen since entering stair cell
-var _lastStairCellKey = '';   // Track which stair cell we're on
+/* Bidirectional ramp stair system:
+   - Y is ALWAYS calculated from the LOWER floor's perspective (consistent direction)
+   - Works from either side: approach from below = climb, approach from above = descend
+   - Floor transition happens when LEAVING the stair cell, based on Y position */
+var _lastStairInfo = null; // { lowerFloor, upperFloor } for floor transition on exit
 
 function updatePlayerY() {
     const floors = GameState.mazeFloors;
@@ -6877,53 +6885,43 @@ function updatePlayerY() {
 
     const cell = floors[currentFloor][cellZ][cellX];
 
-    // Cooldown prevents ping-pong oscillation between floors
-    if (_stairTransitionCooldown > 0) _stairTransitionCooldown--;
-
     if (cell && cell.isStairs && cell.connectsTo) {
-        const progress = getStairProgress(camera.position, cell.stairDirection);
+        const otherFloor = cell.connectsTo.floor;
+        const lowerFloor = Math.min(currentFloor, otherFloor);
+        const upperFloor = Math.max(currentFloor, otherFloor);
+
+        // Always use LOWER floor's stair direction for consistent Y calculation
+        const lowerCell = floors[lowerFloor][cellZ][cellX];
+        const progress = getStairProgress(camera.position, lowerCell.stairDirection);
         const clampedProgress = Math.max(0, Math.min(progress, 1.0));
-        const fromY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
-        const toY = cell.connectsTo.floor * FLOOR_H + PLAYER_HEIGHT;
-        camera.position.y = fromY + (toY - fromY) * clampedProgress;
 
-        // Track minimum progress to ensure player traversed the stair properly
-        var stairKey = currentFloor + '_' + cellX + '_' + cellZ;
-        if (stairKey !== _lastStairCellKey) {
-            // Entered a new stair cell — reset tracking
-            _stairMinProgress = clampedProgress;
-            _lastStairCellKey = stairKey;
-        } else {
-            _stairMinProgress = Math.min(_stairMinProgress, clampedProgress);
-        }
+        // Y interpolation: progress 0 = lower floor, progress 1 = upper floor
+        const lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
+        const highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
+        camera.position.y = lowY + (highY - lowY) * clampedProgress;
 
-        // Floor switch: only if player traversed from low progress to high
-        // (entered from the correct side of the stair)
-        if (progress >= 0.95 && _stairTransitionCooldown <= 0 && _stairMinProgress < 0.4) {
-            GameState.playerCurrentFloor = cell.connectsTo.floor;
-            _stairTransitionCooldown = 60; // ~1s at 60fps
-            _stairMinProgress = 1.0; // reset
-            _lastStairCellKey = '';
-            updateFloorLabel();
-        }
-
+        // Save stair info for floor transition when leaving
+        _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
         GameState.onStairs = true;
     } else {
-        // Safety net: smooth Y transition when leaving stairs (prevents sudden snap)
-        var targetY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
-        var yDiff = Math.abs(camera.position.y - targetY);
-        if (yDiff > 0.1 && GameState.onStairs) {
-            // Was on stairs, now off — smoothly move to target Y
-            camera.position.y += (targetY - camera.position.y) * 0.3;
-            if (Math.abs(camera.position.y - targetY) < 0.05) {
-                camera.position.y = targetY;
+        // Not on stair cell — determine floor if just exited stairs
+        if (GameState.onStairs && _lastStairInfo) {
+            // Pick floor closest to current Y position
+            var lowFloorY = _lastStairInfo.lowerFloor * FLOOR_H + PLAYER_HEIGHT;
+            var highFloorY = _lastStairInfo.upperFloor * FLOOR_H + PLAYER_HEIGHT;
+            var midY = (lowFloorY + highFloorY) / 2;
+            var newFloor = (camera.position.y >= midY)
+                ? _lastStairInfo.upperFloor
+                : _lastStairInfo.lowerFloor;
+            if (newFloor !== currentFloor) {
+                GameState.playerCurrentFloor = newFloor;
+                updateFloorLabel();
             }
-        } else {
-            camera.position.y = targetY;
+            _lastStairInfo = null;
         }
+
+        camera.position.y = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
         GameState.onStairs = false;
-        _lastStairCellKey = '';
-        _stairMinProgress = 1.0;
     }
 }
 
@@ -8991,19 +8989,29 @@ function updateOniY(oni) {
     const cell = floors[oni.currentFloor][cellZ][cellX];
 
     if (cell && cell.isStairs && cell.connectsTo) {
-        const progress = getStairProgress(oni.position, cell.stairDirection);
-        const clampedProgress = Math.max(0, Math.min(progress, 1.0));
-        const fromY = oni.currentFloor * FLOOR_H;
-        const toY = cell.connectsTo.floor * FLOOR_H;
-        oni.position.y = fromY + (toY - fromY) * clampedProgress;
-        oni.onStairs = true;
+        const otherFloor = cell.connectsTo.floor;
+        const lowerFloor = Math.min(oni.currentFloor, otherFloor);
+        const upperFloor = Math.max(oni.currentFloor, otherFloor);
 
-        if (progress >= 0.95 && !oni._stairCooldown) {
-            oni.currentFloor = cell.connectsTo.floor;
-            oni._stairCooldown = true;
-            setTimeout(function() { oni._stairCooldown = false; }, 500);
-        }
+        // Always use lower floor's direction for consistent Y
+        const lowerCell = floors[lowerFloor][cellZ][cellX];
+        const progress = getStairProgress(oni.position, lowerCell.stairDirection);
+        const clampedProgress = Math.max(0, Math.min(progress, 1.0));
+
+        const lowY = lowerFloor * FLOOR_H;
+        const highY = upperFloor * FLOOR_H;
+        oni.position.y = lowY + (highY - lowY) * clampedProgress;
+        oni.onStairs = true;
     } else {
+        // Floor transition on exit: snap to nearest floor
+        if (oni.onStairs) {
+            var oniMidY = (oni.currentFloor * FLOOR_H + (oni.currentFloor + 1) * FLOOR_H) / 2;
+            if (oni.position.y >= oniMidY && oni.currentFloor < floors.length - 1) {
+                oni.currentFloor = oni.currentFloor + 1;
+            } else if (oni.position.y < oni.currentFloor * FLOOR_H && oni.currentFloor > 0) {
+                oni.currentFloor = oni.currentFloor - 1;
+            }
+        }
         oni.position.y = oni.currentFloor * FLOOR_H;
         oni.onStairs = false;
     }
