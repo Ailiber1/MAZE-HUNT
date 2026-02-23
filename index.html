@@ -7295,13 +7295,21 @@ function preloadSharedAnimations() {
                             }
                             track.name = objectPath + '.' + property;
                         }
+                        // CRITICAL FIX: Only keep quaternion tracks.
+                        // Position/scale tracks from shared animations can have values
+                        // from a different source model's coordinate system, causing
+                        // bones to move to wrong positions and amplifying vertex positions.
+                        // Bones will use their bind pose positions/scales; only rotations animate.
+                        var prop = track.name.substring(track.name.lastIndexOf('.') + 1);
+                        if (prop !== 'quaternion') return; // skip position, scale tracks
+
                         // Dedup: keep first track for each bone.property
                         if (seen[track.name]) return;
                         seen[track.name] = true;
                         tracks.push(track);
                     });
                 });
-                console.log('[SharedAnim] ' + entry.key + ': ' + tracks.length + ' tracks merged');
+                console.log('[SharedAnim] ' + entry.key + ': ' + tracks.length + ' tracks (quaternion only)');
                 sharedAnimations[entry.key] = new THREE.AnimationClip(entry.key, -1, tracks);
             }
             loaded++;
@@ -7375,6 +7383,9 @@ function retargetClipForModel(clip, glbModel) {
         if (dotIdx === -1) { newTracks.push(track); continue; }
         var objectName = track.name.substring(0, dotIdx);
         var property = track.name.substring(dotIdx + 1);
+
+        // CRITICAL: Only keep quaternion tracks (position/scale cause amplification)
+        if (property !== 'quaternion') continue;
 
         // Direct match — no retarget needed for this track
         if (boneSet[objectName]) { newTracks.push(track); continue; }
@@ -7735,16 +7746,38 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // One-time PASS 1 diagnostic
-        if (!cpuSkinData._pass1DiagDone) {
-            cpuSkinData._pass1DiagDone = true;
+        // PASS 1 diagnostic (first 3 frames)
+        if (!cpuSkinData._pass1DiagCount) cpuSkinData._pass1DiagCount = 0;
+        if (cpuSkinData._pass1DiagCount < 3) {
+            cpuSkinData._pass1DiagCount++;
             var outH = globalMaxY - globalMinY;
-            console.log('[SKIN] boneTransform PASS1: Y=[' + globalMinY.toFixed(2) + ',' + globalMaxY.toFixed(2) + '] h=' + outH.toFixed(2) +
-                ' X=[' + globalMinX.toFixed(2) + ',' + globalMaxX.toFixed(2) + ']' +
-                ' Z=[' + globalMinZ.toFixed(2) + ',' + globalMaxZ.toFixed(2) + ']');
+            var srcH = cpuSkinData.srcHeight || 1.8;
+            // Classify vertices by source Y position
+            var lowerCount = 0, upperCount = 0;
+            var lMinY = Infinity, lMaxY = -Infinity, uMinY = Infinity, uMaxY = -Infinity;
+            var vtxOff = 0;
+            for (var dm = 0; dm < origSMs.length; dm++) {
+                var dCount = origSMs[dm].geometry.attributes.position.count;
+                var dSrcPos = origSMs[dm].geometry.attributes.position;
+                for (var dj = 0; dj < dCount; dj++) {
+                    var srcY = dSrcPos.getY(dj);
+                    var passY = tempBuf[(vtxOff + dj) * 3 + 1];
+                    if (srcY < 0.5 * srcH) {
+                        lowerCount++; if (passY < lMinY) lMinY = passY; if (passY > lMaxY) lMaxY = passY;
+                    } else {
+                        upperCount++; if (passY < uMinY) uMinY = passY; if (passY > uMaxY) uMaxY = passY;
+                    }
+                }
+                vtxOff += dCount;
+            }
+            console.log('[SKIN-P1] frame=' + cpuSkinData._pass1DiagCount +
+                ' Y=[' + globalMinY.toFixed(2) + ',' + globalMaxY.toFixed(2) + '] h=' + outH.toFixed(2) +
+                ' srcH=' + srcH.toFixed(2) + ' ratio=' + (outH/srcH).toFixed(1) +
+                '\n  Lower(' + lowerCount + '): Y=[' + lMinY.toFixed(2) + ',' + lMaxY.toFixed(2) + ']' +
+                '\n  Upper(' + upperCount + '): Y=[' + uMinY.toFixed(2) + ',' + uMaxY.toFixed(2) + ']');
         }
 
-        // Write to destination buffers + scale bodyGroup to 1.8m
+        // Write to destination buffers + scale bodyGroup
         var outHeight = globalMaxY - globalMinY;
         if (outHeight > 0.01) {
             tempIdx = 0;
@@ -7760,15 +7793,17 @@ function cpuSkinUpdate(cpuSkinData) {
             }
 
             if (cpuSkinData._bodyGroup) {
-                var targetH = 1.8;
-                var scaleFix = targetH / outHeight;
-                var centerX = (globalMinX + globalMaxX) / 2;
-                var centerZ = (globalMinZ + globalMaxZ) / 2;
-                cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
+                // Use FIXED scale from source geometry (meshScale = 1.8/geoHeight).
+                // If PASS1 output is correct, outHeight ≈ srcHeight so fixed scale works.
+                // If PASS1 output is amplified, dynamic scaling compresses the model
+                // disproportionately (lower body vanishes). Fixed scale avoids this.
+                var fixedScale = cpuSkinData.meshScale || (1.8 / (cpuSkinData.srcHeight || 1.8));
+                var srcMinY = cpuSkinData._srcMinY || 0;
+                cpuSkinData._bodyGroup.scale.setScalar(fixedScale);
                 cpuSkinData._bodyGroup.position.set(
-                    -centerX * scaleFix,
-                    -globalMinY * scaleFix,
-                    -centerZ * scaleFix
+                    0,
+                    -srcMinY * fixedScale,
+                    0
                 );
             }
         }
@@ -7815,9 +7850,12 @@ function processOniGLTF(group, gltf, stageId) {
     });
     console.log('[ONI] Bones found: ' + allBonesList.length + ' names: ' + allBonesList.map(function(b){return b.name;}).join(', '));
 
-    // Sanitize embedded animation track names to match sanitized bones
+    // Sanitize embedded animation track names AND strip non-quaternion tracks.
+    // Position/scale tracks can have values from a different coordinate system,
+    // causing bone displacement and vertex amplification in CPU skinning.
     if (gltf.animations) {
         gltf.animations.forEach(function(clip) {
+            var quatTracks = [];
             clip.tracks.forEach(function(track) {
                 track.name = track.name.replace(/:/g, '');
                 var dotIdx = track.name.lastIndexOf('.');
@@ -7829,9 +7867,15 @@ function processOniGLTF(group, gltf, stageId) {
                         objectPath = objectPath.substring(slashIdx + 1);
                     }
                     track.name = objectPath + '.' + property;
+                    // Only keep quaternion tracks
+                    if (property === 'quaternion') {
+                        quatTracks.push(track);
+                    }
                 }
             });
+            clip.tracks = quatTracks;
         });
+        console.log('[ONI] Embedded animations: stripped to quaternion-only');
     }
 
     // Find ALL meshes (SkinnedMesh + regular Mesh) for full-body rendering
@@ -8053,6 +8097,7 @@ function processOniGLTF(group, gltf, stageId) {
         origSkinnedMeshes: allSkinnedMeshes, // for boneTransform()
         frameCount: 0,
         srcHeight: geoHeight,
+        meshScale: meshScale, // fixed scale: 1.8 / geoHeight
         _srcMinY: combinedBB.min.y,
         _bodyGroup: bodyGroup,
         _tempBuf: new Float32Array(totalVertexCount * 3),
