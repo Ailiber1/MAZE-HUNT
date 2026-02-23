@@ -7672,12 +7672,6 @@ function cpuSkinUpdate(cpuSkinData) {
         // Direct bone animation: bypass PropertyBinding, drive bones directly
         directBoneAnimUpdate(cpuSkinData);
 
-        // CRITICAL: Force updateMatrix for ALL bones before updateMatrixWorld
-        // This ensures bone.matrix is recomputed from position/quaternion/scale
-        // even if matrixAutoUpdate was set to false by the mixer or loader
-        cpuSkinData.sourceScene.traverse(function(c) {
-            c.updateMatrix();
-        });
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         var skeleton = cpuSkinData.skeleton;
@@ -8207,8 +8201,33 @@ function processOniGLTF(group, gltf, stageId) {
     bodyGroup.scale.setScalar(1);
     bodyGroup.position.set(0, 0, 0);
 
-    // Keep sourceScene DETACHED
+    // --- GPU SKINNING APPROACH ---
+    // Attach sourceScene to group for native Three.js SkinnedMesh rendering.
+    // This bypasses CPU skinning which has been producing incorrect vertex positions.
+    // The SkinnedMesh and its skeleton bones are now in the same scene graph,
+    // so the WebGL renderer can perform GPU skinning natively.
+    allSkinnedMeshes.forEach(function(sm) {
+        var origMat = sm.material;
+        var gpuMat = new THREE.MeshBasicMaterial({
+            side: THREE.DoubleSide, transparent: false, depthWrite: true
+        });
+        if (origMat) {
+            var firstMat = Array.isArray(origMat) ? origMat[0] : origMat;
+            if (firstMat && firstMat.map) gpuMat.map = firstMat.map;
+            if (firstMat && firstMat.color) gpuMat.color.copy(firstMat.color);
+        }
+        sm.material = gpuMat;
+        sm.frustumCulled = false;
+    });
+    // Add sourceScene to group (GPU skinning requires bones in same scene graph)
+    group.add(sourceScene);
+    // Place model: feet at Y=0, centered
+    sourceScene.position.set(0, -geoMinY, 0);
+    // Hide CPU skinning bodyGroup (GPU takes over)
+    bodyGroup.visible = false;
+    group.userData.useGPUSkinning = true;
     group.userData.sourceScene = sourceScene;
+    console.log('[ONI] GPU skinning enabled: sourceScene attached to group, bodyGroup hidden');
 
     // Remove ALL fallback children
     var toRemove = [];
@@ -8232,45 +8251,6 @@ function processOniGLTF(group, gltf, stageId) {
     var skeletonRef = null;
     for (var si = 0; si < allSkinnedMeshes.length; si++) {
         if (allSkinnedMeshes[si].skeleton) { skeletonRef = allSkinnedMeshes[si].skeleton; break; }
-    }
-
-    // CRITICAL FIX: Force matrixAutoUpdate=true for ALL scene nodes
-    // (some loaders/mixers may set it to false, causing stale local matrices)
-    sourceScene.traverse(function(c) {
-        c.matrixAutoUpdate = true;
-    });
-
-    // CRITICAL FIX: Recalculate skeleton.boneInverses from ACTUAL bone world matrices
-    // GLTF's inverseBindMatrices may not match Three.js-computed bone world matrices
-    // (different root transforms, scene graph differences, etc.)
-    if (skeletonRef) {
-        sourceScene.updateMatrixWorld(true);
-        var origInvE0 = skeletonRef.boneInverses[0] ? skeletonRef.boneInverses[0].elements.slice() : null;
-        for (var bi = 0; bi < skeletonRef.bones.length; bi++) {
-            if (skeletonRef.bones[bi]) {
-                var freshInv = new THREE.Matrix4();
-                if (freshInv.getInverse) {
-                    freshInv.getInverse(skeletonRef.bones[bi].matrixWorld);
-                } else {
-                    freshInv.copy(skeletonRef.bones[bi].matrixWorld).invert();
-                }
-                skeletonRef.boneInverses[bi] = freshInv;
-            }
-        }
-        // Log difference between GLTF and recalculated for bone 0
-        if (origInvE0) {
-            var newInvE0 = skeletonRef.boneInverses[0].elements;
-            var maxDiff = 0;
-            for (var di = 0; di < 16; di++) {
-                maxDiff = Math.max(maxDiff, Math.abs(origInvE0[di] - newInvE0[di]));
-            }
-            console.log('[SKELETON] boneInverse[0] (' + skeletonRef.bones[0].name + ') recalc maxDiff=' + maxDiff.toFixed(8));
-            if (maxDiff > 0.001) {
-                console.warn('[SKELETON] SIGNIFICANT boneInverse mismatch detected! maxDiff=' + maxDiff.toFixed(4));
-                console.log('[SKELETON] Original: ' + Array.from(origInvE0).map(function(v){return v.toFixed(4);}).join(','));
-                console.log('[SKELETON] Recalced: ' + Array.from(newInvE0).map(function(v){return v.toFixed(4);}).join(','));
-            }
-        }
     }
 
     group.userData.cpuSkin = {
@@ -8950,19 +8930,18 @@ function updateOniAI(delta) {
 
         // ─── Animation mixer ───
         if (oni.group.userData.mixer) {
-            // FIX: Do NOT call mixer.update() for ONI — directBoneAnimUpdate in
-            // cpuSkinUpdate handles ALL bone transforms. The mixer's PropertyBinding
-            // sets absolute animation positions (wrong scale for shared anims) which
-            // conflict with the bind-pose restoration in directBoneAnimUpdate.
-            // oni.group.userData.mixer.update(delta);
+            if (oni.group.userData.useGPUSkinning) {
+                // GPU skinning: mixer drives bones, Three.js renderer handles skinning
+                oni.group.userData.mixer.update(delta);
+            }
             // Switch animation state based on AI state
             var oniAnimState = (oni.aiState === 'chase' || oni.aiState === 'lunge') ? 'run' :
                                (oni.aiState === 'patrol') ? 'walk' : 'idle';
             setCharacterAnimation(oni.group, oniAnimState);
         }
 
-        // ─── CPU Skinning update ───
-        if (oni.group.userData.cpuSkin) {
+        // ─── CPU Skinning update (only if NOT using GPU skinning) ───
+        if (oni.group.userData.cpuSkin && !oni.group.userData.useGPUSkinning) {
             oni.group.userData.cpuSkin.frameCount++;
             if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
                 cpuSkinUpdate(oni.group.userData.cpuSkin);
