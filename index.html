@@ -4566,6 +4566,7 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 }],
                 frameCount: 0,
                 srcHeight: srcGeoHeight,
+                _srcMinY: srcBB.min.y,
                 _bodyGroup: bodyGroup,
                 _tempBuf: new Float32Array(vtxCountR * 3)
             };
@@ -7713,18 +7714,26 @@ function cpuSkinUpdate(cpuSkinData) {
                 // FIX: Clamp bone indices to valid range
                 var i0 = Math.min(si.getX(i), maxBoneIdx), i1 = Math.min(si.getY(i), maxBoneIdx), i2 = Math.min(si.getZ(i), maxBoneIdx), i3 = Math.min(si.getW(i), maxBoneIdx);
 
-                if (w0 > 0) { _boneMat.fromArray(bm, i0*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w0; _result.y+=_temp.y*w0; _result.z+=_temp.z*w0; }
-                if (w1 > 0) { _boneMat.fromArray(bm, i1*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w1; _result.y+=_temp.y*w1; _result.z+=_temp.z*w1; }
-                if (w2 > 0) { _boneMat.fromArray(bm, i2*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w2; _result.y+=_temp.y*w2; _result.z+=_temp.z*w2; }
-                if (w3 > 0) { _boneMat.fromArray(bm, i3*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w3; _result.y+=_temp.y*w3; _result.z+=_temp.z*w3; }
+                // FIX: Zero total weight guard - fallback to source position
+                var totalW = w0 + w1 + w2 + w3;
+                if (totalW < 0.001) {
+                    _result.x = srcPos.getX(i);
+                    _result.y = srcPos.getY(i);
+                    _result.z = srcPos.getZ(i);
+                } else {
+                    if (w0 > 0) { _boneMat.fromArray(bm, i0*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w0; _result.y+=_temp.y*w0; _result.z+=_temp.z*w0; }
+                    if (w1 > 0) { _boneMat.fromArray(bm, i1*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w1; _result.y+=_temp.y*w1; _result.z+=_temp.z*w1; }
+                    if (w2 > 0) { _boneMat.fromArray(bm, i2*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w2; _result.y+=_temp.y*w2; _result.z+=_temp.z*w2; }
+                    if (w3 > 0) { _boneMat.fromArray(bm, i3*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w3; _result.y+=_temp.y*w3; _result.z+=_temp.z*w3; }
 
-                _result.w = 1;
-                _result.applyMatrix4(bindMatrixInverse);
+                    _result.w = 1;
+                    _result.applyMatrix4(bindMatrixInverse);
 
-                // NaN guard
-                if (_result.x !== _result.x) _result.x = srcPos.getX(i);
-                if (_result.y !== _result.y) _result.y = srcPos.getY(i);
-                if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
+                    // NaN guard
+                    if (_result.x !== _result.x) _result.x = srcPos.getX(i);
+                    if (_result.y !== _result.y) _result.y = srcPos.getY(i);
+                    if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
+                }
 
                 // Write to TEMP buffer, not dstPos
                 tempBuf[tempIdx]   = _result.x;
@@ -7741,48 +7750,80 @@ function cpuSkinUpdate(cpuSkinData) {
             }
         }
 
-        // One-time PASS 1 result diagnostic
+        // One-time PASS 1 detailed diagnostic (on-screen + console)
         if (!cpuSkinData._pass1DiagDone) {
             cpuSkinData._pass1DiagDone = true;
-            console.log('[cpuSkin-DIAG] PASS1 Y range: [' + globalMinY.toFixed(4) + ', ' + globalMaxY.toFixed(4) +
-                '] height=' + (globalMaxY - globalMinY).toFixed(4) +
-                ' (with weightDiv=' + weightDiv + ')');
-            console.log('[cpuSkin-DIAG] PASS1 X range: [' + globalMinX.toFixed(4) + ', ' + globalMaxX.toFixed(4) + ']');
-            console.log('[cpuSkin-DIAG] PASS1 Z range: [' + globalMinZ.toFixed(4) + ', ' + globalMaxZ.toFixed(4) + ']');
+            // Analyze vertex Y distribution
+            var lowerCount = 0, upperCount = 0;
+            var lowerMinY = Infinity, lowerMaxY = -Infinity;
+            var upperMinY = Infinity, upperMaxY = -Infinity;
+            var outlierCount = 0;
+            var zeroWeightCount = 0;
+            var srcH = cpuSkinData.srcHeight || 1.8;
+            var outlierThresh = srcH * 5;
+            for (var di = 0; di < meshDataArr.length; di++) {
+                var _sp = meshDataArr[di].srcPositions;
+                var _sw2 = meshDataArr[di].skinWeight;
+                for (var dj = 0; dj < _sp.count; dj++) {
+                    var srcY = _sp.getY(dj);
+                    var passY = tempBuf[di * _sp.count * 3 + dj * 3 + 1];
+                    // Check zero weight
+                    var tw = _sw2.getX(dj) + _sw2.getY(dj) + _sw2.getZ(dj) + _sw2.getW(dj);
+                    if (tw === 0) zeroWeightCount++;
+                    // Classify by source position
+                    if (srcY < 0.5 * srcH) {
+                        lowerCount++;
+                        if (passY < lowerMinY) lowerMinY = passY;
+                        if (passY > lowerMaxY) lowerMaxY = passY;
+                    } else {
+                        upperCount++;
+                        if (passY < upperMinY) upperMinY = passY;
+                        if (passY > upperMaxY) upperMaxY = passY;
+                    }
+                    if (passY < -outlierThresh || passY > outlierThresh) outlierCount++;
+                }
+            }
+            var diagMsg = '[SKIN-DIAG] weightDiv=' + weightDiv + ' bones=' + boneCount +
+                '\nPASS1 Y: [' + globalMinY.toFixed(2) + ',' + globalMaxY.toFixed(2) + '] h=' + (globalMaxY - globalMinY).toFixed(2) +
+                '\nLower(' + lowerCount + '): Y=[' + lowerMinY.toFixed(2) + ',' + lowerMaxY.toFixed(2) + ']' +
+                '\nUpper(' + upperCount + '): Y=[' + upperMinY.toFixed(2) + ',' + upperMaxY.toFixed(2) + ']' +
+                '\nOutliers(>' + outlierThresh.toFixed(0) + '): ' + outlierCount +
+                ' ZeroW: ' + zeroWeightCount;
+            console.log(diagMsg);
+            showGLBDiag(diagMsg);
         }
 
-        // SINGLE WRITE: Normalize from temp buffer → dstPos (only final values hit GPU)
+        // NEW APPROACH: Write PASS 1 positions directly to dstPos.
+        // Use bodyGroup transform for scaling (robust against outliers).
+        // No more per-vertex dynamic normalization (PASS 2 removed).
         var outHeight = globalMaxY - globalMinY;
         if (outHeight > 0.01) {
-            var targetH = 1.8;
-            var scaleFix = targetH / outHeight;
-            var centerX = (globalMinX + globalMaxX) / 2;
-            var centerZ = (globalMinZ + globalMaxZ) / 2;
-
             tempIdx = 0;
             for (var m = 0; m < meshDataArr.length; m++) {
                 var dp = meshDataArr[m].dstPositions;
                 var cnt = dp.count;
                 for (var i = 0; i < cnt; i++) {
-                    var nx = (tempBuf[tempIdx]   - centerX)   * scaleFix;
-                    var ny = (tempBuf[tempIdx+1] - globalMinY) * scaleFix;
-                    var nz = (tempBuf[tempIdx+2] - centerZ)   * scaleFix;
-                    dp.setXYZ(i, nx, ny, nz);
+                    dp.setXYZ(i, tempBuf[tempIdx], tempBuf[tempIdx+1], tempBuf[tempIdx+2]);
                     tempIdx += 3;
                 }
-                // Recompute bounding sphere for correct frustum culling
-                if (dp.count > 0 && meshDataArr[m].dstPositions === dp) {
-                    var geo = cpuSkinData._bodyGroup.children[m];
-                    if (geo && geo.geometry) geo.geometry.computeBoundingSphere();
-                }
+                // Recompute bounding sphere
+                var geo = cpuSkinData._bodyGroup.children[m];
+                if (geo && geo.geometry) geo.geometry.computeBoundingSphere();
             }
 
-            // CRITICAL: bodyGroup uses IDENTITY transform
+            // Scale bodyGroup to fit 1.8m height, using PASS 1 actual range
             if (cpuSkinData._bodyGroup) {
-                cpuSkinData._bodyGroup.scale.setScalar(1);
-                cpuSkinData._bodyGroup.position.set(0, 0, 0);
+                var targetH = 1.8;
+                var scaleFix = targetH / outHeight;
+                var centerX = (globalMinX + globalMaxX) / 2;
+                var centerZ = (globalMinZ + globalMaxZ) / 2;
+                cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
+                cpuSkinData._bodyGroup.position.set(
+                    -centerX * scaleFix,
+                    -globalMinY * scaleFix,
+                    -centerZ * scaleFix
+                );
             }
-
         }
 
         // Mark ALL destination buffers for GPU upload
@@ -8057,6 +8098,7 @@ function processOniGLTF(group, gltf, stageId) {
         meshes: meshDataArr,
         frameCount: 0,
         srcHeight: geoHeight,
+        _srcMinY: combinedBB.min.y,
         _bodyGroup: bodyGroup,
         _tempBuf: new Float32Array(totalVertexCount * 3)
     };
