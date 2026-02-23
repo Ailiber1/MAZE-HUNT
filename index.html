@@ -6866,17 +6866,8 @@ function createStairs(cellX, cellZ, fromFloor, toFloor, direction, stageId) {
     floorUnder.position.set(0, yBase + 0.01, 0);
     inner.add(floorUnder);
 
-    // --- Back wall at exit end (north = -Z side, blocks climbing from behind) ---
-    const backWallMat = new THREE.MeshStandardMaterial({
-        color: colors.baseColor, roughness: 0.7, metalness: 0.2,
-        emissive: colors.emissive, emissiveIntensity: 0.04
-    });
-    const backWall = new THREE.Mesh(
-        new THREE.BoxGeometry(CL, FLOOR_H, WALL_THICK),
-        backWallMat
-    );
-    backWall.position.set(0, yBase + FLOOR_H / 2, -CL / 2);
-    inner.add(backWall);
+    // Back wall is handled by ensureStairBackWall() in the maze grid
+    // (no duplicate mesh here — prevents z-fighting)
 
     // --- Handrails (along ramp slope) ---
     const railMat = new THREE.MeshBasicMaterial({
@@ -6991,33 +6982,71 @@ function updatePlayerY() {
 
         GameState.onStairs = true;
     } else {
-        // Not on stair cell
-        if (GameState.onStairs && _lastStairInfo) {
-            // Just left stair — determine floor by Y position
-            var lowFloorY = _lastStairInfo.lowerFloor * FLOOR_H + PLAYER_HEIGHT;
-            var highFloorY = _lastStairInfo.upperFloor * FLOOR_H + PLAYER_HEIGHT;
-            var midY = (lowFloorY + highFloorY) / 2;
-            var newFloor = (camera.position.y >= midY)
-                ? _lastStairInfo.upperFloor
-                : _lastStairInfo.lowerFloor;
-            if (newFloor !== currentFloor) {
-                GameState.playerCurrentFloor = newFloor;
-                updateFloorLabel();
+        // Not on stair cell — but check adjacent stair cell for buffer zone
+        // This prevents flickering at cell boundaries
+        var wasOnStairs = GameState.onStairs;
+        var foundAdjacentStair = false;
+
+        if (wasOnStairs && _lastStairInfo) {
+            // Check if player is near the boundary of a stair cell
+            var localX = (camera.position.x / CL) - cellX;
+            var localZ = (camera.position.z / CL) - cellZ;
+            var buf = 0.12;
+            var adjChecks = [];
+            if (localX < buf && cellX > 0) adjChecks.push([cellX - 1, cellZ]);
+            if (localX > 1 - buf && cellX < GameState.mazeCols - 1) adjChecks.push([cellX + 1, cellZ]);
+            if (localZ < buf && cellZ > 0) adjChecks.push([cellX, cellZ - 1]);
+            if (localZ > 1 - buf && cellZ < GameState.mazeRows - 1) adjChecks.push([cellX, cellZ + 1]);
+
+            for (var ai = 0; ai < adjChecks.length; ai++) {
+                var ax = adjChecks[ai][0], az = adjChecks[ai][1];
+                var adjCell = floors[currentFloor][az][ax];
+                if (adjCell && adjCell.isStairs && adjCell.connectsTo) {
+                    // Still near a stair — use that stair's Y
+                    var aOther = adjCell.connectsTo.floor;
+                    var aLower = Math.min(currentFloor, aOther);
+                    var aUpper = Math.max(currentFloor, aOther);
+                    var aLowerCell = floors[aLower][az][ax];
+                    var aProg = getStairProgress(camera.position, aLowerCell.stairDirection);
+                    aProg = Math.max(0, Math.min(aProg, 1.0));
+                    targetY = (aLower * FLOOR_H + PLAYER_HEIGHT) +
+                              ((aUpper - aLower) * FLOOR_H) * aProg;
+                    foundAdjacentStair = true;
+                    break;
+                }
             }
-            _lastStairInfo = null;
         }
 
-        targetY = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
-        GameState.onStairs = false;
-        _stairCellKey = '';
-        _stairEntryProgress = -1;
+        if (!foundAdjacentStair) {
+            if (wasOnStairs && _lastStairInfo) {
+                // Just left stair — determine floor by Y position
+                var lowFloorY = _lastStairInfo.lowerFloor * FLOOR_H + PLAYER_HEIGHT;
+                var highFloorY = _lastStairInfo.upperFloor * FLOOR_H + PLAYER_HEIGHT;
+                var midY = (lowFloorY + highFloorY) / 2;
+                var newFloor = (_smoothStairY >= midY)
+                    ? _lastStairInfo.upperFloor
+                    : _lastStairInfo.lowerFloor;
+                if (newFloor !== currentFloor) {
+                    GameState.playerCurrentFloor = newFloor;
+                    updateFloorLabel();
+                }
+                _lastStairInfo = null;
+            }
+
+            targetY = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
+            GameState.onStairs = false;
+            _stairCellKey = '';
+            _stairEntryProgress = -1;
+        }
     }
 
     // Smooth Y transition (prevents flickering at cell boundaries)
     if (_smoothStairY < 0) _smoothStairY = targetY;
     var yDiff = Math.abs(targetY - _smoothStairY);
     if (yDiff > 0.05) {
-        _smoothStairY += (targetY - _smoothStairY) * 0.25;
+        // Stronger smoothing when exiting stairs, normal when on stairs
+        var lerpFactor = GameState.onStairs ? 0.2 : 0.15;
+        _smoothStairY += (targetY - _smoothStairY) * lerpFactor;
     } else {
         _smoothStairY = targetY;
     }
