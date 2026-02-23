@@ -7666,9 +7666,99 @@ function buildDirectAnimData(sourceScene, clip) {
     return { clip: clip, time: 0, bindings: bindings };
 }
 
+/* --- Procedural walking animation (replaces AnimationMixer) ---
+   Directly rotates bones relative to rest pose.
+   Eliminates ALL external animation compatibility issues. */
+function proceduralWalkUpdate(cpuSkinData, delta, animState) {
+    var rp = cpuSkinData.restPoseBones;
+    if (!rp) return;
+
+    // Update animation time based on state
+    var speed = 0;
+    if (animState === 'run') speed = 8;
+    else if (animState === 'walk') speed = 5;
+    // idle: speed = 0 (rest pose)
+
+    cpuSkinData.animTime = (cpuSkinData.animTime || 0) + delta * speed;
+    var t = cpuSkinData.animTime;
+
+    // Reset ALL bones to rest pose EVERY frame
+    for (var name in rp) {
+        rp[name].bone.quaternion.copy(rp[name].restQuat);
+        rp[name].bone.position.copy(rp[name].restPos);
+    }
+
+    if (speed === 0) return; // idle = rest pose (full body visible)
+
+    // Helper: find bone by name (handles mixamorig prefix variations)
+    function findBone(partialName) {
+        var lower = partialName.toLowerCase();
+        for (var n in rp) {
+            if (n.toLowerCase() === lower) return rp[n];
+        }
+        for (var n in rp) {
+            var stripped = n.replace(/^mixamorig[_:]?/i, '').toLowerCase();
+            if (stripped === lower) return rp[n];
+        }
+        for (var n in rp) {
+            if (n.toLowerCase().indexOf(lower) !== -1) return rp[n];
+        }
+        return null;
+    }
+
+    // Helper: apply DELTA rotation to a bone (relative to its rest quaternion)
+    var _euler = new THREE.Euler();
+    var _deltaQ = new THREE.Quaternion();
+    function applyDelta(partialName, rx, ry, rz) {
+        var bd = findBone(partialName);
+        if (!bd) return;
+        _euler.set(rx, ry, rz);
+        _deltaQ.setFromEuler(_euler);
+        bd.bone.quaternion.copy(bd.restQuat).multiply(_deltaQ);
+    }
+
+    // --- Walking / Running cycle ---
+    var intensity = (animState === 'run') ? 1.0 : 0.6;
+
+    // Leg swing (forward/backward around X axis)
+    var legSwing = Math.sin(t) * 0.5 * intensity;
+    // Knee flex (only flexes when leg is behind — realistic)
+    var kneeFlexL = Math.max(0, -Math.sin(t - 0.4)) * 0.7 * intensity;
+    var kneeFlexR = Math.max(0, Math.sin(t - 0.4)) * 0.7 * intensity;
+    // Arm swing (opposite phase to legs)
+    var armSwing = Math.sin(t + Math.PI) * 0.35 * intensity;
+    // Spine rotation
+    var spineRot = Math.sin(t) * 0.04 * intensity;
+
+    // Upper legs
+    applyDelta('LeftUpLeg', legSwing, 0, 0);
+    applyDelta('RightUpLeg', -legSwing, 0, 0);
+    // Lower legs (knees)
+    applyDelta('LeftLeg', kneeFlexL, 0, 0);
+    applyDelta('RightLeg', kneeFlexR, 0, 0);
+    // Upper arms
+    applyDelta('LeftArm', armSwing, 0, 0);
+    applyDelta('RightArm', -armSwing, 0, 0);
+    // Forearms (slight flex)
+    applyDelta('LeftForeArm', -Math.abs(armSwing) * 0.3, 0, 0);
+    applyDelta('RightForeArm', -Math.abs(armSwing) * 0.3, 0, 0);
+    // Spine twist
+    applyDelta('Spine', 0, spineRot, 0);
+    // Head stays stable (slight counter-rotation)
+    applyDelta('Head', 0, -spineRot * 0.5, 0);
+
+    // Hips vertical bob
+    var hipData = findBone('Hips');
+    if (hipData) {
+        var bob = Math.abs(Math.sin(t * 2)) * 0.03 * intensity;
+        hipData.bone.position.copy(hipData.restPos);
+        hipData.bone.position.y -= bob;
+    }
+}
+
 function cpuSkinUpdate(cpuSkinData) {
     try {
-        // Animation is driven by mixer.update(delta) in the game loop.
+        // Procedural animation drives bones before this function.
         // We only need to recompute bone matrices and skinned positions here.
 
         // Update bone world matrices on DETACHED sourceScene
@@ -8114,6 +8204,60 @@ function processOniGLTF(group, gltf, stageId) {
         if (allSkinnedMeshes[si].skeleton) { skeletonRef = allSkinnedMeshes[si].skeleton; break; }
     }
 
+    // === SAVE REST-POSE BONE DATA for procedural animation ===
+    // This MUST happen BEFORE any animation is applied.
+    // Bones are in bind/rest pose at this point (straight from GLTF loader).
+    sourceScene.updateMatrixWorld(true);
+    if (skeletonRef) skeletonRef.update();
+    var restPoseBones = {};
+    var boneNameList = [];
+    sourceScene.traverse(function(c) {
+        if (c.isBone) {
+            restPoseBones[c.name] = {
+                bone: c,
+                restQuat: c.quaternion.clone(),
+                restPos: c.position.clone()
+            };
+            boneNameList.push(c.name);
+        }
+    });
+    console.log('[ONI] Saved rest-pose for ' + boneNameList.length + ' bones: ' + boneNameList.join(', '));
+
+    // === REST-POSE VALIDATION ===
+    // boneTransform in rest pose should produce ≈ original vertex positions.
+    // If this test fails, boneTransform setup is wrong (boneInverses, bindMatrix, etc.)
+    var testSM = allSkinnedMeshes[0];
+    if (testSM) {
+        var _testTarget = new THREE.Vector3();
+        var maxDiffRest = 0, avgDiffRest = 0;
+        var testN = Math.min(200, testSM.geometry.attributes.position.count);
+        var worstIdx = -1;
+        for (var ti = 0; ti < testN; ti++) {
+            testSM.boneTransform(ti, _testTarget);
+            var ox = testSM.geometry.attributes.position.getX(ti);
+            var oy = testSM.geometry.attributes.position.getY(ti);
+            var oz = testSM.geometry.attributes.position.getZ(ti);
+            var diff = Math.sqrt((_testTarget.x-ox)*(_testTarget.x-ox)+(_testTarget.y-oy)*(_testTarget.y-oy)+(_testTarget.z-oz)*(_testTarget.z-oz));
+            avgDiffRest += diff;
+            if (diff > maxDiffRest) { maxDiffRest = diff; worstIdx = ti; }
+        }
+        avgDiffRest /= testN;
+        console.log('[REST-TEST] boneTransform rest-pose: maxDiff=' + maxDiffRest.toFixed(6) +
+            ' avgDiff=' + avgDiffRest.toFixed(6) + ' worstVtx=' + worstIdx +
+            (maxDiffRest < 0.1 ? ' ★OK' : ' ★PROBLEM — boneTransform is broken in rest pose!'));
+        if (maxDiffRest > 0.1) {
+            // Log a few sample comparisons
+            for (var si2 = 0; si2 < Math.min(5, testN); si2++) {
+                testSM.boneTransform(si2, _testTarget);
+                var oox = testSM.geometry.attributes.position.getX(si2);
+                var ooy = testSM.geometry.attributes.position.getY(si2);
+                var ooz = testSM.geometry.attributes.position.getZ(si2);
+                console.log('[REST-TEST] vtx' + si2 + ': orig=(' + oox.toFixed(4) + ',' + ooy.toFixed(4) + ',' + ooz.toFixed(4) +
+                    ') bt=(' + _testTarget.x.toFixed(4) + ',' + _testTarget.y.toFixed(4) + ',' + _testTarget.z.toFixed(4) + ')');
+            }
+        }
+    }
+
     group.userData.cpuSkin = {
         sourceScene: sourceScene,
         skeleton: skeletonRef,
@@ -8121,45 +8265,21 @@ function processOniGLTF(group, gltf, stageId) {
         origSkinnedMeshes: allSkinnedMeshes, // for boneTransform()
         frameCount: 0,
         srcHeight: geoHeight,
-        meshScale: meshScale, // fixed scale: 1.8 / geoHeight
+        meshScale: meshScale,
         _srcMinY: combinedBB.min.y,
         _bodyGroup: bodyGroup,
         _tempBuf: new Float32Array(totalVertexCount * 3),
-        _allBones: allBonesList
+        _allBones: allBonesList,
+        restPoseBones: restPoseBones,  // for procedural animation
+        animTime: 0
     };
 
-    // Setup animation mixer
-    var mixer = null;
-    var usedEmbedded = false;
-    var walkClip = null;
-    if (gltf.animations && gltf.animations.length > 0) {
-        group.userData.animations = gltf.animations;
-        for (var i = 0; i < gltf.animations.length; i++) {
-            var aname = gltf.animations[i].name.toLowerCase();
-            if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1) {
-                walkClip = gltf.animations[i]; break;
-            }
-        }
-        if (walkClip) {
-            mixer = new THREE.AnimationMixer(sourceScene);
-            group.userData.mixer = mixer;
-            var embAction = mixer.clipAction(walkClip);
-            embAction.play();
-            group.userData.currentAction = embAction;
-            group.userData.currentAnimState = 'run';
-            usedEmbedded = true;
-        }
-    }
-    if (!usedEmbedded) {
-        if (sharedAnimationsLoaded) {
-            applySharedAnimation(group, sourceScene);
-        } else {
-            pendingAnimationGroups.push(group);
-        }
-    }
-
-    // Animation is driven by mixer (no directAnim needed).
-    // mixer.update(delta) in game loop drives bones via PropertyBinding.
+    // === NO AnimationMixer ===
+    // External animations (shared or embedded) cause incompatible bone transforms
+    // that result in amplified vertex positions (28x Y range).
+    // Procedural animation applies small delta rotations from rest pose,
+    // guaranteeing correct output from boneTransform.
+    // group.userData.mixer is NOT set — proceduralWalkUpdate drives bones instead.
 
     if (group.userData.sceneLight) {
         scene.remove(group.userData.sceneLight);
@@ -8782,12 +8902,11 @@ function updateOniAI(delta) {
             eyeL.material.color.setRGB(eyeBright, 0, 0);
         }
 
-        // ─── Animation mixer (always runs — drives bones on detached sourceScene) ───
-        if (oni.group.userData.mixer) {
-            oni.group.userData.mixer.update(delta);
+        // ─── Procedural animation (replaces AnimationMixer) ───
+        if (oni.group.userData.cpuSkin && oni.group.userData.cpuSkin.restPoseBones) {
             var oniAnimState = (oni.aiState === 'chase' || oni.aiState === 'lunge') ? 'run' :
                                (oni.aiState === 'patrol') ? 'walk' : 'idle';
-            setCharacterAnimation(oni.group, oniAnimState);
+            proceduralWalkUpdate(oni.group.userData.cpuSkin, delta, oniAnimState);
         }
 
         // ─── CPU Skinning update (boneTransform approach) ───
