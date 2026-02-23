@@ -8167,16 +8167,34 @@ function processOniGLTF(group, gltf, stageId) {
     }
 
     // Find ALL meshes (SkinnedMesh + regular Mesh) for full-body rendering
-    var allSkinnedMeshes = [];
+    var allSkinnedMeshesRaw = [];
     var allStaticMeshes = [];
     sourceScene.traverse(function(child) {
         if (child.isSkinnedMesh && child.geometry) {
-            allSkinnedMeshes.push(child);
+            allSkinnedMeshesRaw.push(child);
         } else if (child.isMesh && child.geometry) {
             allStaticMeshes.push(child);
         }
     });
-    showGLBDiag('[ONI] SkinnedMeshes: ' + allSkinnedMeshes.length + ' StaticMeshes: ' + allStaticMeshes.length);
+
+    // === DEDUPLICATE SkinnedMeshes ===
+    // Some GLB models (e.g. Hallin.glb) contain duplicate armatures with
+    // identical meshes (same vertex count). Rendering both causes 4-arm bug.
+    // Keep only one SkinnedMesh per unique vertex count from the FIRST armature.
+    var allSkinnedMeshes = [];
+    var seenVertexCounts = {};
+    for (var smi = 0; smi < allSkinnedMeshesRaw.length; smi++) {
+        var sm = allSkinnedMeshesRaw[smi];
+        var vtxCount = sm.geometry.attributes.position.count;
+        if (seenVertexCounts[vtxCount]) {
+            console.log('[ONI] Skipping duplicate SkinnedMesh: ' + (sm.name || 'unnamed') +
+                ' vtx=' + vtxCount + ' (duplicate of ' + seenVertexCounts[vtxCount] + ')');
+            continue;
+        }
+        seenVertexCounts[vtxCount] = sm.name || ('SM' + smi);
+        allSkinnedMeshes.push(sm);
+    }
+    showGLBDiag('[ONI] SkinnedMeshes: ' + allSkinnedMeshesRaw.length + ' unique: ' + allSkinnedMeshes.length + ' StaticMeshes: ' + allStaticMeshes.length);
 
     // === CRITICAL FIX: Set bindMode='detached' ===
     // In 'attached' mode, updateMatrixWorld sets bindMatrixInverse = inverse(currentMatrixWorld)
