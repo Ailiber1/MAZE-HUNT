@@ -2312,6 +2312,7 @@ body {
             <div id="hud-status"></div>
             <div id="hud-objective"></div>
             <div id="hud-enemy-dist"></div>
+            <div id="hud-stair-debug" style="position:absolute;top:100px;left:12px;color:#0f0;font-size:11px;font-family:monospace;white-space:pre;pointer-events:none;text-shadow:0 0 2px #000;display:none;z-index:999;"></div>
             <div id="hud-bpm"></div>
             <div id="minimap-container"><canvas id="minimap-canvas" width="180" height="180"></canvas></div>
             <div id="quick-chat-hud"></div>
@@ -6748,10 +6749,12 @@ function placeStairs(floors, cols, rows, numStairs) {
         floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
         floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
-        // Remove ALL walls around stair cell on both floors (no exceptions).
-        // Player can enter from any direction; updatePlayerY always allows climbing.
-        removeAllStairWalls(floors[fromFloor], cols, rows, cell.x, cell.z);
-        removeAllStairWalls(floors[toFloor], cols, rows, cell.x, cell.z);
+        // Configure stair walls: front open, back+sides blocked.
+        // Uses normal grid walls (checkWallCollision handles collision).
+        // Lower floor: front = opposite(dir), back = dir
+        // Upper floor: front = dir, back = opposite(dir)
+        setupStairWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
+        setupStairWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
 
         stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
     }
@@ -6769,23 +6772,44 @@ function isDeadEnd(grid, x, z) {
 }
 
 
-/* Remove ALL visible walls around a stair cell (no wall meshes rendered).
-   Invisible collision (sides + back blocked, front open) is handled
-   separately by checkStairEntry() in the movement system. */
-function removeAllStairWalls(grid, cols, rows, x, z) {
+/* Setup stair walls: FRONT open, BACK + SIDES blocked.
+   Uses normal grid walls so checkWallCollision handles collision.
+   backDir = the direction the ramp climbs toward (back/top of ramp).
+   Front = opposite of backDir (entry/base of ramp). */
+function setupStairWalls(grid, cols, rows, x, z, backDir) {
     const cell = grid[z][x];
-    // North
-    cell.top = false;
-    if (z > 0) grid[z - 1][x].bottom = false;
-    // South
-    cell.bottom = false;
-    if (z < rows - 1) grid[z + 1][x].top = false;
-    // West
-    cell.left = false;
-    if (x > 0) grid[z][x - 1].right = false;
-    // East
-    cell.right = false;
-    if (x < cols - 1) grid[z][x + 1].left = false;
+    const opposite = { north: 'south', south: 'north', east: 'west', west: 'east' };
+    const frontDir = opposite[backDir];
+    const isNS = (backDir === 'north' || backDir === 'south');
+
+    // Step 1: Remove ALL walls first (clean slate)
+    cell.top = false;    if (z > 0) grid[z - 1][x].bottom = false;
+    cell.bottom = false; if (z < rows - 1) grid[z + 1][x].top = false;
+    cell.left = false;   if (x > 0) grid[z][x - 1].right = false;
+    cell.right = false;  if (x < cols - 1) grid[z][x + 1].left = false;
+
+    // Step 2: Add back wall (blocks entry from behind the ramp top)
+    if (backDir === 'north') {
+        cell.top = true; if (z > 0) grid[z - 1][x].bottom = true;
+    } else if (backDir === 'south') {
+        cell.bottom = true; if (z < rows - 1) grid[z + 1][x].top = true;
+    } else if (backDir === 'east') {
+        cell.right = true; if (x < cols - 1) grid[z][x + 1].left = true;
+    } else if (backDir === 'west') {
+        cell.left = true; if (x > 0) grid[z][x - 1].right = true;
+    }
+
+    // Step 3: Add side walls (blocks entry from the sides / handrails)
+    if (isNS) {
+        // N/S stair: sides are east and west
+        cell.left = true;  if (x > 0) grid[z][x - 1].right = true;
+        cell.right = true; if (x < cols - 1) grid[z][x + 1].left = true;
+    } else {
+        // E/W stair: sides are north and south
+        cell.top = true;    if (z > 0) grid[z - 1][x].bottom = true;
+        cell.bottom = true; if (z < rows - 1) grid[z + 1][x].top = true;
+    }
+    // Front wall is already removed (step 1), so entry is open.
 }
 
 
@@ -6922,19 +6946,33 @@ function updatePlayerY() {
         targetY = lowY + (highY - lowY) * clampedProgress;
         _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor, cellX: cellX, cellZ: cellZ };
 
-        // Mid-stair floor transition: switch floor near the exit end
-        // so the player uses the new floor's grid (where the exit is open).
-        // Threshold at 0.95/0.05 to keep the stair ramp visible as long as possible.
-        // (One-directional back wall allows player to reach ~0.98 progress.)
-        if (currentFloor === lowerFloor && clampedProgress >= 0.95) {
+        // Mid-stair floor transition: switch floor near the exit end.
+        // Back wall is a grid wall, so player can reach max progress ~0.91.
+        // Thresholds set below that so transition happens before hitting the wall.
+        // After transition, the new floor's front is open so the player exits.
+        if (currentFloor === lowerFloor && clampedProgress >= 0.88) {
             GameState.playerCurrentFloor = upperFloor;
             updateFloorLabel();
-        } else if (currentFloor === upperFloor && clampedProgress <= 0.05) {
+        } else if (currentFloor === upperFloor && clampedProgress <= 0.12) {
             GameState.playerCurrentFloor = lowerFloor;
             updateFloorLabel();
         }
 
         GameState.onStairs = true;
+
+        // Debug overlay
+        var _sdbg = document.getElementById('hud-stair-debug');
+        if (_sdbg && _sdbg.style.display !== 'none') {
+            _sdbg.textContent = 'STAIR DEBUG\n' +
+                'Floor: ' + currentFloor + ' Cell: (' + cellX + ',' + cellZ + ')\n' +
+                'Dir(lower): ' + lowerCell.stairDirection + '\n' +
+                'Dir(this):  ' + cell.stairDirection + '\n' +
+                'Progress: ' + clampedProgress.toFixed(3) + '\n' +
+                'Y target: ' + targetY.toFixed(2) + '\n' +
+                'Walls: T=' + cell.top + ' B=' + cell.bottom +
+                ' L=' + cell.left + ' R=' + cell.right + '\n' +
+                'onStairs: true';
+        }
     } else {
         // Not on stair cell — but check adjacent stair cell for buffer zone
         // This prevents flickering at cell boundaries
@@ -6989,6 +7027,21 @@ function updatePlayerY() {
 
             targetY = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
             GameState.onStairs = false;
+
+            // Debug overlay (not on stairs)
+            var _sdbg2 = document.getElementById('hud-stair-debug');
+            if (_sdbg2 && _sdbg2.style.display !== 'none') {
+                var _dcell = floors[currentFloor] && floors[currentFloor][cellZ] && floors[currentFloor][cellZ][cellX];
+                _sdbg2.textContent = 'STAIR DEBUG\n' +
+                    'Floor: ' + currentFloor + ' Cell: (' + cellX + ',' + cellZ + ')\n' +
+                    'isStairs: ' + (_dcell ? _dcell.isStairs : 'N/A') + '\n' +
+                    'dir: ' + (_dcell ? _dcell.stairDirection : 'N/A') + '\n' +
+                    'onStairs: false  wasOn: ' + wasOnStairs + '\n' +
+                    'adjStair: ' + foundAdjacentStair + '\n' +
+                    'Walls: T=' + (_dcell?_dcell.top:'?') + ' B=' + (_dcell?_dcell.bottom:'?') +
+                    ' L=' + (_dcell?_dcell.left:'?') + ' R=' + (_dcell?_dcell.right:'?') + '\n' +
+                    'Pos: (' + camera.position.x.toFixed(1) + ',' + camera.position.z.toFixed(1) + ')';
+            }
         }
     }
 
@@ -10148,6 +10201,12 @@ function initKeyInput() {
             case 'Digit4': sendQuickChat(3); break;
             // Pin marker (coop)
             case 'KeyE': placePinMarker(); break;
+            // Stair debug toggle
+            case 'KeyP': {
+                var dbg = document.getElementById('hud-stair-debug');
+                if (dbg) dbg.style.display = dbg.style.display === 'none' ? 'block' : 'none';
+                break;
+            }
             // Spectator switch
             case 'Tab':
                 if (GameState.isSpectating) {
@@ -10535,97 +10594,9 @@ function checkWallCollision(newX, newZ, grid_unused) {
     return { x: newX, z: newZ };
 }
 
-/* --- Stair Entry Collision ---
-   Back wall:  one-directional — blocks entry from outside the cell, allows exit from inside.
-               Uses center-based check (only triggers when player center is outside the cell).
-   Side walls: bidirectional (handrails) — only active when player center is inside the cell.
-               This prevents side walls from interfering with the front approach.
-   Front:      completely open — normal entry/exit. */
+/* checkStairEntry is no longer needed — stair walls are now normal grid walls
+   handled by checkWallCollision. Back + sides are grid walls, front is open. */
 function checkStairEntry(newX, newZ) {
-    var grid = GameState.mazeFloors && GameState.mazeFloors[GameState.playerCurrentFloor];
-    if (!grid) return { x: newX, z: newZ };
-    var r = PLAYER_RADIUS;
-    var cols = GameState.mazeCols, rows = GameState.mazeRows;
-    var hw = WALL_THICK / 2;
-
-    var minCX = Math.max(0, Math.floor((newX - r) / CL));
-    var maxCX = Math.min(cols - 1, Math.floor((newX + r) / CL));
-    var minCZ = Math.max(0, Math.floor((newZ - r) / CL));
-    var maxCZ = Math.min(rows - 1, Math.floor((newZ + r) / CL));
-
-    for (var cz = minCZ; cz <= maxCZ; cz++) {
-        for (var cx = minCX; cx <= maxCX; cx++) {
-            var cell = grid[cz][cx];
-            if (!cell.isStairs || !cell.stairDirection) continue;
-
-            var dir = cell.stairDirection;
-            var x0 = cx * CL;           // west edge
-            var x1 = (cx + 1) * CL;     // east edge
-            var z0 = cz * CL;           // north edge
-            var z1 = (cz + 1) * CL;     // south edge
-            var isNS = (dir === 'north' || dir === 'south');
-
-            // --- BACK WALL (one-directional: block from outside only) ---
-            // Only triggers when player CENTER is on the outside of the back edge.
-            // Player inside the cell can freely reach/pass the back edge (for floor transition).
-            if (dir === 'north') {
-                // Back = north edge (z0). Block player whose center is north of z0.
-                if (newZ < z0 && newZ + r > z0 && newX + r > x0 && newX - r < x1) {
-                    newZ = z0 - r;
-                }
-            } else if (dir === 'south') {
-                // Back = south edge (z1). Block player whose center is south of z1.
-                if (newZ > z1 && newZ - r < z1 && newX + r > x0 && newX - r < x1) {
-                    newZ = z1 + r;
-                }
-            } else if (dir === 'east') {
-                // Back = east edge (x1). Block player whose center is east of x1.
-                if (newX > x1 && newX - r < x1 && newZ + r > z0 && newZ - r < z1) {
-                    newX = x1 + r;
-                }
-            } else if (dir === 'west') {
-                // Back = west edge (x0). Block player whose center is west of x0.
-                if (newX < x0 && newX + r > x0 && newZ + r > z0 && newZ - r < z1) {
-                    newX = x0 - r;
-                }
-            }
-
-            // --- SIDE WALLS (handrails — bidirectional) ---
-            // Only active when player CENTER is inside the cell's main axis range.
-            // This prevents side walls from catching players approaching the front.
-            if (isNS) {
-                // N/S stair: sides at x0 (west) and x1 (east)
-                // Only apply when player center Z is inside the cell
-                if (newZ > z0 && newZ < z1) {
-                    // West handrail
-                    if (newX - r < x0 + hw && newX + r > x0 - hw) {
-                        if (newX < x0) newX = x0 - hw - r;
-                        else newX = x0 + hw + r;
-                    }
-                    // East handrail
-                    if (newX + r > x1 - hw && newX - r < x1 + hw) {
-                        if (newX > x1) newX = x1 + hw + r;
-                        else newX = x1 - hw - r;
-                    }
-                }
-            } else {
-                // E/W stair: sides at z0 (north) and z1 (south)
-                // Only apply when player center X is inside the cell
-                if (newX > x0 && newX < x1) {
-                    // North handrail
-                    if (newZ - r < z0 + hw && newZ + r > z0 - hw) {
-                        if (newZ < z0) newZ = z0 - hw - r;
-                        else newZ = z0 + hw + r;
-                    }
-                    // South handrail
-                    if (newZ + r > z1 - hw && newZ - r < z1 + hw) {
-                        if (newZ > z1) newZ = z1 + hw + r;
-                        else newZ = z1 - hw - r;
-                    }
-                }
-            }
-        }
-    }
     return { x: newX, z: newZ };
 }
 
@@ -10675,7 +10646,8 @@ function updatePlayerMovement(delta) {
         const newX = camera.position.x + dir.x * speed * delta;
         const newZ = camera.position.z + dir.z * speed * delta;
         var result = checkWallCollision(newX, newZ, grid);
-        result = checkStairEntry(result.x, result.z);
+        // checkStairEntry removed — stair back/side walls are now normal grid walls
+        // handled by checkWallCollision above.
         camera.position.x = result.x;
         camera.position.z = result.z;
     }
