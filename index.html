@@ -9214,15 +9214,14 @@ function placeExit(cols, rows, stageId, numFloors) {
     else if (stageId === 'hidden') exitFloor = numFloors - 1;
     else exitFloor = 0;
 
+    // Random exit for ALL stages. Minimum Manhattan distance from
+    // player start (cell 1,1) ensures the exit is never too close.
     let exitX, exitZ;
-    if (stageId <= 2) {
-        exitX = cols - 2; exitZ = rows - 2;
-    } else {
-        do {
-            exitX = Math.floor(Math.random() * (cols - 2)) + 1;
-            exitZ = Math.floor(Math.random() * (rows - 2)) + 1;
-        } while (Math.abs(exitX) + Math.abs(exitZ) < cols * 0.5);
-    }
+    var minDist = Math.max(Math.floor(cols * 0.5), 4);
+    do {
+        exitX = Math.floor(Math.random() * (cols - 2)) + 1;
+        exitZ = Math.floor(Math.random() * (rows - 2)) + 1;
+    } while (Math.abs(exitX - 1) + Math.abs(exitZ - 1) < minDist);
     return { x: exitX, z: exitZ, floor: exitFloor };
 }
 
