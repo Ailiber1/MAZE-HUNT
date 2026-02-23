@@ -7903,10 +7903,8 @@ function cpuSkinUpdate(cpuSkinData) {
             }
 
             if (cpuSkinData._bodyGroup) {
-                // DYNAMIC scaling: scale boneTransform output to exactly 1.8m tall.
-                // With bindMode='detached', boneTransform output should be close to
-                // source geometry size. Dynamic scaling handles any remaining discrepancy.
-                var targetH = 1.8;
+                // DYNAMIC scaling: scale boneTransform output to target height.
+                var targetH = 2.5;
                 var scaleFix = targetH / outHeight;
                 var centerX = (globalMinX + globalMaxX) / 2;
                 var centerZ = (globalMinZ + globalMaxZ) / 2;
