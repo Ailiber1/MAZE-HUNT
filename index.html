@@ -7705,6 +7705,16 @@ function cpuSkinUpdate(cpuSkinData) {
                 console.log('[SKIN] bindMatrix diag: ' + bm[0].toFixed(4) + ',' + bm[5].toFixed(4) + ',' + bm[10].toFixed(4) + ' trans=' + bm[12].toFixed(4) + ',' + bm[13].toFixed(4) + ',' + bm[14].toFixed(4));
                 console.log('[SKIN] bindMatrixInv diag: ' + bmi[0].toFixed(4) + ',' + bmi[5].toFixed(4) + ',' + bmi[10].toFixed(4) + ' trans=' + bmi[12].toFixed(4) + ',' + bmi[13].toFixed(4) + ',' + bmi[14].toFixed(4));
                 console.log('[SKIN] bindMode=' + sm0.bindMode + ' skeleton.bones=' + skeleton.bones.length);
+                // Verify bindMatrix * bindMatrixInverse ≈ Identity
+                var verifyMat = new THREE.Matrix4();
+                verifyMat.copy(sm0.bindMatrix).multiply(sm0.bindMatrixInverse);
+                var ve = verifyMat.elements;
+                var identErr = Math.abs(ve[0]-1) + Math.abs(ve[5]-1) + Math.abs(ve[10]-1) + Math.abs(ve[15]-1)
+                    + Math.abs(ve[1]) + Math.abs(ve[2]) + Math.abs(ve[3])
+                    + Math.abs(ve[4]) + Math.abs(ve[6]) + Math.abs(ve[7])
+                    + Math.abs(ve[8]) + Math.abs(ve[9]) + Math.abs(ve[11])
+                    + Math.abs(ve[12]) + Math.abs(ve[13]) + Math.abs(ve[14]);
+                console.log('[SKIN] bindMatrix*bindMatrixInverse identity error=' + identErr.toFixed(6) + (identErr < 0.001 ? ' OK' : ' PROBLEM!'));
             }
         }
 
@@ -7793,17 +7803,18 @@ function cpuSkinUpdate(cpuSkinData) {
             }
 
             if (cpuSkinData._bodyGroup) {
-                // Use FIXED scale from source geometry (meshScale = 1.8/geoHeight).
-                // If PASS1 output is correct, outHeight ≈ srcHeight so fixed scale works.
-                // If PASS1 output is amplified, dynamic scaling compresses the model
-                // disproportionately (lower body vanishes). Fixed scale avoids this.
-                var fixedScale = cpuSkinData.meshScale || (1.8 / (cpuSkinData.srcHeight || 1.8));
-                var srcMinY = cpuSkinData._srcMinY || 0;
-                cpuSkinData._bodyGroup.scale.setScalar(fixedScale);
+                // DYNAMIC scaling: scale boneTransform output to exactly 1.8m tall.
+                // With bindMode='detached', boneTransform output should be close to
+                // source geometry size. Dynamic scaling handles any remaining discrepancy.
+                var targetH = 1.8;
+                var scaleFix = targetH / outHeight;
+                var centerX = (globalMinX + globalMaxX) / 2;
+                var centerZ = (globalMinZ + globalMaxZ) / 2;
+                cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
                 cpuSkinData._bodyGroup.position.set(
-                    0,
-                    -srcMinY * fixedScale,
-                    0
+                    -centerX * scaleFix,
+                    -globalMinY * scaleFix,
+                    -centerZ * scaleFix
                 );
             }
         }
@@ -7889,6 +7900,19 @@ function processOniGLTF(group, gltf, stageId) {
         }
     });
     showGLBDiag('[ONI] SkinnedMeshes: ' + allSkinnedMeshes.length + ' StaticMeshes: ' + allStaticMeshes.length);
+
+    // === CRITICAL FIX: Set bindMode='detached' ===
+    // In 'attached' mode, updateMatrixWorld sets bindMatrixInverse = inverse(currentMatrixWorld)
+    // every frame, but bindMatrix stays as the ORIGINAL load-time value.
+    // This causes bindMatrix * bindMatrixInverse != Identity when the mesh's matrixWorld
+    // changes (e.g. from animation), leading to the 28x PASS1 Y amplification.
+    // In 'detached' mode, bindMatrixInverse = inverse(bindMatrix) (constant).
+    allSkinnedMeshes.forEach(function(sm) {
+        sm.bindMode = 'detached';
+        sm.bindMatrixInverse.copy(sm.bindMatrix).invert();
+        console.log('[ONI] Set bindMode=detached for: ' + sm.name);
+    });
+
     if (allSkinnedMeshes.length === 0 && allStaticMeshes.length === 0) {
         showGLBDiag('[ONI] ERROR: No meshes found!');
         return;
