@@ -5334,8 +5334,6 @@ function launchMultiGame(config) {
     GameState.playerCurrentFloor = 0;
     GameState.onStairs = false;
     _smoothStairY = -1;
-    _stairCellKey = '';
-    _stairEntryProgress = -1;
     _lastStairInfo = null;
 
     // Floor label
@@ -6751,7 +6749,7 @@ function placeStairs(floors, cols, rows, numStairs) {
         floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
         // Remove ALL walls around stair cell on both floors (no exceptions).
-        // "Can't climb from behind" is enforced by updatePlayerY, not by walls.
+        // Player can enter from any direction; updatePlayerY always allows climbing.
         removeAllStairWalls(floors[fromFloor], cols, rows, cell.x, cell.z);
         removeAllStairWalls(floors[toFloor], cols, rows, cell.x, cell.z);
 
@@ -6771,9 +6769,9 @@ function isDeadEnd(grid, x, z) {
 }
 
 
-/* Remove ALL walls around a stair cell — no exceptions, no back wall.
-   "Can't climb from behind" is enforced by updatePlayerY (enteredFromFront check),
-   not by physical walls. This eliminates all wall-blocking-entry bugs. */
+/* Remove ALL walls around a stair cell — no exceptions.
+   Player can enter from any direction; updatePlayerY always allows climbing.
+   This eliminates all wall-blocking-entry bugs. */
 function removeAllStairWalls(grid, cols, rows, x, z) {
     const cell = grid[z][x];
     // North
@@ -6882,15 +6880,12 @@ function getStairProgress(pos, direction) {
     }
 }
 
-/* One-directional stair system:
+/* Stair climbing system:
    - Y calculated from LOWER floor's perspective (consistent direction)
-   - Must enter from FRONT (low-progress on lower floor, high-progress on upper floor)
-   - Entering from BACK keeps player at current floor level (no climbing)
-   - Floor transition on EXIT, based on Y position
+   - Always allows climbing from any entry direction (no walls around stair cells)
+   - Floor transition mid-stair (progress 0.85 up / 0.15 down)
    - Smooth Y transitions to prevent flickering at cell boundaries */
 var _lastStairInfo = null;
-var _stairEntryProgress = -1;
-var _stairCellKey = '';
 var _smoothStairY = -1; // For smooth transitions
 
 function updatePlayerY() {
@@ -6914,45 +6909,20 @@ function updatePlayerY() {
         const progress = getStairProgress(camera.position, lowerCell.stairDirection);
         const clampedProgress = Math.max(0, Math.min(progress, 1.0));
 
-        // Track entry progress (when first entering this stair cell)
-        var cellKey = cellX + '_' + cellZ + '_' + currentFloor;
-        if (cellKey !== _stairCellKey) {
-            _stairEntryProgress = clampedProgress;
-            _stairCellKey = cellKey;
-        }
+        // Always climb — Y interpolated between lower and upper floor based on progress
+        var lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
+        var highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
+        targetY = lowY + (highY - lowY) * clampedProgress;
+        _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
 
-        // Check if player entered from the FRONT (correct side)
-        // Lower floor: front = low progress side (base of stair)
-        // Upper floor: front = high progress side (top of stair)
-        var enteredFromFront;
-        if (currentFloor === lowerFloor) {
-            enteredFromFront = (_stairEntryProgress < 0.4);
-        } else {
-            enteredFromFront = (_stairEntryProgress > 0.6);
-        }
-
-        if (enteredFromFront) {
-            // Normal stair climbing/descending
-            var lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
-            var highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
-            targetY = lowY + (highY - lowY) * clampedProgress;
-            _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
-
-            // Mid-stair floor transition: switch floor BEFORE reaching the back wall
-            // so the player uses the new floor's grid (where the exit wall is open)
-            if (currentFloor === lowerFloor && clampedProgress >= 0.85) {
-                GameState.playerCurrentFloor = upperFloor;
-                _stairCellKey = ''; // Re-evaluate entry on new floor
-                updateFloorLabel();
-            } else if (currentFloor === upperFloor && clampedProgress <= 0.15) {
-                GameState.playerCurrentFloor = lowerFloor;
-                _stairCellKey = '';
-                updateFloorLabel();
-            }
-        } else {
-            // Entered from behind — stay at current floor level
-            targetY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
-            _lastStairInfo = null;
+        // Mid-stair floor transition: switch floor before reaching the end
+        // so the player uses the new floor's grid (where the exit is open)
+        if (currentFloor === lowerFloor && clampedProgress >= 0.85) {
+            GameState.playerCurrentFloor = upperFloor;
+            updateFloorLabel();
+        } else if (currentFloor === upperFloor && clampedProgress <= 0.15) {
+            GameState.playerCurrentFloor = lowerFloor;
+            updateFloorLabel();
         }
 
         GameState.onStairs = true;
@@ -7010,8 +6980,6 @@ function updatePlayerY() {
 
             targetY = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
             GameState.onStairs = false;
-            _stairCellKey = '';
-            _stairEntryProgress = -1;
         }
     }
 
