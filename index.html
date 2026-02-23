@@ -7958,12 +7958,23 @@ function cpuSkinUpdate(cpuSkinData) {
 
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
-        var skeleton = cpuSkinData.skeleton;
-        if (!skeleton) return;
-        skeleton.update();
 
         var origSMs = cpuSkinData.origSkinnedMeshes;
         if (!origSMs || origSMs.length === 0) return;
+
+        // Update ALL unique skeletons (not just one).
+        // Models with multiple SkinnedMeshes (e.g. body + clothes) may have
+        // separate skeleton instances. Only updating one leaves the others
+        // with stale T-pose boneMatrices → 4-arm bug.
+        var _updatedSkeletons = [];
+        for (var ui = 0; ui < origSMs.length; ui++) {
+            var sk = origSMs[ui].skeleton;
+            if (sk && _updatedSkeletons.indexOf(sk) === -1) {
+                sk.update();
+                _updatedSkeletons.push(sk);
+            }
+        }
+        if (_updatedSkeletons.length === 0) return;
 
         // One-time diagnostic
         if (!cpuSkinData._boneDiagDone) {
@@ -7989,7 +8000,7 @@ function cpuSkinUpdate(cpuSkinData) {
                 var bmi = sm0.bindMatrixInverse.elements;
                 console.log('[SKIN] bindMatrix diag: ' + bm[0].toFixed(4) + ',' + bm[5].toFixed(4) + ',' + bm[10].toFixed(4) + ' trans=' + bm[12].toFixed(4) + ',' + bm[13].toFixed(4) + ',' + bm[14].toFixed(4));
                 console.log('[SKIN] bindMatrixInv diag: ' + bmi[0].toFixed(4) + ',' + bmi[5].toFixed(4) + ',' + bmi[10].toFixed(4) + ' trans=' + bmi[12].toFixed(4) + ',' + bmi[13].toFixed(4) + ',' + bmi[14].toFixed(4));
-                console.log('[SKIN] bindMode=' + sm0.bindMode + ' skeleton.bones=' + skeleton.bones.length);
+                console.log('[SKIN] bindMode=' + sm0.bindMode + ' skeleton.bones=' + (sm0.skeleton ? sm0.skeleton.bones.length : 0) + ' uniqueSkeletons=' + _updatedSkeletons.length);
                 // Verify bindMatrix * bindMatrixInverse ≈ Identity
                 var verifyMat = new THREE.Matrix4();
                 verifyMat.copy(sm0.bindMatrix).multiply(sm0.bindMatrixInverse);
@@ -8406,7 +8417,16 @@ function processOniGLTF(group, gltf, stageId) {
     // This MUST happen BEFORE any animation is applied.
     // Bones are in bind/rest pose at this point (straight from GLTF loader).
     sourceScene.updateMatrixWorld(true);
-    if (skeletonRef) skeletonRef.update();
+    // Update ALL skeletons (models may have multiple SkinnedMeshes with separate skeletons)
+    var _initSkeletons = [];
+    for (var isi = 0; isi < allSkinnedMeshes.length; isi++) {
+        var isk = allSkinnedMeshes[isi].skeleton;
+        if (isk && _initSkeletons.indexOf(isk) === -1) {
+            isk.update();
+            _initSkeletons.push(isk);
+        }
+    }
+    console.log('[ONI] Updated ' + _initSkeletons.length + ' unique skeletons at init');
     var restPoseBones = {};
     var boneNameList = [];
     sourceScene.traverse(function(c) {
@@ -8421,12 +8441,10 @@ function processOniGLTF(group, gltf, stageId) {
     });
     console.log('[ONI] Saved rest-pose for ' + boneNameList.length + ' bones: ' + boneNameList.join(', '));
 
-    // === REST-POSE VALIDATION ===
-    // boneTransform in rest pose should produce ≈ original vertex positions.
-    // If this test fails, boneTransform setup is wrong (boneInverses, bindMatrix, etc.)
-    var testSM = allSkinnedMeshes[0];
-    if (testSM) {
-        var _testTarget = new THREE.Vector3();
+    // === REST-POSE VALIDATION (all SkinnedMeshes) ===
+    var _testTarget = new THREE.Vector3();
+    for (var tmi = 0; tmi < allSkinnedMeshes.length; tmi++) {
+        var testSM = allSkinnedMeshes[tmi];
         var maxDiffRest = 0, avgDiffRest = 0;
         var testN = Math.min(200, testSM.geometry.attributes.position.count);
         var worstIdx = -1;
@@ -8440,20 +8458,10 @@ function processOniGLTF(group, gltf, stageId) {
             if (diff > maxDiffRest) { maxDiffRest = diff; worstIdx = ti; }
         }
         avgDiffRest /= testN;
-        console.log('[REST-TEST] boneTransform rest-pose: maxDiff=' + maxDiffRest.toFixed(6) +
+        console.log('[REST-TEST] SM[' + tmi + '] ' + (testSM.name || 'unnamed') + ': maxDiff=' + maxDiffRest.toFixed(6) +
             ' avgDiff=' + avgDiffRest.toFixed(6) + ' worstVtx=' + worstIdx +
-            (maxDiffRest < 0.1 ? ' ★OK' : ' ★PROBLEM — boneTransform is broken in rest pose!'));
-        if (maxDiffRest > 0.1) {
-            // Log a few sample comparisons
-            for (var si2 = 0; si2 < Math.min(5, testN); si2++) {
-                testSM.boneTransform(si2, _testTarget);
-                var oox = testSM.geometry.attributes.position.getX(si2);
-                var ooy = testSM.geometry.attributes.position.getY(si2);
-                var ooz = testSM.geometry.attributes.position.getZ(si2);
-                console.log('[REST-TEST] vtx' + si2 + ': orig=(' + oox.toFixed(4) + ',' + ooy.toFixed(4) + ',' + ooz.toFixed(4) +
-                    ') bt=(' + _testTarget.x.toFixed(4) + ',' + _testTarget.y.toFixed(4) + ',' + _testTarget.z.toFixed(4) + ')');
-            }
-        }
+            ' skeleton=' + (testSM.skeleton ? testSM.skeleton.uuid.substr(0,8) : 'NONE') +
+            (maxDiffRest < 0.1 ? ' ★OK' : ' ★PROBLEM'));
     }
 
     group.userData.cpuSkin = {
