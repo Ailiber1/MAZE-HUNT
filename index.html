@@ -2201,7 +2201,6 @@ body {
     <div id="title-screen" class="screen">
         <div id="title-logo">
             <h1>MAZE<br>HUNT</h1>
-            <div style="font-size:10px;color:#0f0;opacity:0.5;margin-top:4px;">v3-ygate</div>
         </div>
 
         <!-- Chase Animation -->
@@ -2313,7 +2312,7 @@ body {
             <div id="hud-status"></div>
             <div id="hud-objective"></div>
             <div id="hud-enemy-dist"></div>
-            <div id="hud-stair-debug" style="position:absolute;top:100px;left:12px;color:#0f0;font-size:11px;font-family:monospace;white-space:pre;pointer-events:none;text-shadow:0 0 2px #000;display:block;z-index:999;"></div>
+            <div id="hud-stair-debug" style="position:absolute;top:100px;left:12px;color:#0f0;font-size:11px;font-family:monospace;white-space:pre;pointer-events:none;text-shadow:0 0 2px #000;display:none;z-index:999;"></div>
             <div id="hud-bpm"></div>
             <div id="minimap-container"><canvas id="minimap-canvas" width="180" height="180"></canvas></div>
             <div id="quick-chat-hud"></div>
@@ -6872,11 +6871,18 @@ function getStairProgress(pos, direction, stairCX, stairCZ) {
     // Position relative to the stair cell (NOT modulo — avoids wrap bugs)
     var localX = Math.max(0, Math.min(1, (pos.x - stairCX * CL) / CL));
     var localZ = Math.max(0, Math.min(1, (pos.z - stairCZ * CL) / CL));
+    // Progress 0 = visual LOW end (ground-level entry/front)
+    // Progress 1 = visual HIGH end (upper-level exit/back)
+    // Must match the ramp mesh rotation in createStairs:
+    //   'north': ramp LOW at -Z(north), HIGH at +Z(south) → progress = localZ
+    //   'south': ramp LOW at +Z(south), HIGH at -Z(north) → progress = 1-localZ
+    //   'east':  ramp LOW at +X(east),  HIGH at -X(west)  → progress = 1-localX
+    //   'west':  ramp LOW at -X(west),  HIGH at +X(east)  → progress = localX
     switch (direction) {
-        case 'north': return 1 - localZ;
-        case 'south': return localZ;
-        case 'east': return localX;
-        case 'west': return 1 - localX;
+        case 'north': return localZ;
+        case 'south': return 1 - localZ;
+        case 'east': return 1 - localX;
+        case 'west': return localX;
         default: return 0;
     }
 }
@@ -6928,11 +6934,6 @@ function updatePlayerY() {
             } else {
                 _stairActivated = false;
             }
-            console.log('[STAIR Y-GATE] cell=(' + cellX + ',' + cellZ + ') floor=' + currentFloor +
-                ' lower=' + lowerFloor + ' upper=' + upperFloor +
-                ' progress=' + clampedProgress.toFixed(3) +
-                ' dir=' + lowerCell.stairDirection +
-                ' → activated=' + _stairActivated);
         }
 
         if (_stairActivated) {
