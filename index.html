@@ -7967,17 +7967,8 @@ function cpuSkinUpdate(cpuSkinData) {
 
 /* --- C4-diag: On-screen diagnostic overlay for GLB loading --- */
 function showGLBDiag(msg) {
-    var el = document.getElementById('glb-diag');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'glb-diag';
-        el.style.cssText = 'position:fixed;top:60px;left:10px;z-index:99999;background:rgba(0,0,0,0.85);color:#0f0;font:bold 14px monospace;padding:10px;max-width:50vw;white-space:pre-wrap;pointer-events:none;border:2px solid #0f0;';
-        document.body.appendChild(el);
-    }
-    el.textContent += msg + '\n';
-    // Auto-hide after 3 seconds (reduced from 30s to not block game view)
-    clearTimeout(el._timer);
-    el._timer = setTimeout(function() { el.style.display = 'none'; }, 3000);
+    // Console only — no overlay to block game view
+    console.log('[GLB-DIAG] ' + msg);
 }
 
 
@@ -8202,10 +8193,7 @@ function processOniGLTF(group, gltf, stageId) {
     bodyGroup.position.set(0, 0, 0);
 
     // --- GPU SKINNING APPROACH ---
-    // Attach sourceScene to group for native Three.js SkinnedMesh rendering.
-    // This bypasses CPU skinning which has been producing incorrect vertex positions.
-    // The SkinnedMesh and its skeleton bones are now in the same scene graph,
-    // so the WebGL renderer can perform GPU skinning natively.
+    // Prepare sourceScene SkinnedMeshes with simple materials for GPU rendering.
     allSkinnedMeshes.forEach(function(sm) {
         var origMat = sm.material;
         var gpuMat = new THREE.MeshBasicMaterial({
@@ -8219,17 +8207,12 @@ function processOniGLTF(group, gltf, stageId) {
         sm.material = gpuMat;
         sm.frustumCulled = false;
     });
-    // Add sourceScene to group (GPU skinning requires bones in same scene graph)
-    group.add(sourceScene);
-    // Place model: feet at Y=0, centered
-    sourceScene.position.set(0, -geoMinY, 0);
     // Hide CPU skinning bodyGroup (GPU takes over)
     bodyGroup.visible = false;
     group.userData.useGPUSkinning = true;
     group.userData.sourceScene = sourceScene;
-    console.log('[ONI] GPU skinning enabled: sourceScene attached to group, bodyGroup hidden');
 
-    // Remove ALL fallback children
+    // Remove ALL fallback children FIRST (before adding GPU skinning scene)
     var toRemove = [];
     group.children.forEach(function(child) { toRemove.push(child); });
     toRemove.forEach(function(child) { group.remove(child); });
@@ -8237,7 +8220,16 @@ function processOniGLTF(group, gltf, stageId) {
     group.userData.eyeL = null;
     group.userData.chestMesh = null;
 
+    // Add bodyGroup (hidden, kept for CPU skinning data reference)
     group.add(bodyGroup);
+
+    // Add sourceScene AFTER cleanup so it doesn't get removed!
+    // GPU skinning requires bones + SkinnedMesh in the same scene graph.
+    // Do NOT scale sourceScene — SkinnedMesh GPU skinning would double-scale
+    // because boneInverses are pre-computed for unscaled bone positions.
+    group.add(sourceScene);
+    sourceScene.position.set(0, -geoMinY, 0);
+    console.log('[ONI] GPU skinning: sourceScene added AFTER cleanup, geoMinY=' + geoMinY.toFixed(4));
 
     group.userData.glbLoaded = true;
     group.userData.glbModel = bodyGroup;
