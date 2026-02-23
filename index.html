@@ -7688,8 +7688,7 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
         rp[name].bone.position.copy(rp[name].restPos);
     }
 
-    if (speed === 0) return; // idle = rest pose (full body visible)
-
+    // Even in idle, apply base arm pose (arms down from T-pose)
     // Helper: find bone by name (handles mixamorig prefix variations)
     function findBone(partialName) {
         var lower = partialName.toLowerCase();
@@ -7717,6 +7716,15 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
         bd.bone.quaternion.copy(bd.restQuat).multiply(_deltaQ);
     }
 
+    // Base arm pose: always applied (idle, walk, run)
+    var armDown = 1.15; // ~66 degrees down from T-pose
+    applyDelta('LeftArm', 0, 0, armDown);
+    applyDelta('RightArm', 0, 0, -armDown);
+    applyDelta('LeftForeArm', -0.4, 0, 0);
+    applyDelta('RightForeArm', -0.4, 0, 0);
+
+    if (speed === 0) return; // idle = arms-down pose (no walking motion)
+
     // --- Walking / Running cycle ---
     var intensity = (animState === 'run') ? 1.0 : 0.6;
 
@@ -7736,12 +7744,12 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
     // Lower legs (knees)
     applyDelta('LeftLeg', kneeFlexL, 0, 0);
     applyDelta('RightLeg', kneeFlexR, 0, 0);
-    // Upper arms
-    applyDelta('LeftArm', armSwing, 0, 0);
-    applyDelta('RightArm', -armSwing, 0, 0);
-    // Forearms (slight flex)
-    applyDelta('LeftForeArm', -Math.abs(armSwing) * 0.3, 0, 0);
-    applyDelta('RightForeArm', -Math.abs(armSwing) * 0.3, 0, 0);
+    // Upper arms: base down-rotation (Z) + walking swing (X)
+    applyDelta('LeftArm', armSwing, 0, armDown);
+    applyDelta('RightArm', -armSwing, 0, -armDown);
+    // Forearms: natural elbow bend + slight walking flex
+    applyDelta('LeftForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
+    applyDelta('RightForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
     // Spine twist
     applyDelta('Spine', 0, spineRot, 0);
     // Head stays stable (slight counter-rotation)
