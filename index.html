@@ -6749,12 +6749,10 @@ function placeStairs(floors, cols, rows, numStairs) {
         floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
         floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
-        // Configure stair walls: front open, back+sides blocked.
-        // Uses normal grid walls (checkWallCollision handles collision).
-        // Lower floor: front = opposite(dir), back = dir
-        // Upper floor: front = dir, back = opposite(dir)
-        setupStairWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
-        setupStairWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
+        // Remove all walls around stair cells on both floors (open approach).
+        // Entry direction is enforced by Y-gate in updatePlayerY, not by walls.
+        removeAllStairWalls(floors[fromFloor], cols, rows, cell.x, cell.z);
+        removeAllStairWalls(floors[toFloor], cols, rows, cell.x, cell.z);
 
         stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
     }
@@ -6772,44 +6770,16 @@ function isDeadEnd(grid, x, z) {
 }
 
 
-/* Setup stair walls: FRONT open, BACK + SIDES blocked.
-   Uses normal grid walls so checkWallCollision handles collision.
-   backDir = the direction the ramp climbs toward (back/top of ramp).
-   Front = opposite of backDir (entry/base of ramp). */
-function setupStairWalls(grid, cols, rows, x, z, backDir) {
+/* Remove ALL walls around a stair cell (both the cell's own walls and
+   the matching walls in adjacent cells). This keeps the stair visually
+   open ("beautiful stairs"). Entry direction is enforced by the Y-gate
+   in updatePlayerY, not by grid walls. */
+function removeAllStairWalls(grid, cols, rows, x, z) {
     const cell = grid[z][x];
-    const opposite = { north: 'south', south: 'north', east: 'west', west: 'east' };
-    const frontDir = opposite[backDir];
-    const isNS = (backDir === 'north' || backDir === 'south');
-
-    // Step 1: Remove ALL walls first (clean slate)
     cell.top = false;    if (z > 0) grid[z - 1][x].bottom = false;
     cell.bottom = false; if (z < rows - 1) grid[z + 1][x].top = false;
     cell.left = false;   if (x > 0) grid[z][x - 1].right = false;
     cell.right = false;  if (x < cols - 1) grid[z][x + 1].left = false;
-
-    // Step 2: Add back wall (blocks entry from behind the ramp top)
-    if (backDir === 'north') {
-        cell.top = true; if (z > 0) grid[z - 1][x].bottom = true;
-    } else if (backDir === 'south') {
-        cell.bottom = true; if (z < rows - 1) grid[z + 1][x].top = true;
-    } else if (backDir === 'east') {
-        cell.right = true; if (x < cols - 1) grid[z][x + 1].left = true;
-    } else if (backDir === 'west') {
-        cell.left = true; if (x > 0) grid[z][x - 1].right = true;
-    }
-
-    // Step 3: Add side walls (blocks entry from the sides / handrails)
-    if (isNS) {
-        // N/S stair: sides are east and west
-        cell.left = true;  if (x > 0) grid[z][x - 1].right = true;
-        cell.right = true; if (x < cols - 1) grid[z][x + 1].left = true;
-    } else {
-        // E/W stair: sides are north and south
-        cell.top = true;    if (z > 0) grid[z - 1][x].bottom = true;
-        cell.bottom = true; if (z < rows - 1) grid[z + 1][x].top = true;
-    }
-    // Front wall is already removed (step 1), so entry is open.
 }
 
 
@@ -6851,8 +6821,7 @@ function createStairs(cellX, cellZ, fromFloor, toFloor, direction, stageId) {
     floorUnder.position.set(0, yBase + 0.01, 0);
     inner.add(floorUnder);
 
-    // Back wall is handled by ensureStairBackWall() in the maze grid
-    // (no duplicate mesh here — prevents z-fighting)
+    // No back wall mesh — entry is controlled by Y-gate in updatePlayerY
 
     // --- Handrails (along ramp slope) ---
     const railMat = new THREE.MeshBasicMaterial({
@@ -6911,13 +6880,17 @@ function getStairProgress(pos, direction, stairCX, stairCZ) {
     }
 }
 
-/* Stair climbing system:
-   - Y calculated from LOWER floor's perspective (consistent direction)
-   - Always allows climbing (checkStairEntry blocks sides+back, so only front entry works)
-   - Floor transition near exit (progress 0.95 up / 0.05 down)
-   - Smooth Y transitions to prevent flickering at cell boundaries */
+/* Y-gate stair climbing system:
+   - Entry direction determines whether the ramp Y effect activates.
+   - From lower floor: must enter from the FRONT (progress near 0) to climb.
+   - From upper floor: must enter from the TOP (progress near 1) to descend.
+   - Wrong direction entry → flat floor Y (no ramp effect).
+   - This replaces all wall-based entry restriction (no grid walls needed). */
 var _lastStairInfo = null;
-var _smoothStairY = -1; // For smooth transitions
+var _smoothStairY = -1;
+var _stairActivated = false;       // Is the ramp Y effect active?
+var _stairActivatedCellX = -1;     // Cell X where activation was checked
+var _stairActivatedCellZ = -1;     // Cell Z where activation was checked
 
 function updatePlayerY() {
     const floors = GameState.mazeFloors;
@@ -6940,25 +6913,44 @@ function updatePlayerY() {
         const progress = getStairProgress(camera.position, lowerCell.stairDirection, cellX, cellZ);
         const clampedProgress = Math.max(0, Math.min(progress, 1.0));
 
-        // Always climb — Y interpolated between lower and upper floor based on progress
-        var lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
-        var highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
-        targetY = lowY + (highY - lowY) * clampedProgress;
-        _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor, cellX: cellX, cellZ: cellZ };
-
-        // Mid-stair floor transition: switch floor near the exit end.
-        // Back wall is a grid wall, so player can reach max progress ~0.91.
-        // Thresholds set below that so transition happens before hitting the wall.
-        // After transition, the new floor's front is open so the player exits.
-        if (currentFloor === lowerFloor && clampedProgress >= 0.88) {
-            GameState.playerCurrentFloor = upperFloor;
-            updateFloorLabel();
-        } else if (currentFloor === upperFloor && clampedProgress <= 0.12) {
-            GameState.playerCurrentFloor = lowerFloor;
-            updateFloorLabel();
+        // Y-gate: check entry direction when first entering this stair cell
+        var sameCell = (_stairActivatedCellX === cellX && _stairActivatedCellZ === cellZ);
+        if (!sameCell) {
+            _stairActivatedCellX = cellX;
+            _stairActivatedCellZ = cellZ;
+            // Lower floor: front entry = progress near 0
+            // Upper floor: front entry = progress near 1 (top of ramp)
+            if (currentFloor === lowerFloor && clampedProgress < 0.4) {
+                _stairActivated = true;
+            } else if (currentFloor === upperFloor && clampedProgress > 0.6) {
+                _stairActivated = true;
+            } else {
+                _stairActivated = false;
+            }
         }
 
-        GameState.onStairs = true;
+        if (_stairActivated) {
+            // Ramp active — Y interpolated between lower and upper floor
+            var lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
+            var highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
+            targetY = lowY + (highY - lowY) * clampedProgress;
+            _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor, cellX: cellX, cellZ: cellZ };
+
+            // Floor transition near exit end
+            if (currentFloor === lowerFloor && clampedProgress >= 0.95) {
+                GameState.playerCurrentFloor = upperFloor;
+                updateFloorLabel();
+            } else if (currentFloor === upperFloor && clampedProgress <= 0.05) {
+                GameState.playerCurrentFloor = lowerFloor;
+                updateFloorLabel();
+            }
+
+            GameState.onStairs = true;
+        } else {
+            // Wrong entry direction — stay at flat floor Y
+            targetY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
+            GameState.onStairs = false;
+        }
 
         // Debug overlay
         var _sdbg = document.getElementById('hud-stair-debug');
@@ -6966,21 +6958,21 @@ function updatePlayerY() {
             _sdbg.textContent = 'STAIR DEBUG\n' +
                 'Floor: ' + currentFloor + ' Cell: (' + cellX + ',' + cellZ + ')\n' +
                 'Dir(lower): ' + lowerCell.stairDirection + '\n' +
-                'Dir(this):  ' + cell.stairDirection + '\n' +
                 'Progress: ' + clampedProgress.toFixed(3) + '\n' +
-                'Y target: ' + targetY.toFixed(2) + '\n' +
-                'Walls: T=' + cell.top + ' B=' + cell.bottom +
-                ' L=' + cell.left + ' R=' + cell.right + '\n' +
-                'onStairs: true';
+                'Activated: ' + _stairActivated + '\n' +
+                'Y target: ' + (targetY ? targetY.toFixed(2) : '?') + '\n' +
+                'onStairs: ' + GameState.onStairs;
         }
     } else {
-        // Not on stair cell — but check adjacent stair cell for buffer zone
-        // This prevents flickering at cell boundaries
+        // Not on stair cell — reset activation tracker
+        _stairActivatedCellX = -1;
+        _stairActivatedCellZ = -1;
+
+        // Check adjacent stair cell for buffer zone (prevents flickering)
         var wasOnStairs = GameState.onStairs;
         var foundAdjacentStair = false;
 
-        if (wasOnStairs && _lastStairInfo) {
-            // Check if player is near the boundary of a stair cell
+        if (wasOnStairs && _lastStairInfo && _stairActivated) {
             var localX = (camera.position.x / CL) - cellX;
             var localZ = (camera.position.z / CL) - cellZ;
             var buf = 0.12;
@@ -6994,7 +6986,6 @@ function updatePlayerY() {
                 var ax = adjChecks[ai][0], az = adjChecks[ai][1];
                 var adjCell = floors[currentFloor][az][ax];
                 if (adjCell && adjCell.isStairs && adjCell.connectsTo) {
-                    // Still near a stair — use that stair's Y
                     var aOther = adjCell.connectsTo.floor;
                     var aLower = Math.min(currentFloor, aOther);
                     var aUpper = Math.max(currentFloor, aOther);
@@ -7011,7 +7002,6 @@ function updatePlayerY() {
 
         if (!foundAdjacentStair) {
             if (wasOnStairs && _lastStairInfo) {
-                // Just left stair — determine floor by Y position
                 var lowFloorY = _lastStairInfo.lowerFloor * FLOOR_H + PLAYER_HEIGHT;
                 var highFloorY = _lastStairInfo.upperFloor * FLOOR_H + PLAYER_HEIGHT;
                 var midY = (lowFloorY + highFloorY) / 2;
@@ -7035,21 +7025,17 @@ function updatePlayerY() {
                 _sdbg2.textContent = 'STAIR DEBUG\n' +
                     'Floor: ' + currentFloor + ' Cell: (' + cellX + ',' + cellZ + ')\n' +
                     'isStairs: ' + (_dcell ? _dcell.isStairs : 'N/A') + '\n' +
-                    'dir: ' + (_dcell ? _dcell.stairDirection : 'N/A') + '\n' +
                     'onStairs: false  wasOn: ' + wasOnStairs + '\n' +
-                    'adjStair: ' + foundAdjacentStair + '\n' +
-                    'Walls: T=' + (_dcell?_dcell.top:'?') + ' B=' + (_dcell?_dcell.bottom:'?') +
-                    ' L=' + (_dcell?_dcell.left:'?') + ' R=' + (_dcell?_dcell.right:'?') + '\n' +
+                    'Activated: ' + _stairActivated + '\n' +
                     'Pos: (' + camera.position.x.toFixed(1) + ',' + camera.position.z.toFixed(1) + ')';
             }
         }
     }
 
-    // Smooth Y transition (prevents flickering at cell boundaries)
+    // Smooth Y transition
     if (_smoothStairY < 0) _smoothStairY = targetY;
     var yDiff = Math.abs(targetY - _smoothStairY);
     if (yDiff > 0.05) {
-        // Stronger smoothing when exiting stairs, normal when on stairs
         var lerpFactor = GameState.onStairs ? 0.2 : 0.15;
         _smoothStairY += (targetY - _smoothStairY) * lerpFactor;
     } else {
@@ -10594,8 +10580,8 @@ function checkWallCollision(newX, newZ, grid_unused) {
     return { x: newX, z: newZ };
 }
 
-/* checkStairEntry is no longer needed — stair walls are now normal grid walls
-   handled by checkWallCollision. Back + sides are grid walls, front is open. */
+/* checkStairEntry is no longer needed — entry direction is enforced by
+   the Y-gate in updatePlayerY (ramp only activates from correct direction). */
 function checkStairEntry(newX, newZ) {
     return { x: newX, z: newZ };
 }
@@ -10646,8 +10632,7 @@ function updatePlayerMovement(delta) {
         const newX = camera.position.x + dir.x * speed * delta;
         const newZ = camera.position.z + dir.z * speed * delta;
         var result = checkWallCollision(newX, newZ, grid);
-        // checkStairEntry removed — stair back/side walls are now normal grid walls
-        // handled by checkWallCollision above.
+        // Stair entry direction is enforced by Y-gate in updatePlayerY (not walls).
         camera.position.x = result.x;
         camera.position.z = result.z;
     }
