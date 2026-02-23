@@ -7505,19 +7505,7 @@ function setCharacterAnimation(group, state) {
     group.userData.currentAction = newAction;
     group.userData.currentAnimState = state;
 
-    // FIX: Also update directAnim clip for cpuSkinUpdate to stay in sync
-    if (group.userData.cpuSkin) {
-        var sourceScene = group.userData.cpuSkin.sourceScene;
-        if (sourceScene) {
-            var newDirectAnim = buildDirectAnimData(sourceScene, clip);
-            if (newDirectAnim) {
-                // Preserve current animation time for smooth transition
-                var oldTime = group.userData.cpuSkin._directAnim ? group.userData.cpuSkin._directAnim.time : 0;
-                newDirectAnim.time = oldTime % (newDirectAnim.clip.duration || 1);
-                group.userData.cpuSkin._directAnim = newDirectAnim;
-            }
-        }
-    }
+    // Mixer handles animation — no directAnim data needed.
 }
 
 /* --- C4: CPU Skinning helper (GPU skinning broken in this environment) --- */
@@ -7669,258 +7657,94 @@ function buildDirectAnimData(sourceScene, clip) {
 
 function cpuSkinUpdate(cpuSkinData) {
     try {
-        // Direct bone animation: bypass PropertyBinding, drive bones directly
-        directBoneAnimUpdate(cpuSkinData);
+        // Animation is driven by mixer.update(delta) in the game loop.
+        // We only need to recompute bone matrices and skinned positions here.
 
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         var skeleton = cpuSkinData.skeleton;
+        if (!skeleton) return;
         skeleton.update();
-        var bm = skeleton.boneMatrices;
-        if (!bm || bm.length === 0) return;
 
-        // One-time: comprehensive skeleton diagnostic (console only)
+        var origSMs = cpuSkinData.origSkinnedMeshes;
+        if (!origSMs || origSMs.length === 0) return;
+
+        // One-time diagnostic
         if (!cpuSkinData._boneDiagDone) {
             cpuSkinData._boneDiagDone = true;
-
-            // 1. Check sourceScene parent (should be null = detached)
-            console.log('[SKEL-DIAG] sourceScene.parent=' + (cpuSkinData.sourceScene.parent ? (cpuSkinData.sourceScene.parent.name || 'unnamed-obj') : 'null(detached)'));
-
-            // 2. Check Armature node world matrix
-            cpuSkinData.sourceScene.traverse(function(c) {
-                if (c.name && c.name.toLowerCase().indexOf('armature') !== -1 && !c.isBone) {
-                    var ae = c.matrixWorld.elements;
-                    var aScX = Math.sqrt(ae[0]*ae[0]+ae[1]*ae[1]+ae[2]*ae[2]);
-                    var aScY = Math.sqrt(ae[4]*ae[4]+ae[5]*ae[5]+ae[6]*ae[6]);
-                    var aScZ = Math.sqrt(ae[8]*ae[8]+ae[9]*ae[9]+ae[10]*ae[10]);
-                    console.log('[ARMATURE] ' + c.name + ' worldScale: ' + aScX.toFixed(6) + ',' + aScY.toFixed(6) + ',' + aScZ.toFixed(6));
-                    console.log('[ARMATURE] ' + c.name + ' worldTrans: ' + ae[12].toFixed(4) + ',' + ae[13].toFixed(4) + ',' + ae[14].toFixed(4));
-                    console.log('[ARMATURE] matrixAutoUpdate=' + c.matrixAutoUpdate + ' localScale: ' + c.scale.x.toFixed(4) + ',' + c.scale.y.toFixed(4) + ',' + c.scale.z.toFixed(4));
-                }
-            });
-
-            // 3. Check boneMatrix scale for first 5 bones
-            var bmDiag = [];
-            for (var bdi = 0; bdi < Math.min(5, skeleton.bones.length); bdi++) {
-                var off = bdi * 16;
-                var scX = Math.sqrt(bm[off]*bm[off]+bm[off+1]*bm[off+1]+bm[off+2]*bm[off+2]);
-                var scY = Math.sqrt(bm[off+4]*bm[off+4]+bm[off+5]*bm[off+5]+bm[off+6]*bm[off+6]);
-                var scZ = Math.sqrt(bm[off+8]*bm[off+8]+bm[off+9]*bm[off+9]+bm[off+10]*bm[off+10]);
-                var boneName = skeleton.bones[bdi] ? skeleton.bones[bdi].name : '?';
-                bmDiag.push(boneName + ' sc=' + scX.toFixed(4) + ',' + scY.toFixed(4) + ',' + scZ.toFixed(4) +
-                    ' tr=' + bm[off+12].toFixed(4) + ',' + bm[off+13].toFixed(4) + ',' + bm[off+14].toFixed(4));
-            }
-            console.log('[BONEMATRIX] First 5 bones:\n' + bmDiag.join('\n'));
-
-            // 4. Log bindMatrix info
-            if (cpuSkinData.meshes && cpuSkinData.meshes.length > 0) {
-                var bm0 = cpuSkinData.meshes[0].bindMatrix;
-                if (bm0) {
-                    var e = bm0.elements;
-                    var scX = Math.sqrt(e[0]*e[0]+e[1]*e[1]+e[2]*e[2]);
-                    var scY = Math.sqrt(e[4]*e[4]+e[5]*e[5]+e[6]*e[6]);
-                    console.log('[BIND] bindMatrix scale: X=' + scX.toFixed(4) + ' Y=' + scY.toFixed(4) +
-                        ' trans: ' + e[12].toFixed(4) + ',' + e[13].toFixed(4) + ',' + e[14].toFixed(4));
-                }
-            }
-
-            // 5. Key bone world positions
-            var _keyBones = ['Hips', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'Spine', 'Head', 'Neck'];
-            var _diagLines = [];
+            console.log('[SKIN] sourceScene.parent=' + (cpuSkinData.sourceScene.parent ? 'ATTACHED' : 'null(detached)'));
+            // Log key bone positions after mixer drives them
+            var _keyNames = ['Hips', 'Spine', 'Head', 'LeftFoot', 'RightFoot'];
             var _wp = new THREE.Vector3();
             cpuSkinData.sourceScene.traverse(function(c) {
                 if (!c.isBone) return;
-                for (var ki = 0; ki < _keyBones.length; ki++) {
-                    if (c.name.toLowerCase().indexOf(_keyBones[ki].toLowerCase()) !== -1) {
+                for (var ki = 0; ki < _keyNames.length; ki++) {
+                    if (c.name.toLowerCase().indexOf(_keyNames[ki].toLowerCase()) !== -1) {
                         c.getWorldPosition(_wp);
-                        _diagLines.push(c.name + ': wY=' + _wp.y.toFixed(4) + ' lY=' + c.position.y.toFixed(4) + ' autoUpdate=' + c.matrixAutoUpdate);
+                        console.log('[BONE] ' + c.name + ': wPos=' + _wp.x.toFixed(3) + ',' + _wp.y.toFixed(3) + ',' + _wp.z.toFixed(3));
                         break;
                     }
                 }
             });
-            console.log('[BONE-DIAG]\n' + _diagLines.join('\n'));
+            // Log first SkinnedMesh bindMatrix and bindMatrixInverse
+            var sm0 = origSMs[0];
+            if (sm0) {
+                var bm = sm0.bindMatrix.elements;
+                var bmi = sm0.bindMatrixInverse.elements;
+                console.log('[SKIN] bindMatrix diag: ' + bm[0].toFixed(4) + ',' + bm[5].toFixed(4) + ',' + bm[10].toFixed(4) + ' trans=' + bm[12].toFixed(4) + ',' + bm[13].toFixed(4) + ',' + bm[14].toFixed(4));
+                console.log('[SKIN] bindMatrixInv diag: ' + bmi[0].toFixed(4) + ',' + bmi[5].toFixed(4) + ',' + bmi[10].toFixed(4) + ' trans=' + bmi[12].toFixed(4) + ',' + bmi[13].toFixed(4) + ',' + bmi[14].toFixed(4));
+                console.log('[SKIN] bindMode=' + sm0.bindMode + ' skeleton.bones=' + skeleton.bones.length);
+            }
         }
 
-        var _boneMat = new THREE.Matrix4();
-        var _v = new THREE.Vector4();
-        var _temp = new THREE.Vector4();
-        var _result = new THREE.Vector4();
-
-        // Multi-mesh support: use meshes array if present, else legacy single-mesh
+        // Use Three.js boneTransform() for each vertex — this is the EXACT
+        // same computation the GPU shader would perform, but on CPU.
+        // It correctly handles bindMatrix, bindMatrixInverse, boneInverses,
+        // weight normalization, and all bone hierarchy transforms.
+        var _target = new THREE.Vector3();
         var meshDataArr = cpuSkinData.meshes;
-        if (!meshDataArr) {
-            meshDataArr = [{
-                srcPositions: cpuSkinData.srcPositions,
-                dstPositions: cpuSkinData.dstPositions,
-                skinIndex: cpuSkinData.skinIndex,
-                skinWeight: cpuSkinData.skinWeight,
-                bindMatrix: cpuSkinData.bindMatrix,
-                bindMatrixInverse: cpuSkinData.bindMatrixInverse,
-            }];
-        }
-
+        var tempBuf = cpuSkinData._tempBuf;
+        var tempIdx = 0;
         var globalMinY = Infinity, globalMaxY = -Infinity;
         var globalMinX = Infinity, globalMaxX = -Infinity;
         var globalMinZ = Infinity, globalMaxZ = -Infinity;
 
-        // FIX: Three.js r128 BufferAttribute.getX() does NOT handle normalized flag.
-        // GPU shaders auto-normalize Uint8→[0,1], but CPU code gets raw 0-255.
-        // We must divide manually to get correct [0,1] weights.
-        var weightDiv = 1;
-        if (meshDataArr.length > 0 && meshDataArr[0].skinWeight) {
-            var _swAttr = meshDataArr[0].skinWeight;
-            if (_swAttr.normalized) {
-                if (_swAttr.array instanceof Uint8Array) weightDiv = 255;
-                else if (_swAttr.array instanceof Uint16Array) weightDiv = 65535;
-            }
-        }
-
-        // FIX: Clamp bone indices to valid range to prevent NaN from out-of-bounds access
-        var boneCount = skeleton.bones.length;
-        var maxBoneIdx = boneCount - 1;
-
-        // One-time diagnostic (first frame only)
-        if (!cpuSkinData._diagDone) {
-            cpuSkinData._diagDone = true;
-            var _swSample = meshDataArr.length > 0 ? meshDataArr[0].skinWeight : null;
-            var _siSample = meshDataArr.length > 0 ? meshDataArr[0].skinIndex : null;
-            console.log('[cpuSkin-DIAG] boneCount=' + boneCount + ' weightDiv=' + weightDiv);
-            if (_swSample) {
-                console.log('[cpuSkin-DIAG] skinWeight: type=' + _swSample.array.constructor.name +
-                    ' normalized=' + _swSample.normalized + ' itemSize=' + _swSample.itemSize);
-                // Sample first 3 vertices raw values
-                for (var di = 0; di < Math.min(3, _swSample.count); di++) {
-                    var rw0 = _swSample.array[di * _swSample.itemSize];
-                    var rw1 = _swSample.array[di * _swSample.itemSize + 1];
-                    var rw2 = _swSample.array[di * _swSample.itemSize + 2];
-                    var rw3 = _swSample.array[di * _swSample.itemSize + 3];
-                    console.log('[cpuSkin-DIAG] vtx' + di + ' rawW=[' + rw0 + ',' + rw1 + ',' + rw2 + ',' + rw3 +
-                        '] normalized=[' + (rw0/weightDiv).toFixed(4) + ',' + (rw1/weightDiv).toFixed(4) + ',' +
-                        (rw2/weightDiv).toFixed(4) + ',' + (rw3/weightDiv).toFixed(4) + ']');
-                }
-            }
-            if (_siSample) {
-                console.log('[cpuSkin-DIAG] skinIndex: type=' + _siSample.array.constructor.name +
-                    ' normalized=' + _siSample.normalized);
-                // Check for out-of-bounds indices
-                var oobCount = 0;
-                for (var ci = 0; ci < _siSample.count; ci++) {
-                    var ri0 = _siSample.array[ci * _siSample.itemSize];
-                    var ri1 = _siSample.array[ci * _siSample.itemSize + 1];
-                    var ri2 = _siSample.array[ci * _siSample.itemSize + 2];
-                    var ri3 = _siSample.array[ci * _siSample.itemSize + 3];
-                    if (ri0 > maxBoneIdx || ri1 > maxBoneIdx || ri2 > maxBoneIdx || ri3 > maxBoneIdx) oobCount++;
-                }
-                console.log('[cpuSkin-DIAG] out-of-bounds bone indices: ' + oobCount + '/' + _siSample.count + ' vertices');
-            }
-        }
-
-        // Use temp buffer to avoid writing amplified values to GPU buffer
-        var tempBuf = cpuSkinData._tempBuf;
-        var tempIdx = 0;
-
-        // PASS 1: CPU skinning → write to TEMP buffer (NOT dstPos)
-        for (var m = 0; m < meshDataArr.length; m++) {
-            var md = meshDataArr[m];
-            var srcPos = md.srcPositions;
-            var si = md.skinIndex;
-            var sw = md.skinWeight;
-            var bindMatrix = md.bindMatrix;
-            var bindMatrixInverse = md.bindMatrixInverse;
-            var count = srcPos.count;
-
+        for (var m = 0; m < origSMs.length; m++) {
+            var origSM = origSMs[m];
+            var count = origSM.geometry.attributes.position.count;
             for (var i = 0; i < count; i++) {
-                _v.set(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i), 1);
-                _v.applyMatrix4(bindMatrix);
+                origSM.boneTransform(i, _target);
 
-                _result.set(0, 0, 0, 0);
-                // FIX: Normalize weights from raw integer to [0,1] float
-                var w0 = sw.getX(i) / weightDiv, w1 = sw.getY(i) / weightDiv, w2 = sw.getZ(i) / weightDiv, w3 = sw.getW(i) / weightDiv;
-                // FIX: Clamp bone indices to valid range
-                var i0 = Math.min(si.getX(i), maxBoneIdx), i1 = Math.min(si.getY(i), maxBoneIdx), i2 = Math.min(si.getZ(i), maxBoneIdx), i3 = Math.min(si.getW(i), maxBoneIdx);
+                // NaN guard
+                var tx = _target.x, ty = _target.y, tz = _target.z;
+                if (tx !== tx) tx = origSM.geometry.attributes.position.getX(i);
+                if (ty !== ty) ty = origSM.geometry.attributes.position.getY(i);
+                if (tz !== tz) tz = origSM.geometry.attributes.position.getZ(i);
 
-                // FIX: Zero total weight guard - fallback to source position
-                var totalW = w0 + w1 + w2 + w3;
-                if (totalW < 0.001) {
-                    _result.x = srcPos.getX(i);
-                    _result.y = srcPos.getY(i);
-                    _result.z = srcPos.getZ(i);
-                } else {
-                    if (w0 > 0) { _boneMat.fromArray(bm, i0*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w0; _result.y+=_temp.y*w0; _result.z+=_temp.z*w0; }
-                    if (w1 > 0) { _boneMat.fromArray(bm, i1*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w1; _result.y+=_temp.y*w1; _result.z+=_temp.z*w1; }
-                    if (w2 > 0) { _boneMat.fromArray(bm, i2*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w2; _result.y+=_temp.y*w2; _result.z+=_temp.z*w2; }
-                    if (w3 > 0) { _boneMat.fromArray(bm, i3*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w3; _result.y+=_temp.y*w3; _result.z+=_temp.z*w3; }
-
-                    _result.w = 1;
-                    _result.applyMatrix4(bindMatrixInverse);
-
-                    // NaN guard
-                    if (_result.x !== _result.x) _result.x = srcPos.getX(i);
-                    if (_result.y !== _result.y) _result.y = srcPos.getY(i);
-                    if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
-                }
-
-                // Write to TEMP buffer, not dstPos
-                tempBuf[tempIdx]   = _result.x;
-                tempBuf[tempIdx+1] = _result.y;
-                tempBuf[tempIdx+2] = _result.z;
+                tempBuf[tempIdx]     = tx;
+                tempBuf[tempIdx + 1] = ty;
+                tempBuf[tempIdx + 2] = tz;
                 tempIdx += 3;
 
-                if (_result.x < globalMinX) globalMinX = _result.x;
-                if (_result.x > globalMaxX) globalMaxX = _result.x;
-                if (_result.y < globalMinY) globalMinY = _result.y;
-                if (_result.y > globalMaxY) globalMaxY = _result.y;
-                if (_result.z < globalMinZ) globalMinZ = _result.z;
-                if (_result.z > globalMaxZ) globalMaxZ = _result.z;
+                if (tx < globalMinX) globalMinX = tx;
+                if (tx > globalMaxX) globalMaxX = tx;
+                if (ty < globalMinY) globalMinY = ty;
+                if (ty > globalMaxY) globalMaxY = ty;
+                if (tz < globalMinZ) globalMinZ = tz;
+                if (tz > globalMaxZ) globalMaxZ = tz;
             }
         }
 
-        // One-time PASS 1 detailed diagnostic (on-screen + console)
+        // One-time PASS 1 diagnostic
         if (!cpuSkinData._pass1DiagDone) {
             cpuSkinData._pass1DiagDone = true;
-            // Analyze vertex Y distribution
-            var lowerCount = 0, upperCount = 0;
-            var lowerMinY = Infinity, lowerMaxY = -Infinity;
-            var upperMinY = Infinity, upperMaxY = -Infinity;
-            var outlierCount = 0;
-            var zeroWeightCount = 0;
-            var srcH = cpuSkinData.srcHeight || 1.8;
-            var outlierThresh = srcH * 5;
-            for (var di = 0; di < meshDataArr.length; di++) {
-                var _sp = meshDataArr[di].srcPositions;
-                var _sw2 = meshDataArr[di].skinWeight;
-                for (var dj = 0; dj < _sp.count; dj++) {
-                    var srcY = _sp.getY(dj);
-                    var passY = tempBuf[di * _sp.count * 3 + dj * 3 + 1];
-                    // Check zero weight
-                    var tw = _sw2.getX(dj) + _sw2.getY(dj) + _sw2.getZ(dj) + _sw2.getW(dj);
-                    if (tw === 0) zeroWeightCount++;
-                    // Classify by source position
-                    if (srcY < 0.5 * srcH) {
-                        lowerCount++;
-                        if (passY < lowerMinY) lowerMinY = passY;
-                        if (passY > lowerMaxY) lowerMaxY = passY;
-                    } else {
-                        upperCount++;
-                        if (passY < upperMinY) upperMinY = passY;
-                        if (passY > upperMaxY) upperMaxY = passY;
-                    }
-                    if (passY < -outlierThresh || passY > outlierThresh) outlierCount++;
-                }
-            }
-            var diagMsg = '[SKIN-DIAG] weightDiv=' + weightDiv + ' bones=' + boneCount +
-                '\nPASS1 Y: [' + globalMinY.toFixed(2) + ',' + globalMaxY.toFixed(2) + '] h=' + (globalMaxY - globalMinY).toFixed(2) +
-                '\nLower(' + lowerCount + '): Y=[' + lowerMinY.toFixed(2) + ',' + lowerMaxY.toFixed(2) + ']' +
-                '\nUpper(' + upperCount + '): Y=[' + upperMinY.toFixed(2) + ',' + upperMaxY.toFixed(2) + ']' +
-                '\nOutliers(>' + outlierThresh.toFixed(0) + '): ' + outlierCount +
-                ' ZeroW: ' + zeroWeightCount;
-            console.log(diagMsg);
-            // Overlay removed - diagnostics are console-only now
+            var outH = globalMaxY - globalMinY;
+            console.log('[SKIN] boneTransform PASS1: Y=[' + globalMinY.toFixed(2) + ',' + globalMaxY.toFixed(2) + '] h=' + outH.toFixed(2) +
+                ' X=[' + globalMinX.toFixed(2) + ',' + globalMaxX.toFixed(2) + ']' +
+                ' Z=[' + globalMinZ.toFixed(2) + ',' + globalMaxZ.toFixed(2) + ']');
         }
 
-        // NEW APPROACH: Write PASS 1 positions directly to dstPos.
-        // Use bodyGroup transform for scaling (robust against outliers).
-        // No more per-vertex dynamic normalization (PASS 2 removed).
+        // Write to destination buffers + scale bodyGroup to 1.8m
         var outHeight = globalMaxY - globalMinY;
         if (outHeight > 0.01) {
             tempIdx = 0;
@@ -7931,12 +7755,10 @@ function cpuSkinUpdate(cpuSkinData) {
                     dp.setXYZ(i, tempBuf[tempIdx], tempBuf[tempIdx+1], tempBuf[tempIdx+2]);
                     tempIdx += 3;
                 }
-                // Recompute bounding sphere
                 var geo = cpuSkinData._bodyGroup.children[m];
                 if (geo && geo.geometry) geo.geometry.computeBoundingSphere();
             }
 
-            // Scale bodyGroup to fit 1.8m height, using PASS 1 actual range
             if (cpuSkinData._bodyGroup) {
                 var targetH = 1.8;
                 var scaleFix = targetH / outHeight;
@@ -7959,7 +7781,6 @@ function cpuSkinUpdate(cpuSkinData) {
                 dp.data.needsUpdate = true;
             }
         }
-        // Note: frameCount is incremented by the game loop caller, not here
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
     }
@@ -8192,27 +8013,14 @@ function processOniGLTF(group, gltf, stageId) {
     bodyGroup.scale.setScalar(1);
     bodyGroup.position.set(0, 0, 0);
 
-    // --- GPU SKINNING APPROACH ---
-    // Prepare sourceScene SkinnedMeshes with simple materials for GPU rendering.
-    allSkinnedMeshes.forEach(function(sm) {
-        var origMat = sm.material;
-        var gpuMat = new THREE.MeshBasicMaterial({
-            side: THREE.DoubleSide, transparent: false, depthWrite: true
-        });
-        if (origMat) {
-            var firstMat = Array.isArray(origMat) ? origMat[0] : origMat;
-            if (firstMat && firstMat.map) gpuMat.map = firstMat.map;
-            if (firstMat && firstMat.color) gpuMat.color.copy(firstMat.color);
-        }
-        sm.material = gpuMat;
-        sm.frustumCulled = false;
-    });
-    // Hide CPU skinning bodyGroup (GPU takes over)
-    bodyGroup.visible = false;
-    group.userData.useGPUSkinning = true;
+    // --- CPU SKINNING with Three.js boneTransform ---
+    // sourceScene stays DETACHED from group (not in scene graph).
+    // Mixer drives bones on detached sourceScene, then we use
+    // origSM.boneTransform() to compute skinned vertex positions.
+    group.userData.useGPUSkinning = false;
     group.userData.sourceScene = sourceScene;
 
-    // Remove ALL fallback children FIRST (before adding GPU skinning scene)
+    // Remove ALL fallback children
     var toRemove = [];
     group.children.forEach(function(child) { toRemove.push(child); });
     toRemove.forEach(function(child) { group.remove(child); });
@@ -8220,16 +8028,9 @@ function processOniGLTF(group, gltf, stageId) {
     group.userData.eyeL = null;
     group.userData.chestMesh = null;
 
-    // Add bodyGroup (hidden, kept for CPU skinning data reference)
+    // Add bodyGroup (visible, CPU skinning target)
     group.add(bodyGroup);
-
-    // Add sourceScene AFTER cleanup so it doesn't get removed!
-    // GPU skinning requires bones + SkinnedMesh in the same scene graph.
-    // Do NOT scale sourceScene — SkinnedMesh GPU skinning would double-scale
-    // because boneInverses are pre-computed for unscaled bone positions.
-    group.add(sourceScene);
-    sourceScene.position.set(0, -geoMinY, 0);
-    console.log('[ONI] GPU skinning: sourceScene added AFTER cleanup, geoMinY=' + geoMinY.toFixed(4));
+    console.log('[ONI] CPU skinning via boneTransform: sourceScene DETACHED, bodyGroup visible');
 
     group.userData.glbLoaded = true;
     group.userData.glbModel = bodyGroup;
@@ -8249,6 +8050,7 @@ function processOniGLTF(group, gltf, stageId) {
         sourceScene: sourceScene,
         skeleton: skeletonRef,
         meshes: meshDataArr,
+        origSkinnedMeshes: allSkinnedMeshes, // for boneTransform()
         frameCount: 0,
         srcHeight: geoHeight,
         _srcMinY: combinedBB.min.y,
@@ -8287,17 +8089,8 @@ function processOniGLTF(group, gltf, stageId) {
         }
     }
 
-    // Setup direct bone animation
-    var animClipForDirect = walkClip;
-    if (!animClipForDirect && sharedAnimationsLoaded) {
-        var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-        if (sharedClip) {
-            animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
-        }
-    }
-    if (animClipForDirect && group.userData.cpuSkin) {
-        group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
-    }
+    // Animation is driven by mixer (no directAnim needed).
+    // mixer.update(delta) in game loop drives bones via PropertyBinding.
 
     if (group.userData.sceneLight) {
         scene.remove(group.userData.sceneLight);
@@ -8920,20 +8713,16 @@ function updateOniAI(delta) {
             eyeL.material.color.setRGB(eyeBright, 0, 0);
         }
 
-        // ─── Animation mixer ───
+        // ─── Animation mixer (always runs — drives bones on detached sourceScene) ───
         if (oni.group.userData.mixer) {
-            if (oni.group.userData.useGPUSkinning) {
-                // GPU skinning: mixer drives bones, Three.js renderer handles skinning
-                oni.group.userData.mixer.update(delta);
-            }
-            // Switch animation state based on AI state
+            oni.group.userData.mixer.update(delta);
             var oniAnimState = (oni.aiState === 'chase' || oni.aiState === 'lunge') ? 'run' :
                                (oni.aiState === 'patrol') ? 'walk' : 'idle';
             setCharacterAnimation(oni.group, oniAnimState);
         }
 
-        // ─── CPU Skinning update (only if NOT using GPU skinning) ───
-        if (oni.group.userData.cpuSkin && !oni.group.userData.useGPUSkinning) {
+        // ─── CPU Skinning update (boneTransform approach) ───
+        if (oni.group.userData.cpuSkin) {
             oni.group.userData.cpuSkin.frameCount++;
             if (oni.group.userData.cpuSkin.frameCount % 2 === 0) {
                 cpuSkinUpdate(oni.group.userData.cpuSkin);
