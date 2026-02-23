@@ -7672,6 +7672,12 @@ function cpuSkinUpdate(cpuSkinData) {
         // Direct bone animation: bypass PropertyBinding, drive bones directly
         directBoneAnimUpdate(cpuSkinData);
 
+        // CRITICAL: Force updateMatrix for ALL bones before updateMatrixWorld
+        // This ensures bone.matrix is recomputed from position/quaternion/scale
+        // even if matrixAutoUpdate was set to false by the mixer or loader
+        cpuSkinData.sourceScene.traverse(function(c) {
+            c.updateMatrix();
+        });
         // Update bone world matrices on DETACHED sourceScene
         cpuSkinData.sourceScene.updateMatrixWorld(true);
         var skeleton = cpuSkinData.skeleton;
@@ -7679,24 +7685,53 @@ function cpuSkinUpdate(cpuSkinData) {
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        // One-time bone world position diagnostic + bindMatrix check
+        // One-time: comprehensive skeleton diagnostic (console only)
         if (!cpuSkinData._boneDiagDone) {
             cpuSkinData._boneDiagDone = true;
 
-            // Log bindMatrix info
+            // 1. Check sourceScene parent (should be null = detached)
+            console.log('[SKEL-DIAG] sourceScene.parent=' + (cpuSkinData.sourceScene.parent ? (cpuSkinData.sourceScene.parent.name || 'unnamed-obj') : 'null(detached)'));
+
+            // 2. Check Armature node world matrix
+            cpuSkinData.sourceScene.traverse(function(c) {
+                if (c.name && c.name.toLowerCase().indexOf('armature') !== -1 && !c.isBone) {
+                    var ae = c.matrixWorld.elements;
+                    var aScX = Math.sqrt(ae[0]*ae[0]+ae[1]*ae[1]+ae[2]*ae[2]);
+                    var aScY = Math.sqrt(ae[4]*ae[4]+ae[5]*ae[5]+ae[6]*ae[6]);
+                    var aScZ = Math.sqrt(ae[8]*ae[8]+ae[9]*ae[9]+ae[10]*ae[10]);
+                    console.log('[ARMATURE] ' + c.name + ' worldScale: ' + aScX.toFixed(6) + ',' + aScY.toFixed(6) + ',' + aScZ.toFixed(6));
+                    console.log('[ARMATURE] ' + c.name + ' worldTrans: ' + ae[12].toFixed(4) + ',' + ae[13].toFixed(4) + ',' + ae[14].toFixed(4));
+                    console.log('[ARMATURE] matrixAutoUpdate=' + c.matrixAutoUpdate + ' localScale: ' + c.scale.x.toFixed(4) + ',' + c.scale.y.toFixed(4) + ',' + c.scale.z.toFixed(4));
+                }
+            });
+
+            // 3. Check boneMatrix scale for first 5 bones
+            var bmDiag = [];
+            for (var bdi = 0; bdi < Math.min(5, skeleton.bones.length); bdi++) {
+                var off = bdi * 16;
+                var scX = Math.sqrt(bm[off]*bm[off]+bm[off+1]*bm[off+1]+bm[off+2]*bm[off+2]);
+                var scY = Math.sqrt(bm[off+4]*bm[off+4]+bm[off+5]*bm[off+5]+bm[off+6]*bm[off+6]);
+                var scZ = Math.sqrt(bm[off+8]*bm[off+8]+bm[off+9]*bm[off+9]+bm[off+10]*bm[off+10]);
+                var boneName = skeleton.bones[bdi] ? skeleton.bones[bdi].name : '?';
+                bmDiag.push(boneName + ' sc=' + scX.toFixed(4) + ',' + scY.toFixed(4) + ',' + scZ.toFixed(4) +
+                    ' tr=' + bm[off+12].toFixed(4) + ',' + bm[off+13].toFixed(4) + ',' + bm[off+14].toFixed(4));
+            }
+            console.log('[BONEMATRIX] First 5 bones:\n' + bmDiag.join('\n'));
+
+            // 4. Log bindMatrix info
             if (cpuSkinData.meshes && cpuSkinData.meshes.length > 0) {
                 var bm0 = cpuSkinData.meshes[0].bindMatrix;
-                var bmi0 = cpuSkinData.meshes[0].bindMatrixInverse;
                 if (bm0) {
                     var e = bm0.elements;
                     var scX = Math.sqrt(e[0]*e[0]+e[1]*e[1]+e[2]*e[2]);
                     var scY = Math.sqrt(e[4]*e[4]+e[5]*e[5]+e[6]*e[6]);
-                    console.log('[BIND] bindMatrix scale: X=' + scX.toFixed(4) + ' Y=' + scY.toFixed(4));
-                    showGLBDiag('[BIND] bindMat scale: ' + scX.toFixed(4) + ',' + scY.toFixed(4));
+                    console.log('[BIND] bindMatrix scale: X=' + scX.toFixed(4) + ' Y=' + scY.toFixed(4) +
+                        ' trans: ' + e[12].toFixed(4) + ',' + e[13].toFixed(4) + ',' + e[14].toFixed(4));
                 }
             }
 
-            var _keyBones = ['Hips', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightUpLeg', 'Spine', 'Head', 'Neck'];
+            // 5. Key bone world positions
+            var _keyBones = ['Hips', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'Spine', 'Head', 'Neck'];
             var _diagLines = [];
             var _wp = new THREE.Vector3();
             cpuSkinData.sourceScene.traverse(function(c) {
@@ -7704,14 +7739,12 @@ function cpuSkinUpdate(cpuSkinData) {
                 for (var ki = 0; ki < _keyBones.length; ki++) {
                     if (c.name.toLowerCase().indexOf(_keyBones[ki].toLowerCase()) !== -1) {
                         c.getWorldPosition(_wp);
-                        _diagLines.push(c.name + ': wY=' + _wp.y.toFixed(2) + ' lY=' + c.position.y.toFixed(4));
+                        _diagLines.push(c.name + ': wY=' + _wp.y.toFixed(4) + ' lY=' + c.position.y.toFixed(4) + ' autoUpdate=' + c.matrixAutoUpdate);
                         break;
                     }
                 }
             });
-            var _boneDiag = '[BONE-DIAG]\n' + _diagLines.join('\n');
-            console.log(_boneDiag);
-            showGLBDiag(_boneDiag);
+            console.log('[BONE-DIAG]\n' + _diagLines.join('\n'));
         }
 
         var _boneMat = new THREE.Matrix4();
@@ -7888,7 +7921,7 @@ function cpuSkinUpdate(cpuSkinData) {
                 '\nOutliers(>' + outlierThresh.toFixed(0) + '): ' + outlierCount +
                 ' ZeroW: ' + zeroWeightCount;
             console.log(diagMsg);
-            showGLBDiag(diagMsg);
+            // Overlay removed - diagnostics are console-only now
         }
 
         // NEW APPROACH: Write PASS 1 positions directly to dstPos.
@@ -7948,9 +7981,9 @@ function showGLBDiag(msg) {
         document.body.appendChild(el);
     }
     el.textContent += msg + '\n';
-    // Auto-hide after 30 seconds (extended for debugging)
+    // Auto-hide after 3 seconds (reduced from 30s to not block game view)
     clearTimeout(el._timer);
-    el._timer = setTimeout(function() { el.style.display = 'none'; }, 30000);
+    el._timer = setTimeout(function() { el.style.display = 'none'; }, 3000);
 }
 
 
@@ -8200,6 +8233,46 @@ function processOniGLTF(group, gltf, stageId) {
     for (var si = 0; si < allSkinnedMeshes.length; si++) {
         if (allSkinnedMeshes[si].skeleton) { skeletonRef = allSkinnedMeshes[si].skeleton; break; }
     }
+
+    // CRITICAL FIX: Force matrixAutoUpdate=true for ALL scene nodes
+    // (some loaders/mixers may set it to false, causing stale local matrices)
+    sourceScene.traverse(function(c) {
+        c.matrixAutoUpdate = true;
+    });
+
+    // CRITICAL FIX: Recalculate skeleton.boneInverses from ACTUAL bone world matrices
+    // GLTF's inverseBindMatrices may not match Three.js-computed bone world matrices
+    // (different root transforms, scene graph differences, etc.)
+    if (skeletonRef) {
+        sourceScene.updateMatrixWorld(true);
+        var origInvE0 = skeletonRef.boneInverses[0] ? skeletonRef.boneInverses[0].elements.slice() : null;
+        for (var bi = 0; bi < skeletonRef.bones.length; bi++) {
+            if (skeletonRef.bones[bi]) {
+                var freshInv = new THREE.Matrix4();
+                if (freshInv.getInverse) {
+                    freshInv.getInverse(skeletonRef.bones[bi].matrixWorld);
+                } else {
+                    freshInv.copy(skeletonRef.bones[bi].matrixWorld).invert();
+                }
+                skeletonRef.boneInverses[bi] = freshInv;
+            }
+        }
+        // Log difference between GLTF and recalculated for bone 0
+        if (origInvE0) {
+            var newInvE0 = skeletonRef.boneInverses[0].elements;
+            var maxDiff = 0;
+            for (var di = 0; di < 16; di++) {
+                maxDiff = Math.max(maxDiff, Math.abs(origInvE0[di] - newInvE0[di]));
+            }
+            console.log('[SKELETON] boneInverse[0] (' + skeletonRef.bones[0].name + ') recalc maxDiff=' + maxDiff.toFixed(8));
+            if (maxDiff > 0.001) {
+                console.warn('[SKELETON] SIGNIFICANT boneInverse mismatch detected! maxDiff=' + maxDiff.toFixed(4));
+                console.log('[SKELETON] Original: ' + Array.from(origInvE0).map(function(v){return v.toFixed(4);}).join(','));
+                console.log('[SKELETON] Recalced: ' + Array.from(newInvE0).map(function(v){return v.toFixed(4);}).join(','));
+            }
+        }
+    }
+
     group.userData.cpuSkin = {
         sourceScene: sourceScene,
         skeleton: skeletonRef,
