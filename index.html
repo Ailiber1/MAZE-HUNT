@@ -6750,11 +6750,10 @@ function placeStairs(floors, cols, rows, numStairs) {
         floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
         floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
-        // Open all walls around stair cell, then close only the back wall
-        // Lower floor: back = dir direction (top of ramp)
-        openStairWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
-        // Upper floor: back = oppositeDir direction (bottom of ramp from upper perspective)
-        openStairWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
+        // Remove ALL walls around stair cell on both floors (no exceptions).
+        // "Can't climb from behind" is enforced by updatePlayerY, not by walls.
+        removeAllStairWalls(floors[fromFloor], cols, rows, cell.x, cell.z);
+        removeAllStairWalls(floors[toFloor], cols, rows, cell.x, cell.z);
 
         stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
     }
@@ -6772,38 +6771,23 @@ function isDeadEnd(grid, x, z) {
 }
 
 
-/* Open ALL 4 walls around a stair cell, then close ONLY the back wall.
-   This guarantees the stair entry is NEVER blocked by a maze wall.
-   direction = stairDirection on this floor */
-function openStairWalls(grid, cols, rows, x, z, direction) {
+/* Remove ALL walls around a stair cell — no exceptions, no back wall.
+   "Can't climb from behind" is enforced by updatePlayerY (enteredFromFront check),
+   not by physical walls. This eliminates all wall-blocking-entry bugs. */
+function removeAllStairWalls(grid, cols, rows, x, z) {
     const cell = grid[z][x];
-
-    // Step 1: Open ALL 4 walls (remove any possible blocking wall)
-    if (z > 0) { cell.top = false; grid[z - 1][x].bottom = false; }
-    if (z < rows - 1) { cell.bottom = false; grid[z + 1][x].top = false; }
-    if (x > 0) { cell.left = false; grid[z][x - 1].right = false; }
-    if (x < cols - 1) { cell.right = false; grid[z][x + 1].left = false; }
-
-    // Step 2: Close ONLY the back wall (direction side)
-    // Back wall prevents walking through from behind the stair
-    switch (direction) {
-        case 'north': // Back is north
-            cell.top = true;
-            if (z > 0) grid[z - 1][x].bottom = true;
-            break;
-        case 'south': // Back is south
-            cell.bottom = true;
-            if (z < rows - 1) grid[z + 1][x].top = true;
-            break;
-        case 'east': // Back is east
-            cell.right = true;
-            if (x < cols - 1) grid[z][x + 1].left = true;
-            break;
-        case 'west': // Back is west
-            cell.left = true;
-            if (x > 0) grid[z][x - 1].right = true;
-            break;
-    }
+    // North
+    cell.top = false;
+    if (z > 0) grid[z - 1][x].bottom = false;
+    // South
+    cell.bottom = false;
+    if (z < rows - 1) grid[z + 1][x].top = false;
+    // West
+    cell.left = false;
+    if (x > 0) grid[z][x - 1].right = false;
+    // East
+    cell.right = false;
+    if (x < cols - 1) grid[z][x + 1].left = false;
 }
 
 
