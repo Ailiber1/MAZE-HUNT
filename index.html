@@ -2623,12 +2623,12 @@ const CHARACTER_LIST = {
 };
 
 const STAGE_ONI_ASSIGNMENTS = {
-    1: ['Mutant'],
-    2: ['zombie'],
-    3: ['Vampire'],
-    4: ['Desbiens'],
-    5: ['Hallin', 'Skeletonzombi'],
-    hidden: ['Hallin', 'Skeletonzombi', 'zombie'],
+    1: 'random',
+    2: 'random',
+    3: 'random',
+    4: 'random',
+    5: 'random',
+    hidden: 'random',
     scoreAttack: 'random'
 };
 
@@ -7246,10 +7246,12 @@ function bfsPathfind3D(floors, start, goal) {
 /* --- C4: Get ONI model IDs for stage --- */
 function getOniModelsForStage(stageId) {
     const assignment = STAGE_ONI_ASSIGNMENTS[stageId];
-    if (!assignment) return ['Mutant'];
-    if (assignment === 'random') {
-        const enemies = CHARACTER_LIST.enemies;
-        return [enemies[Math.floor(Math.random() * enemies.length)].id];
+    // Always random: pick a random enemy each time
+    const enemies = CHARACTER_LIST.enemies;
+    if (!assignment || assignment === 'random') {
+        var picked = enemies[Math.floor(Math.random() * enemies.length)];
+        console.log('[ONI] Random enemy selected: ' + picked.name + ' (' + picked.id + ')');
+        return [picked.id];
     }
     return assignment;
 }
