@@ -5333,6 +5333,10 @@ function launchMultiGame(config) {
     GameState.mazeGrid = mazeResult.floors[0];
     GameState.playerCurrentFloor = 0;
     GameState.onStairs = false;
+    _smoothStairY = -1;
+    _stairCellKey = '';
+    _stairEntryProgress = -1;
+    _lastStairInfo = null;
 
     // Floor label
     var floorLabel = document.getElementById('hud-floor-label');
@@ -6746,9 +6750,15 @@ function placeStairs(floors, cols, rows, numStairs) {
         floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
         floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
-        // Remove only travel-direction walls (side walls from maze generation naturally remain)
-        removeStairDirectionWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
-        removeStairDirectionWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
+        // Lower floor: open ENTRY wall (front), ensure BACK wall closed
+        // dir='north' → entry from south (front), back at north (closed)
+        openStairEntryWall(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
+        ensureStairBackWall(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
+
+        // Upper floor: open ENTRY wall (from the stair top side)
+        // oppositeDir='south' → entry from north (front/top), back at south (closed)
+        openStairEntryWall(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
+        ensureStairBackWall(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
 
         stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
     }
@@ -6766,83 +6776,134 @@ function isDeadEnd(grid, x, z) {
 }
 
 
-/* Remove only entry/exit direction walls for stairs.
-   Keeps side walls to prevent walking off the side of stairs. */
-function removeStairDirectionWalls(grid, cols, rows, x, z, direction) {
+/* Open only the ENTRY wall for a stair on this floor.
+   Entry = opposite of stair direction (front of stair).
+   Back wall stays closed (blocks climbing from behind).
+   dir = stairDirection on the LOWER floor */
+function openStairEntryWall(grid, cols, rows, x, z, direction) {
     const cell = grid[z][x];
+    // Entry is from the OPPOSITE side of the direction
+    // dir='north' → entry from south → open bottom wall
+    // dir='south' → entry from north → open top wall
+    // dir='east'  → entry from west  → open left wall
+    // dir='west'  → entry from east  → open right wall
     switch (direction) {
-        case 'north': // Travel along Z axis: remove north + south walls only
-        case 'south':
-            if (z > 0) { cell.top = false; grid[z - 1][x].bottom = false; }
+        case 'north':
             if (z < rows - 1) { cell.bottom = false; grid[z + 1][x].top = false; }
             break;
-        case 'east': // Travel along X axis: remove east + west walls only
-        case 'west':
+        case 'south':
+            if (z > 0) { cell.top = false; grid[z - 1][x].bottom = false; }
+            break;
+        case 'east':
             if (x > 0) { cell.left = false; grid[z][x - 1].right = false; }
+            break;
+        case 'west':
             if (x < cols - 1) { cell.right = false; grid[z][x + 1].left = false; }
+            break;
+    }
+}
+
+/* Ensure back wall is CLOSED on this floor's stair cell.
+   Back = the direction side (exit end, where ramp goes into ceiling/floor) */
+function ensureStairBackWall(grid, cols, rows, x, z, direction) {
+    const cell = grid[z][x];
+    switch (direction) {
+        case 'north': // Back is north (top wall)
+            cell.top = true;
+            if (z > 0) grid[z - 1][x].bottom = true;
+            break;
+        case 'south': // Back is south (bottom wall)
+            cell.bottom = true;
+            if (z < rows - 1) grid[z + 1][x].top = true;
+            break;
+        case 'east': // Back is east (right wall)
+            cell.right = true;
+            if (x < cols - 1) grid[z][x + 1].left = true;
+            break;
+        case 'west': // Back is west (left wall)
+            cell.left = true;
+            if (x > 0) grid[z][x - 1].right = true;
             break;
     }
 }
 
 
 /* --- Stair 3D Mesh Creation --- */
+/* All elements built in 'north' orientation (climb from +Z toward -Z),
+   then inner group rotated by direction. This ensures handrails, back wall,
+   and landing are correct for all 4 directions. */
 function createStairs(cellX, cellZ, fromFloor, toFloor, direction, stageId) {
     const group = new THREE.Group();
     const colors = CIRCUIT_COLORS[stageId] || CIRCUIT_COLORS[1];
-    const x = cellX * CL;
-    const z = cellZ * CL;
+    const cx = cellX * CL + CL / 2;
+    const cz = cellZ * CL + CL / 2;
     const yBase = fromFloor * FLOOR_H;
 
-    // Ramp body (slope)
-    const rampGeo = new THREE.BoxGeometry(CL, 0.15, CL * 1.42);
-    const rampMat = new THREE.MeshStandardMaterial({
-        color: colors.baseColor,
-        roughness: 0.6, metalness: 0.3,
-        emissive: colors.emissive,
-        emissiveIntensity: 0.08
-    });
-    const ramp = new THREE.Mesh(rampGeo, rampMat);
-    ramp.rotation.x = -Math.atan2(FLOOR_H, CL);
-    ramp.position.set(x + CL / 2, yBase + FLOOR_H / 2, z + CL / 2);
+    // Inner group at cell center — rotated by direction
+    const inner = new THREE.Group();
+    inner.position.set(cx, 0, cz);
 
-    // Rotate based on direction
-    if (direction === 'east') ramp.rotation.y = Math.PI / 2;
-    else if (direction === 'west') ramp.rotation.y = -Math.PI / 2;
-    else if (direction === 'south') ramp.rotation.y = Math.PI;
+    const rampAngle = Math.atan2(FLOOR_H, CL);
+    const rampLen = Math.sqrt(CL * CL + FLOOR_H * FLOOR_H);
+
+    // --- Ramp surface ---
+    const rampMat = new THREE.MeshStandardMaterial({
+        color: colors.baseColor, roughness: 0.6, metalness: 0.3,
+        emissive: colors.emissive, emissiveIntensity: 0.08
+    });
+    const ramp = new THREE.Mesh(new THREE.BoxGeometry(CL * 0.92, 0.12, rampLen), rampMat);
+    ramp.rotation.x = -rampAngle;
+    ramp.position.set(0, yBase + FLOOR_H / 2, 0);
+    inner.add(ramp);
+
+    // --- Floor under ramp (prevents floating look) ---
+    const floorUnderMat = new THREE.MeshStandardMaterial({
+        color: 0x08080a, emissive: colors.emissive, emissiveIntensity: 0.03,
+        roughness: 0.95, metalness: 0.05
+    });
+    const floorUnder = new THREE.Mesh(new THREE.PlaneGeometry(CL, CL), floorUnderMat);
+    floorUnder.rotation.x = -Math.PI / 2;
+    floorUnder.position.set(0, yBase + 0.01, 0);
+    inner.add(floorUnder);
+
+    // --- Back wall at exit end (north = -Z side, blocks climbing from behind) ---
+    const backWallMat = new THREE.MeshStandardMaterial({
+        color: colors.baseColor, roughness: 0.7, metalness: 0.2,
+        emissive: colors.emissive, emissiveIntensity: 0.04
+    });
+    const backWall = new THREE.Mesh(
+        new THREE.BoxGeometry(CL, FLOOR_H, WALL_THICK),
+        backWallMat
+    );
+    backWall.position.set(0, yBase + FLOOR_H / 2, -CL / 2);
+    inner.add(backWall);
+
+    // --- Handrails (along ramp slope) ---
+    const railMat = new THREE.MeshBasicMaterial({
+        color: colors.emissive, transparent: true, opacity: 0.4
+    });
+    var railOffset = CL / 2 - 0.12;
+    var railL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, rampLen), railMat);
+    railL.rotation.x = -rampAngle;
+    railL.position.set(-railOffset, yBase + FLOOR_H / 2 + 0.4, 0);
+    inner.add(railL);
+    var railR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, rampLen), railMat.clone());
+    railR.rotation.x = -rampAngle;
+    railR.position.set(railOffset, yBase + FLOOR_H / 2 + 0.4, 0);
+    inner.add(railR);
+
+    // --- Light at entry ---
+    var arrowLight = new THREE.PointLight(colors.emissive, 1.5, 6);
+    arrowLight.position.set(0, yBase + 0.5, CL / 3);
+    inner.add(arrowLight);
+
+    // Rotate entire inner group based on stair direction
+    if (direction === 'east') inner.rotation.y = -Math.PI / 2;
+    else if (direction === 'west') inner.rotation.y = Math.PI / 2;
+    else if (direction === 'south') inner.rotation.y = Math.PI;
     // 'north' is default (no rotation)
 
-    group.add(ramp);
-
-    // Handrails (both sides, neon lines)
-    const railMat = new THREE.MeshBasicMaterial({
-        color: colors.emissive,
-        transparent: true, opacity: 0.3
-    });
-
-    // Left handrail
-    const railL = new THREE.Mesh(
-        new THREE.BoxGeometry(0.05, 1.0, CL * 1.42), railMat
-    );
-    railL.rotation.x = ramp.rotation.x;
-    railL.rotation.y = ramp.rotation.y;
-    railL.position.set(x + 0.1, yBase + FLOOR_H / 2 + 0.5, z + CL / 2);
-    group.add(railL);
-
-    // Right handrail
-    const railR = new THREE.Mesh(
-        new THREE.BoxGeometry(0.05, 1.0, CL * 1.42), railMat.clone()
-    );
-    railR.rotation.x = ramp.rotation.x;
-    railR.rotation.y = ramp.rotation.y;
-    railR.position.set(x + CL - 0.1, yBase + FLOOR_H / 2 + 0.5, z + CL / 2);
-    group.add(railR);
-
-    // Arrow marker light
-    const stairColors = CIRCUIT_COLORS[GameState.currentStage] || CIRCUIT_COLORS[1];
-    const arrowLight = new THREE.PointLight(stairColors.emissive, 1.5, 6);
-    arrowLight.position.set(x + CL / 2, yBase + 0.5, z + CL / 2);
-    group.add(arrowLight);
-
+    group.add(inner);
     return group;
 }
 
@@ -6867,11 +6928,16 @@ function getStairProgress(pos, direction) {
     }
 }
 
-/* Bidirectional ramp stair system:
-   - Y is ALWAYS calculated from the LOWER floor's perspective (consistent direction)
-   - Works from either side: approach from below = climb, approach from above = descend
-   - Floor transition happens when LEAVING the stair cell, based on Y position */
-var _lastStairInfo = null; // { lowerFloor, upperFloor } for floor transition on exit
+/* One-directional stair system:
+   - Y calculated from LOWER floor's perspective (consistent direction)
+   - Must enter from FRONT (low-progress on lower floor, high-progress on upper floor)
+   - Entering from BACK keeps player at current floor level (no climbing)
+   - Floor transition on EXIT, based on Y position
+   - Smooth Y transitions to prevent flickering at cell boundaries */
+var _lastStairInfo = null;
+var _stairEntryProgress = -1;
+var _stairCellKey = '';
+var _smoothStairY = -1; // For smooth transitions
 
 function updatePlayerY() {
     const floors = GameState.mazeFloors;
@@ -6884,29 +6950,50 @@ function updatePlayerY() {
     if (cellX < 0 || cellX >= GameState.mazeCols || cellZ < 0 || cellZ >= GameState.mazeRows) return;
 
     const cell = floors[currentFloor][cellZ][cellX];
+    var targetY;
 
     if (cell && cell.isStairs && cell.connectsTo) {
         const otherFloor = cell.connectsTo.floor;
         const lowerFloor = Math.min(currentFloor, otherFloor);
         const upperFloor = Math.max(currentFloor, otherFloor);
-
-        // Always use LOWER floor's stair direction for consistent Y calculation
         const lowerCell = floors[lowerFloor][cellZ][cellX];
         const progress = getStairProgress(camera.position, lowerCell.stairDirection);
         const clampedProgress = Math.max(0, Math.min(progress, 1.0));
 
-        // Y interpolation: progress 0 = lower floor, progress 1 = upper floor
-        const lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
-        const highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
-        camera.position.y = lowY + (highY - lowY) * clampedProgress;
+        // Track entry progress (when first entering this stair cell)
+        var cellKey = cellX + '_' + cellZ + '_' + currentFloor;
+        if (cellKey !== _stairCellKey) {
+            _stairEntryProgress = clampedProgress;
+            _stairCellKey = cellKey;
+        }
 
-        // Save stair info for floor transition when leaving
-        _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
+        // Check if player entered from the FRONT (correct side)
+        // Lower floor: front = low progress side (base of stair)
+        // Upper floor: front = high progress side (top of stair)
+        var enteredFromFront;
+        if (currentFloor === lowerFloor) {
+            enteredFromFront = (_stairEntryProgress < 0.4);
+        } else {
+            enteredFromFront = (_stairEntryProgress > 0.6);
+        }
+
+        if (enteredFromFront) {
+            // Normal stair climbing/descending
+            var lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
+            var highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
+            targetY = lowY + (highY - lowY) * clampedProgress;
+            _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
+        } else {
+            // Entered from behind — stay at current floor level
+            targetY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
+            _lastStairInfo = null;
+        }
+
         GameState.onStairs = true;
     } else {
-        // Not on stair cell — determine floor if just exited stairs
+        // Not on stair cell
         if (GameState.onStairs && _lastStairInfo) {
-            // Pick floor closest to current Y position
+            // Just left stair — determine floor by Y position
             var lowFloorY = _lastStairInfo.lowerFloor * FLOOR_H + PLAYER_HEIGHT;
             var highFloorY = _lastStairInfo.upperFloor * FLOOR_H + PLAYER_HEIGHT;
             var midY = (lowFloorY + highFloorY) / 2;
@@ -6920,9 +7007,21 @@ function updatePlayerY() {
             _lastStairInfo = null;
         }
 
-        camera.position.y = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
+        targetY = GameState.playerCurrentFloor * FLOOR_H + PLAYER_HEIGHT;
         GameState.onStairs = false;
+        _stairCellKey = '';
+        _stairEntryProgress = -1;
     }
+
+    // Smooth Y transition (prevents flickering at cell boundaries)
+    if (_smoothStairY < 0) _smoothStairY = targetY;
+    var yDiff = Math.abs(targetY - _smoothStairY);
+    if (yDiff > 0.05) {
+        _smoothStairY += (targetY - _smoothStairY) * 0.25;
+    } else {
+        _smoothStairY = targetY;
+    }
+    camera.position.y = _smoothStairY;
 }
 
 /* ============================================
