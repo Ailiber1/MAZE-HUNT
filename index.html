@@ -4529,8 +4529,8 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
             var bodyGroup = new THREE.Group();
             bodyGroup.add(bodyMesh);
-            bodyGroup.scale.setScalar(cpuMeshScale);
-            bodyGroup.position.y = -srcBB.min.y * cpuMeshScale;
+            bodyGroup.scale.setScalar(1);
+            bodyGroup.position.set(0, 0, 0);
 
             // Keep sourceScene DETACHED (not added to group)
             group.userData.sourceScene = sourceScene;
@@ -7581,7 +7581,6 @@ function cpuSkinUpdate(cpuSkinData) {
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
 
-        var boneCount = skeleton.bones.length;
         var _boneMat = new THREE.Matrix4();
         var _v = new THREE.Vector4();
         var _temp = new THREE.Vector4();
@@ -7600,24 +7599,70 @@ function cpuSkinUpdate(cpuSkinData) {
             }];
         }
 
-        // Compute weight normalization divisor for normalized integer attributes
-        // Three.js r128 BufferAttribute.getX() returns RAW integer values
-        // for normalized attributes (Uint8: 0-255, Uint16: 0-65535).
-        // GPU handles this via hardware, but CPU must do it manually.
+        var globalMinY = Infinity, globalMaxY = -Infinity;
+        var globalMinX = Infinity, globalMaxX = -Infinity;
+        var globalMinZ = Infinity, globalMaxZ = -Infinity;
+
+        // FIX: Three.js r128 BufferAttribute.getX() does NOT handle normalized flag.
+        // GPU shaders auto-normalize Uint8→[0,1], but CPU code gets raw 0-255.
+        // We must divide manually to get correct [0,1] weights.
         var weightDiv = 1;
-        if (meshDataArr.length > 0) {
-            var swAttr = meshDataArr[0].skinWeight;
-            if (swAttr.normalized) {
-                if (swAttr.array instanceof Uint8Array) weightDiv = 255;
-                else if (swAttr.array instanceof Uint16Array) weightDiv = 65535;
+        if (meshDataArr.length > 0 && meshDataArr[0].skinWeight) {
+            var _swAttr = meshDataArr[0].skinWeight;
+            if (_swAttr.normalized) {
+                if (_swAttr.array instanceof Uint8Array) weightDiv = 255;
+                else if (_swAttr.array instanceof Uint16Array) weightDiv = 65535;
             }
         }
 
-        // CPU skinning → write directly to dstPos
+        // FIX: Clamp bone indices to valid range to prevent NaN from out-of-bounds access
+        var boneCount = skeleton.bones.length;
+        var maxBoneIdx = boneCount - 1;
+
+        // One-time diagnostic (first frame only)
+        if (!cpuSkinData._diagDone) {
+            cpuSkinData._diagDone = true;
+            var _swSample = meshDataArr.length > 0 ? meshDataArr[0].skinWeight : null;
+            var _siSample = meshDataArr.length > 0 ? meshDataArr[0].skinIndex : null;
+            console.log('[cpuSkin-DIAG] boneCount=' + boneCount + ' weightDiv=' + weightDiv);
+            if (_swSample) {
+                console.log('[cpuSkin-DIAG] skinWeight: type=' + _swSample.array.constructor.name +
+                    ' normalized=' + _swSample.normalized + ' itemSize=' + _swSample.itemSize);
+                // Sample first 3 vertices raw values
+                for (var di = 0; di < Math.min(3, _swSample.count); di++) {
+                    var rw0 = _swSample.array[di * _swSample.itemSize];
+                    var rw1 = _swSample.array[di * _swSample.itemSize + 1];
+                    var rw2 = _swSample.array[di * _swSample.itemSize + 2];
+                    var rw3 = _swSample.array[di * _swSample.itemSize + 3];
+                    console.log('[cpuSkin-DIAG] vtx' + di + ' rawW=[' + rw0 + ',' + rw1 + ',' + rw2 + ',' + rw3 +
+                        '] normalized=[' + (rw0/weightDiv).toFixed(4) + ',' + (rw1/weightDiv).toFixed(4) + ',' +
+                        (rw2/weightDiv).toFixed(4) + ',' + (rw3/weightDiv).toFixed(4) + ']');
+                }
+            }
+            if (_siSample) {
+                console.log('[cpuSkin-DIAG] skinIndex: type=' + _siSample.array.constructor.name +
+                    ' normalized=' + _siSample.normalized);
+                // Check for out-of-bounds indices
+                var oobCount = 0;
+                for (var ci = 0; ci < _siSample.count; ci++) {
+                    var ri0 = _siSample.array[ci * _siSample.itemSize];
+                    var ri1 = _siSample.array[ci * _siSample.itemSize + 1];
+                    var ri2 = _siSample.array[ci * _siSample.itemSize + 2];
+                    var ri3 = _siSample.array[ci * _siSample.itemSize + 3];
+                    if (ri0 > maxBoneIdx || ri1 > maxBoneIdx || ri2 > maxBoneIdx || ri3 > maxBoneIdx) oobCount++;
+                }
+                console.log('[cpuSkin-DIAG] out-of-bounds bone indices: ' + oobCount + '/' + _siSample.count + ' vertices');
+            }
+        }
+
+        // Use temp buffer to avoid writing amplified values to GPU buffer
+        var tempBuf = cpuSkinData._tempBuf;
+        var tempIdx = 0;
+
+        // PASS 1: CPU skinning → write to TEMP buffer (NOT dstPos)
         for (var m = 0; m < meshDataArr.length; m++) {
             var md = meshDataArr[m];
             var srcPos = md.srcPositions;
-            var dstPos = md.dstPositions;
             var si = md.skinIndex;
             var sw = md.skinWeight;
             var bindMatrix = md.bindMatrix;
@@ -7629,17 +7674,10 @@ function cpuSkinUpdate(cpuSkinData) {
                 _v.applyMatrix4(bindMatrix);
 
                 _result.set(0, 0, 0, 0);
-                var w0 = sw.getX(i) / weightDiv;
-                var w1 = sw.getY(i) / weightDiv;
-                var w2 = sw.getZ(i) / weightDiv;
-                var w3 = sw.getW(i) / weightDiv;
-                var i0 = si.getX(i), i1 = si.getY(i), i2 = si.getZ(i), i3 = si.getW(i);
-
-                // Clamp bone indices to valid range
-                if (i0 >= boneCount) i0 = 0;
-                if (i1 >= boneCount) i1 = 0;
-                if (i2 >= boneCount) i2 = 0;
-                if (i3 >= boneCount) i3 = 0;
+                // FIX: Normalize weights from raw integer to [0,1] float
+                var w0 = sw.getX(i) / weightDiv, w1 = sw.getY(i) / weightDiv, w2 = sw.getZ(i) / weightDiv, w3 = sw.getW(i) / weightDiv;
+                // FIX: Clamp bone indices to valid range
+                var i0 = Math.min(si.getX(i), maxBoneIdx), i1 = Math.min(si.getY(i), maxBoneIdx), i2 = Math.min(si.getZ(i), maxBoneIdx), i3 = Math.min(si.getW(i), maxBoneIdx);
 
                 if (w0 > 0) { _boneMat.fromArray(bm, i0*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w0; _result.y+=_temp.y*w0; _result.z+=_temp.z*w0; }
                 if (w1 > 0) { _boneMat.fromArray(bm, i1*16); _temp.copy(_v).applyMatrix4(_boneMat); _result.x+=_temp.x*w1; _result.y+=_temp.y*w1; _result.z+=_temp.z*w1; }
@@ -7649,18 +7687,68 @@ function cpuSkinUpdate(cpuSkinData) {
                 _result.w = 1;
                 _result.applyMatrix4(bindMatrixInverse);
 
-                // NaN guard — fallback to source position
+                // NaN guard
                 if (_result.x !== _result.x) _result.x = srcPos.getX(i);
                 if (_result.y !== _result.y) _result.y = srcPos.getY(i);
                 if (_result.z !== _result.z) _result.z = srcPos.getZ(i);
 
-                // Write skinned position directly (no normalization)
-                dstPos.setXYZ(i, _result.x, _result.y, _result.z);
+                // Write to TEMP buffer, not dstPos
+                tempBuf[tempIdx]   = _result.x;
+                tempBuf[tempIdx+1] = _result.y;
+                tempBuf[tempIdx+2] = _result.z;
+                tempIdx += 3;
+
+                if (_result.x < globalMinX) globalMinX = _result.x;
+                if (_result.x > globalMaxX) globalMaxX = _result.x;
+                if (_result.y < globalMinY) globalMinY = _result.y;
+                if (_result.y > globalMaxY) globalMaxY = _result.y;
+                if (_result.z < globalMinZ) globalMinZ = _result.z;
+                if (_result.z > globalMaxZ) globalMaxZ = _result.z;
+            }
+        }
+
+        // One-time PASS 1 result diagnostic
+        if (!cpuSkinData._pass1DiagDone) {
+            cpuSkinData._pass1DiagDone = true;
+            console.log('[cpuSkin-DIAG] PASS1 Y range: [' + globalMinY.toFixed(4) + ', ' + globalMaxY.toFixed(4) +
+                '] height=' + (globalMaxY - globalMinY).toFixed(4) +
+                ' (with weightDiv=' + weightDiv + ')');
+            console.log('[cpuSkin-DIAG] PASS1 X range: [' + globalMinX.toFixed(4) + ', ' + globalMaxX.toFixed(4) + ']');
+            console.log('[cpuSkin-DIAG] PASS1 Z range: [' + globalMinZ.toFixed(4) + ', ' + globalMaxZ.toFixed(4) + ']');
+        }
+
+        // SINGLE WRITE: Normalize from temp buffer → dstPos (only final values hit GPU)
+        var outHeight = globalMaxY - globalMinY;
+        if (outHeight > 0.01) {
+            var targetH = 1.8;
+            var scaleFix = targetH / outHeight;
+            var centerX = (globalMinX + globalMaxX) / 2;
+            var centerZ = (globalMinZ + globalMaxZ) / 2;
+
+            tempIdx = 0;
+            for (var m = 0; m < meshDataArr.length; m++) {
+                var dp = meshDataArr[m].dstPositions;
+                var cnt = dp.count;
+                for (var i = 0; i < cnt; i++) {
+                    var nx = (tempBuf[tempIdx]   - centerX)   * scaleFix;
+                    var ny = (tempBuf[tempIdx+1] - globalMinY) * scaleFix;
+                    var nz = (tempBuf[tempIdx+2] - centerZ)   * scaleFix;
+                    dp.setXYZ(i, nx, ny, nz);
+                    tempIdx += 3;
+                }
+                // Recompute bounding sphere for correct frustum culling
+                if (dp.count > 0 && meshDataArr[m].dstPositions === dp) {
+                    var geo = cpuSkinData._bodyGroup.children[m];
+                    if (geo && geo.geometry) geo.geometry.computeBoundingSphere();
+                }
             }
 
-            // Recompute bounding sphere
-            var meshChild = cpuSkinData._bodyGroup.children[m];
-            if (meshChild && meshChild.geometry) meshChild.geometry.computeBoundingSphere();
+            // CRITICAL: bodyGroup uses IDENTITY transform
+            if (cpuSkinData._bodyGroup) {
+                cpuSkinData._bodyGroup.scale.setScalar(1);
+                cpuSkinData._bodyGroup.position.set(0, 0, 0);
+            }
+
         }
 
         // Mark ALL destination buffers for GPU upload
@@ -7671,6 +7759,7 @@ function cpuSkinUpdate(cpuSkinData) {
                 dp.data.needsUpdate = true;
             }
         }
+        // Note: frameCount is incremented by the game loop caller, not here
     } catch(e) {
         console.error('[cpuSkin] Error:', e.message, e.stack);
     }
@@ -7739,7 +7828,6 @@ function processOniGLTF(group, gltf, stageId) {
         return;
     }
 
-
     // Compute scale from SOURCE GEOMETRY bounding box (all meshes)
     var combinedBB = new THREE.Box3();
     allSkinnedMeshes.forEach(function(sm) {
@@ -7802,8 +7890,27 @@ function processOniGLTF(group, gltf, stageId) {
             showGLBDiag('[ONI] Upgraded index buffer to Uint32 (vtxCount=' + vtxCount + ')');
         }
 
+        // === DIAGNOSTIC: Report original geometry state before modifications ===
+        var origDrawRange = srcGeo.drawRange;
+        var origGroups = srcGeo.groups || [];
+        var clonedGroups = dstGeo.groups || [];
+        var idxCount = dstGeo.index ? dstGeo.index.count : 0;
+        var idxType = dstGeo.index ? dstGeo.index.array.constructor.name : 'none';
+        console.log('[ONI-FIX] === GEOMETRY DIAGNOSTIC ===');
+        console.log('[ONI-FIX] vtxCount=' + vtxCount + ' idxCount=' + idxCount + ' idxType=' + idxType);
+        console.log('[ONI-FIX] SRC drawRange: start=' + origDrawRange.start + ' count=' + origDrawRange.count);
+        console.log('[ONI-FIX] SRC groups(' + origGroups.length + '): ' + JSON.stringify(origGroups));
+        console.log('[ONI-FIX] DST groups(' + clonedGroups.length + '): ' + JSON.stringify(clonedGroups));
+        showGLBDiag('[ONI-FIX] vtx=' + vtxCount + ' idx=' + idxCount + ' type=' + idxType +
+            ' srcGroups=' + origGroups.length + ' srcDR=[' + origDrawRange.start + ',' + origDrawRange.count + ']');
+
+        // === FIX: Clear ALL geometry groups - use single drawRange instead ===
+        // Groups can restrict rendering to only their covered index ranges.
+        // Any indices not covered by a group will NOT be drawn.
+        // By clearing groups, Three.js uses drawRange for the entire geometry.
         dstGeo.clearGroups();
         dstGeo.setDrawRange(0, Infinity);
+        console.log('[ONI-FIX] Cleared groups, drawRange set to [0, Infinity]');
 
         // Recompute normals
         dstGeo.computeVertexNormals();
@@ -7835,6 +7942,9 @@ function processOniGLTF(group, gltf, stageId) {
         bodyMesh.frustumCulled = false;
         bodyMesh.morphTargetInfluences = [];
         bodyGroup.add(bodyMesh);
+
+        showGLBDiag('[ONI-FIX] Material: MeshBasicMaterial, map=' + (origMat && (Array.isArray(origMat) ? origMat[0] && origMat[0].map : origMat.map) ? 'YES' : 'NO') +
+            ' groups=CLEARED drawRange=[0,Inf]');
 
         meshDataArr.push({
             srcPositions: srcPos,
@@ -7876,10 +7986,10 @@ function processOniGLTF(group, gltf, stageId) {
         showGLBDiag('[ONI] Added static mesh: ' + (origMesh.name || 'unnamed') + ' vtx=' + clonedGeo.attributes.position.count);
     });
 
-    // Scale bodyGroup to target height using source geometry bounds
+    // bodyGroup uses IDENTITY transform
     var geoMinY = combinedBB.min.y;
-    bodyGroup.scale.setScalar(meshScale);
-    bodyGroup.position.y = -geoMinY * meshScale;
+    bodyGroup.scale.setScalar(1);
+    bodyGroup.position.set(0, 0, 0);
 
     // Keep sourceScene DETACHED
     group.userData.sourceScene = sourceScene;
