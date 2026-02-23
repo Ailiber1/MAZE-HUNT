@@ -6702,7 +6702,24 @@ function placeStairs(floors, cols, rows, numStairs) {
 
         if (!cell) continue;
 
-        const dir = directions[Math.floor(Math.random() * directions.length)];
+        // Choose stair direction aligned with existing maze openings
+        // Prefer axis where BOTH floors already have openings (minimizes maze disruption)
+        const fromCell = floors[fromFloor][cell.z][cell.x];
+        const toCell = floors[toFloor][cell.z][cell.x];
+        const nsOpenFrom = !fromCell.top || !fromCell.bottom;
+        const nsOpenTo = !toCell.top || !toCell.bottom;
+        const ewOpenFrom = !fromCell.left || !fromCell.right;
+        const ewOpenTo = !toCell.left || !toCell.right;
+        let preferredDirs = [];
+        if (nsOpenFrom && nsOpenTo) preferredDirs.push('north', 'south');
+        if (ewOpenFrom && ewOpenTo) preferredDirs.push('east', 'west');
+        if (preferredDirs.length === 0) {
+            // Fallback: prefer any axis with at least one floor open
+            if (nsOpenFrom || nsOpenTo) preferredDirs.push('north', 'south');
+            if (ewOpenFrom || ewOpenTo) preferredDirs.push('east', 'west');
+        }
+        if (preferredDirs.length === 0) preferredDirs = directions.slice();
+        const dir = preferredDirs[Math.floor(Math.random() * preferredDirs.length)];
         const oppositeDir = { north: 'south', south: 'north', east: 'west', west: 'east' }[dir];
 
         // Mark stair cells on both floors
@@ -6716,9 +6733,13 @@ function placeStairs(floors, cols, rows, numStairs) {
         floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
         floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
-        // Remove all walls around stair cells on both floors for accessibility
-        removeWallsAroundCell(floors[fromFloor], cols, rows, cell.x, cell.z);
-        removeWallsAroundCell(floors[toFloor], cols, rows, cell.x, cell.z);
+        // Remove only travel-direction walls (keeps side walls to prevent falling)
+        removeStairDirectionWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
+        removeStairDirectionWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
+
+        // Force side walls CLOSED on stair cells to prevent walking off the side
+        ensureStairSideWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
+        ensureStairSideWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
 
         stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
     }
@@ -6741,6 +6762,48 @@ function removeWallsAroundCell(grid, cols, rows, x, z) {
     if (z < rows - 1) { cell.bottom = false; grid[z + 1][x].top = false; }
     if (x > 0) { cell.left = false; grid[z][x - 1].right = false; }
     if (x < cols - 1) { cell.right = false; grid[z][x + 1].left = false; }
+}
+
+/* Remove only entry/exit direction walls for stairs.
+   Keeps side walls to prevent walking off the side of stairs. */
+function removeStairDirectionWalls(grid, cols, rows, x, z, direction) {
+    const cell = grid[z][x];
+    switch (direction) {
+        case 'north': // Travel along Z axis: remove north + south walls only
+        case 'south':
+            if (z > 0) { cell.top = false; grid[z - 1][x].bottom = false; }
+            if (z < rows - 1) { cell.bottom = false; grid[z + 1][x].top = false; }
+            break;
+        case 'east': // Travel along X axis: remove east + west walls only
+        case 'west':
+            if (x > 0) { cell.left = false; grid[z][x - 1].right = false; }
+            if (x < cols - 1) { cell.right = false; grid[z][x + 1].left = false; }
+            break;
+    }
+}
+
+/* Force side walls closed on stair cells to prevent walking off the side.
+   Side walls = perpendicular to travel direction. */
+function ensureStairSideWalls(grid, cols, rows, x, z, direction) {
+    const cell = grid[z][x];
+    switch (direction) {
+        case 'north':
+        case 'south':
+            // Travel is N-S, so side walls are left and right
+            cell.left = true;
+            cell.right = true;
+            if (x > 0) grid[z][x - 1].right = true;
+            if (x < cols - 1) grid[z][x + 1].left = true;
+            break;
+        case 'east':
+        case 'west':
+            // Travel is E-W, so side walls are top and bottom
+            cell.top = true;
+            cell.bottom = true;
+            if (z > 0) grid[z - 1][x].bottom = true;
+            if (z < rows - 1) grid[z + 1][x].top = true;
+            break;
+    }
 }
 
 /* --- Stair 3D Mesh Creation --- */
@@ -6873,7 +6936,18 @@ function updatePlayerY() {
 
         GameState.onStairs = true;
     } else {
-        camera.position.y = currentFloor * FLOOR_H + PLAYER_HEIGHT;
+        // Safety net: smooth Y transition when leaving stairs (prevents sudden snap)
+        var targetY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
+        var yDiff = Math.abs(camera.position.y - targetY);
+        if (yDiff > 0.1 && GameState.onStairs) {
+            // Was on stairs, now off — smoothly move to target Y
+            camera.position.y += (targetY - camera.position.y) * 0.3;
+            if (Math.abs(camera.position.y - targetY) < 0.05) {
+                camera.position.y = targetY;
+            }
+        } else {
+            camera.position.y = targetY;
+        }
         GameState.onStairs = false;
         _lastStairCellKey = '';
         _stairMinProgress = 1.0;
