@@ -6769,9 +6769,9 @@ function isDeadEnd(grid, x, z) {
 }
 
 
-/* Remove ALL walls around a stair cell — no exceptions.
-   Player can enter from any direction; updatePlayerY always allows climbing.
-   This eliminates all wall-blocking-entry bugs. */
+/* Remove ALL visible walls around a stair cell (no wall meshes rendered).
+   Invisible collision (sides + back blocked, front open) is handled
+   separately by checkStairEntry() in the movement system. */
 function removeAllStairWalls(grid, cols, rows, x, z) {
     const cell = grid[z][x];
     // North
@@ -10526,6 +10526,72 @@ function checkWallCollision(newX, newZ, grid_unused) {
     return { x: newX, z: newZ };
 }
 
+/* --- Stair Entry Collision (invisible walls: block sides & back, open front) ---
+   For each stair cell, stairDirection indicates ramp direction.
+   Front (open) = opposite of stairDirection.
+   Sides + back = blocked by invisible collision. */
+function checkStairEntry(newX, newZ) {
+    var grid = GameState.mazeFloors && GameState.mazeFloors[GameState.playerCurrentFloor];
+    if (!grid) return { x: newX, z: newZ };
+    var r = PLAYER_RADIUS;
+    var cols = GameState.mazeCols, rows = GameState.mazeRows;
+    var hw = WALL_THICK / 2;
+
+    var minCX = Math.max(0, Math.floor((newX - r) / CL));
+    var maxCX = Math.min(cols - 1, Math.floor((newX + r) / CL));
+    var minCZ = Math.max(0, Math.floor((newZ - r) / CL));
+    var maxCZ = Math.min(rows - 1, Math.floor((newZ + r) / CL));
+
+    for (var cz = minCZ; cz <= maxCZ; cz++) {
+        for (var cx = minCX; cx <= maxCX; cx++) {
+            var cell = grid[cz][cx];
+            if (!cell.isStairs || !cell.stairDirection) continue;
+
+            var dir = cell.stairDirection;
+            var cL = cx * CL;           // west edge
+            var cR = (cx + 1) * CL;     // east edge
+            var cT = cz * CL;           // north edge
+            var cB = (cz + 1) * CL;     // south edge
+
+            // Blocked sides: 3 of 4 (front is open)
+            // 'north' stair: open=south, block=north+east+west
+            // 'south' stair: open=north, block=south+east+west
+            // 'east'  stair: open=west,  block=east+north+south
+            // 'west'  stair: open=east,  block=west+north+south
+            var blockN = (dir !== 'south');  // block north unless front is north
+            var blockS = (dir !== 'north');  // block south unless front is south
+            var blockW = (dir !== 'east');   // block west unless front is west
+            var blockE = (dir !== 'west');   // block east unless front is east
+
+            // North wall (cT)
+            if (blockN && newZ - r < cT + hw && newZ + r > cT - hw &&
+                newX + r > cL && newX - r < cR) {
+                if (newZ < cT) newZ = cT - hw - r;      // push north (out)
+                else newZ = cT + hw + r;                  // push south (in)
+            }
+            // South wall (cB)
+            if (blockS && newZ + r > cB - hw && newZ - r < cB + hw &&
+                newX + r > cL && newX - r < cR) {
+                if (newZ > cB) newZ = cB + hw + r;      // push south (out)
+                else newZ = cB - hw - r;                  // push north (in)
+            }
+            // West wall (cL)
+            if (blockW && newX - r < cL + hw && newX + r > cL - hw &&
+                newZ + r > cT && newZ - r < cB) {
+                if (newX < cL) newX = cL - hw - r;      // push west (out)
+                else newX = cL + hw + r;                  // push east (in)
+            }
+            // East wall (cR)
+            if (blockE && newX + r > cR - hw && newX - r < cR + hw &&
+                newZ + r > cT && newZ - r < cB) {
+                if (newX > cR) newX = cR + hw + r;      // push east (out)
+                else newX = cR - hw - r;                  // push west (in)
+            }
+        }
+    }
+    return { x: newX, z: newZ };
+}
+
 /* --- Player Movement --- */
 function updatePlayerMovement(delta) {
     if (!GameState.alive) return;
@@ -10571,7 +10637,8 @@ function updatePlayerMovement(delta) {
         dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), GameState.playerRotationY);
         const newX = camera.position.x + dir.x * speed * delta;
         const newZ = camera.position.z + dir.z * speed * delta;
-        const result = checkWallCollision(newX, newZ, grid);
+        var result = checkWallCollision(newX, newZ, grid);
+        result = checkStairEntry(result.x, result.z);
         camera.position.x = result.x;
         camera.position.z = result.z;
     }
