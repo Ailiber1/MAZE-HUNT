@@ -8144,8 +8144,13 @@ function processOniGLTF(group, gltf, stageId) {
         });
     });
 
-    // Process static (non-SkinnedMesh) meshes - clone geometry, apply world transform
-    allStaticMeshes.forEach(function(origMesh) {
+    // Process static (non-SkinnedMesh) meshes - ONLY if no SkinnedMeshes exist.
+    // When SkinnedMeshes are present, static meshes are T-pose duplicates that
+    // cause double rendering (e.g. 4 arms: T-pose arms + animated arms).
+    if (allSkinnedMeshes.length > 0) {
+        console.log('[ONI] Skipping ' + allStaticMeshes.length + ' static meshes (SkinnedMesh covers full body)');
+    }
+    (allSkinnedMeshes.length > 0 ? [] : allStaticMeshes).forEach(function(origMesh) {
         var clonedGeo = origMesh.geometry.clone();
         clonedGeo.applyMatrix4(origMesh.matrixWorld);
 
