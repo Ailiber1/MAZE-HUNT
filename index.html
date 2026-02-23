@@ -6868,9 +6868,16 @@ function updateFloorLabel() {
 }
 
 /* --- Player Y Position (Stairs) --- */
-function getStairProgress(pos, direction) {
-    const localX = ((pos.x % CL) + CL) % CL / CL;
-    const localZ = ((pos.z % CL) + CL) % CL / CL;
+/* getStairProgress: computes 0-1 progress along a stair ramp.
+   pos      = player/entity world position
+   direction= the LOWER floor's stairDirection
+   stairCX  = stair cell column index
+   stairCZ  = stair cell row index
+   Progress 0 = base (front/entry), 1 = top (back/exit). */
+function getStairProgress(pos, direction, stairCX, stairCZ) {
+    // Position relative to the stair cell (NOT modulo — avoids wrap bugs)
+    var localX = Math.max(0, Math.min(1, (pos.x - stairCX * CL) / CL));
+    var localZ = Math.max(0, Math.min(1, (pos.z - stairCZ * CL) / CL));
     switch (direction) {
         case 'north': return 1 - localZ;
         case 'south': return localZ;
@@ -6906,14 +6913,14 @@ function updatePlayerY() {
         const lowerFloor = Math.min(currentFloor, otherFloor);
         const upperFloor = Math.max(currentFloor, otherFloor);
         const lowerCell = floors[lowerFloor][cellZ][cellX];
-        const progress = getStairProgress(camera.position, lowerCell.stairDirection);
+        const progress = getStairProgress(camera.position, lowerCell.stairDirection, cellX, cellZ);
         const clampedProgress = Math.max(0, Math.min(progress, 1.0));
 
         // Always climb — Y interpolated between lower and upper floor based on progress
         var lowY = lowerFloor * FLOOR_H + PLAYER_HEIGHT;
         var highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
         targetY = lowY + (highY - lowY) * clampedProgress;
-        _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
+        _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor, cellX: cellX, cellZ: cellZ };
 
         // Mid-stair floor transition: switch floor near the exit end
         // so the player uses the new floor's grid (where the exit is open).
@@ -6954,7 +6961,7 @@ function updatePlayerY() {
                     var aLower = Math.min(currentFloor, aOther);
                     var aUpper = Math.max(currentFloor, aOther);
                     var aLowerCell = floors[aLower][az][ax];
-                    var aProg = getStairProgress(camera.position, aLowerCell.stairDirection);
+                    var aProg = getStairProgress(camera.position, aLowerCell.stairDirection, ax, az);
                     aProg = Math.max(0, Math.min(aProg, 1.0));
                     targetY = (aLower * FLOOR_H + PLAYER_HEIGHT) +
                               ((aUpper - aLower) * FLOOR_H) * aProg;
@@ -9122,7 +9129,7 @@ function updateOniY(oni) {
 
         // Always use lower floor's direction for consistent Y
         const lowerCell = floors[lowerFloor][cellZ][cellX];
-        const progress = getStairProgress(oni.position, lowerCell.stairDirection);
+        const progress = getStairProgress(oni.position, lowerCell.stairDirection, cellX, cellZ);
         const clampedProgress = Math.max(0, Math.min(progress, 1.0));
 
         const lowY = lowerFloor * FLOOR_H;
@@ -10529,10 +10536,11 @@ function checkWallCollision(newX, newZ, grid_unused) {
 }
 
 /* --- Stair Entry Collision ---
-   Sides: bidirectional (always block) — keeps player between handrails.
-   Back:  one-directional (block entry from outside only, allow exit from inside)
-          — prevents climbing from behind but lets player reach the exit.
-   Front: open — normal entry/exit. */
+   Back wall:  one-directional — blocks entry from outside the cell, allows exit from inside.
+               Uses center-based check (only triggers when player center is outside the cell).
+   Side walls: bidirectional (handrails) — only active when player center is inside the cell.
+               This prevents side walls from interfering with the front approach.
+   Front:      completely open — normal entry/exit. */
 function checkStairEntry(newX, newZ) {
     var grid = GameState.mazeFloors && GameState.mazeFloors[GameState.playerCurrentFloor];
     if (!grid) return { x: newX, z: newZ };
@@ -10551,73 +10559,69 @@ function checkStairEntry(newX, newZ) {
             if (!cell.isStairs || !cell.stairDirection) continue;
 
             var dir = cell.stairDirection;
-            var cL = cx * CL;           // west edge
-            var cR = (cx + 1) * CL;     // east edge
-            var cT = cz * CL;           // north edge
-            var cB = (cz + 1) * CL;     // south edge
+            var x0 = cx * CL;           // west edge
+            var x1 = (cx + 1) * CL;     // east edge
+            var z0 = cz * CL;           // north edge
+            var z1 = (cz + 1) * CL;     // south edge
+            var isNS = (dir === 'north' || dir === 'south');
 
-            // Determine wall types per side:
-            // 'north' stair → front=south, back=north, sides=east+west
-            // 'south' stair → front=north, back=south, sides=east+west
-            // 'east'  stair → front=west,  back=east,  sides=north+south
-            // 'west'  stair → front=east,  back=west,  sides=north+south
-            var isNorthSouth = (dir === 'north' || dir === 'south');
-
-            // --- Side walls (bidirectional — always block) ---
-            if (isNorthSouth) {
-                // West side
-                if (newX - r < cL + hw && newX + r > cL - hw &&
-                    newZ + r > cT && newZ - r < cB) {
-                    if (newX < cL) newX = cL - hw - r;
-                    else newX = cL + hw + r;
+            // --- BACK WALL (one-directional: block from outside only) ---
+            // Only triggers when player CENTER is on the outside of the back edge.
+            // Player inside the cell can freely reach/pass the back edge (for floor transition).
+            if (dir === 'north') {
+                // Back = north edge (z0). Block player whose center is north of z0.
+                if (newZ < z0 && newZ + r > z0 && newX + r > x0 && newX - r < x1) {
+                    newZ = z0 - r;
                 }
-                // East side
-                if (newX + r > cR - hw && newX - r < cR + hw &&
-                    newZ + r > cT && newZ - r < cB) {
-                    if (newX > cR) newX = cR + hw + r;
-                    else newX = cR - hw - r;
+            } else if (dir === 'south') {
+                // Back = south edge (z1). Block player whose center is south of z1.
+                if (newZ > z1 && newZ - r < z1 && newX + r > x0 && newX - r < x1) {
+                    newZ = z1 + r;
                 }
-            } else {
-                // North side
-                if (newZ - r < cT + hw && newZ + r > cT - hw &&
-                    newX + r > cL && newX - r < cR) {
-                    if (newZ < cT) newZ = cT - hw - r;
-                    else newZ = cT + hw + r;
+            } else if (dir === 'east') {
+                // Back = east edge (x1). Block player whose center is east of x1.
+                if (newX > x1 && newX - r < x1 && newZ + r > z0 && newZ - r < z1) {
+                    newX = x1 + r;
                 }
-                // South side
-                if (newZ + r > cB - hw && newZ - r < cB + hw &&
-                    newX + r > cL && newX - r < cR) {
-                    if (newZ > cB) newZ = cB + hw + r;
-                    else newZ = cB - hw - r;
+            } else if (dir === 'west') {
+                // Back = west edge (x0). Block player whose center is west of x0.
+                if (newX < x0 && newX + r > x0 && newZ + r > z0 && newZ - r < z1) {
+                    newX = x0 - r;
                 }
             }
 
-            // --- Back wall (one-directional: only block entry from OUTSIDE) ---
-            // Player inside the cell can pass through (exit); player outside is pushed out.
-            if (dir === 'north') {
-                // Back = north edge (cT)
-                if (newZ - r < cT + hw && newZ + r > cT - hw &&
-                    newX + r > cL && newX - r < cR) {
-                    if (newZ < cT) newZ = cT - hw - r;  // outside → push out
-                    // inside → no push (allow exit)
+            // --- SIDE WALLS (handrails — bidirectional) ---
+            // Only active when player CENTER is inside the cell's main axis range.
+            // This prevents side walls from catching players approaching the front.
+            if (isNS) {
+                // N/S stair: sides at x0 (west) and x1 (east)
+                // Only apply when player center Z is inside the cell
+                if (newZ > z0 && newZ < z1) {
+                    // West handrail
+                    if (newX - r < x0 + hw && newX + r > x0 - hw) {
+                        if (newX < x0) newX = x0 - hw - r;
+                        else newX = x0 + hw + r;
+                    }
+                    // East handrail
+                    if (newX + r > x1 - hw && newX - r < x1 + hw) {
+                        if (newX > x1) newX = x1 + hw + r;
+                        else newX = x1 - hw - r;
+                    }
                 }
-            } else if (dir === 'south') {
-                // Back = south edge (cB)
-                if (newZ + r > cB - hw && newZ - r < cB + hw &&
-                    newX + r > cL && newX - r < cR) {
-                    if (newZ > cB) newZ = cB + hw + r;  // outside → push out
-                }
-            } else if (dir === 'east') {
-                // Back = east edge (cR)
-                if (newX + r > cR - hw && newX - r < cR + hw &&
-                    newZ + r > cT && newZ - r < cB) {
-                    if (newX > cR) newX = cR + hw + r;  // outside → push out
-                }
-            } else if (dir === 'west') {
-                // Back = west edge (cL)
-                if (newX - r < cL + hw && newX + r > cL - hw &&
-                    newZ + r > cT && newZ - r < cB) {
-                    if (newX < cL) newX = cL - hw - r;  // outside → push out
+            } else {
+                // E/W stair: sides at z0 (north) and z1 (south)
+                // Only apply when player center X is inside the cell
+                if (newX > x0 && newX < x1) {
+                    // North handrail
+                    if (newZ - r < z0 + hw && newZ + r > z0 - hw) {
+                        if (newZ < z0) newZ = z0 - hw - r;
+                        else newZ = z0 + hw + r;
+                    }
+                    // South handrail
+                    if (newZ + r > z1 - hw && newZ - r < z1 + hw) {
+                        if (newZ > z1) newZ = z1 + hw + r;
+                        else newZ = z1 - hw - r;
+                    }
                 }
             }
         }
