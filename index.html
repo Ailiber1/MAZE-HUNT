@@ -2305,8 +2305,7 @@ body {
         <div id="game-hud">
             <div id="hud-stage-label"></div>
             <div id="hud-floor-label">1F</div>
-            <div id="hud-stair-debug" style="position:fixed;top:50px;left:10px;color:#0f0;font-size:12px;font-family:monospace;z-index:9999;background:rgba(0,0,0,0.7);padding:4px 8px;display:none;white-space:pre;"></div>
-            <div id="hud-timer">00:00</div>
+<div id="hud-timer">00:00</div>
             <div id="crosshair"></div>
             <div id="hud-stamina"><div id="hud-stamina-bar"></div></div>
             <div id="pointer-lock-hint" style="display:none;"></div>
@@ -6883,8 +6882,8 @@ function getStairProgress(pos, direction) {
 
 /* Stair climbing system:
    - Y calculated from LOWER floor's perspective (consistent direction)
-   - Always allows climbing from any entry direction (no walls around stair cells)
-   - Floor transition mid-stair (progress 0.85 up / 0.15 down)
+   - Always allows climbing (checkStairEntry blocks sides+back, so only front entry works)
+   - Floor transition near exit (progress 0.95 up / 0.05 down)
    - Smooth Y transitions to prevent flickering at cell boundaries */
 var _lastStairInfo = null;
 var _smoothStairY = -1; // For smooth transitions
@@ -6902,27 +6901,6 @@ function updatePlayerY() {
     const cell = floors[currentFloor][cellZ][cellX];
     var targetY;
 
-    // --- DEBUG: stair state ---
-    var _dbgEl = document.getElementById('hud-stair-debug');
-    if (_dbgEl) {
-        var _dbgLines = 'cell(' + cellX + ',' + cellZ + ') F' + currentFloor;
-        _dbgLines += '\nisStairs=' + (cell ? !!cell.isStairs : 'null');
-        _dbgLines += ' connectsTo=' + (cell && cell.connectsTo ? cell.connectsTo.floor : 'null');
-        _dbgLines += ' dir=' + (cell ? cell.stairDirection || 'none' : 'null');
-        if (cell && cell.isStairs && cell.connectsTo) {
-            var _lf = Math.min(currentFloor, cell.connectsTo.floor);
-            var _lc = floors[_lf][cellZ][cellX];
-            var _prog = getStairProgress(camera.position, _lc.stairDirection);
-            _dbgLines += '\nprogress=' + _prog.toFixed(3) + ' lowerDir=' + _lc.stairDirection;
-            _dbgLines += '\ntargetY=' + ((_lf * FLOOR_H + PLAYER_HEIGHT) + ((Math.max(currentFloor, cell.connectsTo.floor) - _lf) * FLOOR_H) * Math.max(0, Math.min(_prog, 1))).toFixed(2);
-            _dbgLines += ' smoothY=' + _smoothStairY.toFixed(2);
-        }
-        _dbgLines += '\nonStairs=' + GameState.onStairs + ' camY=' + camera.position.y.toFixed(2);
-        _dbgEl.style.display = 'block';
-        _dbgEl.textContent = _dbgLines;
-    }
-    // --- END DEBUG ---
-
     if (cell && cell.isStairs && cell.connectsTo) {
         const otherFloor = cell.connectsTo.floor;
         const lowerFloor = Math.min(currentFloor, otherFloor);
@@ -6937,12 +6915,14 @@ function updatePlayerY() {
         targetY = lowY + (highY - lowY) * clampedProgress;
         _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
 
-        // Mid-stair floor transition: switch floor before reaching the end
-        // so the player uses the new floor's grid (where the exit is open)
-        if (currentFloor === lowerFloor && clampedProgress >= 0.85) {
+        // Mid-stair floor transition: switch floor near the exit end
+        // so the player uses the new floor's grid (where the exit is open).
+        // Threshold at 0.95/0.05 to keep the stair ramp visible as long as possible.
+        // (One-directional back wall allows player to reach ~0.98 progress.)
+        if (currentFloor === lowerFloor && clampedProgress >= 0.95) {
             GameState.playerCurrentFloor = upperFloor;
             updateFloorLabel();
-        } else if (currentFloor === upperFloor && clampedProgress <= 0.15) {
+        } else if (currentFloor === upperFloor && clampedProgress <= 0.05) {
             GameState.playerCurrentFloor = lowerFloor;
             updateFloorLabel();
         }
@@ -10548,10 +10528,11 @@ function checkWallCollision(newX, newZ, grid_unused) {
     return { x: newX, z: newZ };
 }
 
-/* --- Stair Entry Collision (invisible walls: block sides & back, open front) ---
-   For each stair cell, stairDirection indicates ramp direction.
-   Front (open) = opposite of stairDirection.
-   Sides + back = blocked by invisible collision. */
+/* --- Stair Entry Collision ---
+   Sides: bidirectional (always block) — keeps player between handrails.
+   Back:  one-directional (block entry from outside only, allow exit from inside)
+          — prevents climbing from behind but lets player reach the exit.
+   Front: open — normal entry/exit. */
 function checkStairEntry(newX, newZ) {
     var grid = GameState.mazeFloors && GameState.mazeFloors[GameState.playerCurrentFloor];
     if (!grid) return { x: newX, z: newZ };
@@ -10575,39 +10556,69 @@ function checkStairEntry(newX, newZ) {
             var cT = cz * CL;           // north edge
             var cB = (cz + 1) * CL;     // south edge
 
-            // Blocked sides: 3 of 4 (front is open)
-            // 'north' stair: open=south, block=north+east+west
-            // 'south' stair: open=north, block=south+east+west
-            // 'east'  stair: open=west,  block=east+north+south
-            // 'west'  stair: open=east,  block=west+north+south
-            var blockN = (dir !== 'south');  // block north unless front is north
-            var blockS = (dir !== 'north');  // block south unless front is south
-            var blockW = (dir !== 'east');   // block west unless front is west
-            var blockE = (dir !== 'west');   // block east unless front is east
+            // Determine wall types per side:
+            // 'north' stair → front=south, back=north, sides=east+west
+            // 'south' stair → front=north, back=south, sides=east+west
+            // 'east'  stair → front=west,  back=east,  sides=north+south
+            // 'west'  stair → front=east,  back=west,  sides=north+south
+            var isNorthSouth = (dir === 'north' || dir === 'south');
 
-            // North wall (cT)
-            if (blockN && newZ - r < cT + hw && newZ + r > cT - hw &&
-                newX + r > cL && newX - r < cR) {
-                if (newZ < cT) newZ = cT - hw - r;      // push north (out)
-                else newZ = cT + hw + r;                  // push south (in)
+            // --- Side walls (bidirectional — always block) ---
+            if (isNorthSouth) {
+                // West side
+                if (newX - r < cL + hw && newX + r > cL - hw &&
+                    newZ + r > cT && newZ - r < cB) {
+                    if (newX < cL) newX = cL - hw - r;
+                    else newX = cL + hw + r;
+                }
+                // East side
+                if (newX + r > cR - hw && newX - r < cR + hw &&
+                    newZ + r > cT && newZ - r < cB) {
+                    if (newX > cR) newX = cR + hw + r;
+                    else newX = cR - hw - r;
+                }
+            } else {
+                // North side
+                if (newZ - r < cT + hw && newZ + r > cT - hw &&
+                    newX + r > cL && newX - r < cR) {
+                    if (newZ < cT) newZ = cT - hw - r;
+                    else newZ = cT + hw + r;
+                }
+                // South side
+                if (newZ + r > cB - hw && newZ - r < cB + hw &&
+                    newX + r > cL && newX - r < cR) {
+                    if (newZ > cB) newZ = cB + hw + r;
+                    else newZ = cB - hw - r;
+                }
             }
-            // South wall (cB)
-            if (blockS && newZ + r > cB - hw && newZ - r < cB + hw &&
-                newX + r > cL && newX - r < cR) {
-                if (newZ > cB) newZ = cB + hw + r;      // push south (out)
-                else newZ = cB - hw - r;                  // push north (in)
-            }
-            // West wall (cL)
-            if (blockW && newX - r < cL + hw && newX + r > cL - hw &&
-                newZ + r > cT && newZ - r < cB) {
-                if (newX < cL) newX = cL - hw - r;      // push west (out)
-                else newX = cL + hw + r;                  // push east (in)
-            }
-            // East wall (cR)
-            if (blockE && newX + r > cR - hw && newX - r < cR + hw &&
-                newZ + r > cT && newZ - r < cB) {
-                if (newX > cR) newX = cR + hw + r;      // push east (out)
-                else newX = cR - hw - r;                  // push west (in)
+
+            // --- Back wall (one-directional: only block entry from OUTSIDE) ---
+            // Player inside the cell can pass through (exit); player outside is pushed out.
+            if (dir === 'north') {
+                // Back = north edge (cT)
+                if (newZ - r < cT + hw && newZ + r > cT - hw &&
+                    newX + r > cL && newX - r < cR) {
+                    if (newZ < cT) newZ = cT - hw - r;  // outside → push out
+                    // inside → no push (allow exit)
+                }
+            } else if (dir === 'south') {
+                // Back = south edge (cB)
+                if (newZ + r > cB - hw && newZ - r < cB + hw &&
+                    newX + r > cL && newX - r < cR) {
+                    if (newZ > cB) newZ = cB + hw + r;  // outside → push out
+                }
+            } else if (dir === 'east') {
+                // Back = east edge (cR)
+                if (newX + r > cR - hw && newX - r < cR + hw &&
+                    newZ + r > cT && newZ - r < cB) {
+                    if (newX > cR) newX = cR + hw + r;  // outside → push out
+                }
+            } else if (dir === 'west') {
+                // Back = west edge (cL)
+                if (newX - r < cL + hw && newX + r > cL - hw &&
+                    newZ + r > cT && newZ - r < cB) {
+                    if (newX < cL) newX = cL - hw - r;  // outside → push out
+                }
             }
         }
     }
@@ -10660,8 +10671,7 @@ function updatePlayerMovement(delta) {
         const newX = camera.position.x + dir.x * speed * delta;
         const newZ = camera.position.z + dir.z * speed * delta;
         var result = checkWallCollision(newX, newZ, grid);
-        // checkStairEntry temporarily disabled for debugging stair climbing
-        // result = checkStairEntry(result.x, result.z);
+        result = checkStairEntry(result.x, result.z);
         camera.position.x = result.x;
         camera.position.z = result.z;
     }
