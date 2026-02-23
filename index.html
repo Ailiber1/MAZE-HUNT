@@ -2305,6 +2305,7 @@ body {
         <div id="game-hud">
             <div id="hud-stage-label"></div>
             <div id="hud-floor-label">1F</div>
+            <div id="hud-stair-debug" style="position:fixed;top:50px;left:10px;color:#0f0;font-size:12px;font-family:monospace;z-index:9999;background:rgba(0,0,0,0.7);padding:4px 8px;display:none;white-space:pre;"></div>
             <div id="hud-timer">00:00</div>
             <div id="crosshair"></div>
             <div id="hud-stamina"><div id="hud-stamina-bar"></div></div>
@@ -6901,6 +6902,27 @@ function updatePlayerY() {
     const cell = floors[currentFloor][cellZ][cellX];
     var targetY;
 
+    // --- DEBUG: stair state ---
+    var _dbgEl = document.getElementById('hud-stair-debug');
+    if (_dbgEl) {
+        var _dbgLines = 'cell(' + cellX + ',' + cellZ + ') F' + currentFloor;
+        _dbgLines += '\nisStairs=' + (cell ? !!cell.isStairs : 'null');
+        _dbgLines += ' connectsTo=' + (cell && cell.connectsTo ? cell.connectsTo.floor : 'null');
+        _dbgLines += ' dir=' + (cell ? cell.stairDirection || 'none' : 'null');
+        if (cell && cell.isStairs && cell.connectsTo) {
+            var _lf = Math.min(currentFloor, cell.connectsTo.floor);
+            var _lc = floors[_lf][cellZ][cellX];
+            var _prog = getStairProgress(camera.position, _lc.stairDirection);
+            _dbgLines += '\nprogress=' + _prog.toFixed(3) + ' lowerDir=' + _lc.stairDirection;
+            _dbgLines += '\ntargetY=' + ((_lf * FLOOR_H + PLAYER_HEIGHT) + ((Math.max(currentFloor, cell.connectsTo.floor) - _lf) * FLOOR_H) * Math.max(0, Math.min(_prog, 1))).toFixed(2);
+            _dbgLines += ' smoothY=' + _smoothStairY.toFixed(2);
+        }
+        _dbgLines += '\nonStairs=' + GameState.onStairs + ' camY=' + camera.position.y.toFixed(2);
+        _dbgEl.style.display = 'block';
+        _dbgEl.textContent = _dbgLines;
+    }
+    // --- END DEBUG ---
+
     if (cell && cell.isStairs && cell.connectsTo) {
         const otherFloor = cell.connectsTo.floor;
         const lowerFloor = Math.min(currentFloor, otherFloor);
@@ -10638,7 +10660,8 @@ function updatePlayerMovement(delta) {
         const newX = camera.position.x + dir.x * speed * delta;
         const newZ = camera.position.z + dir.z * speed * delta;
         var result = checkWallCollision(newX, newZ, grid);
-        result = checkStairEntry(result.x, result.z);
+        // checkStairEntry temporarily disabled for debugging stair climbing
+        // result = checkStairEntry(result.x, result.z);
         camera.position.x = result.x;
         camera.position.z = result.z;
     }
