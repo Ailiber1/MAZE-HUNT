@@ -7544,16 +7544,13 @@ function directBoneAnimUpdate(cpuSkinData) {
         if (b.propName === 'quaternion') {
             b.bone.quaternion.set(result[0], result[1], result[2], result[3]);
         } else if (b.propName === 'position') {
-            // FIX: Apply position as DELTA from animation rest, added to bind pose.
-            // This handles shared animations at different scales than the model.
-            if (b.bindPos && b.animRestPos) {
-                b.bone.position.set(
-                    b.bindPos[0] + (result[0] - b.animRestPos[0]),
-                    b.bindPos[1] + (result[1] - b.animRestPos[1]),
-                    b.bindPos[2] + (result[2] - b.animRestPos[2])
-                );
-            } else {
-                b.bone.position.set(result[0], result[1], result[2]);
+            // FIX: Do NOT apply animation position values — shared animations use
+            // a different coordinate scale (cm vs m), causing bones to shift wildly.
+            // Instead, restore the original bind pose position every frame.
+            // This undoes any damage from mixer.update() and keeps bones at correct positions.
+            // Only quaternion (rotation) tracks drive the animation.
+            if (b.bone._bindPos) {
+                b.bone.position.copy(b.bone._bindPos);
             }
         } else if (b.propName === 'scale') {
             b.bone.scale.set(result[0], result[1], result[2]);
@@ -7586,15 +7583,8 @@ function buildDirectAnimData(sourceScene, clip) {
                 propName: propName,
                 interpolant: track.createInterpolant()
             };
-            // FIX: For position tracks, store the bind pose position and animation rest position.
-            // Shared animations may be at a different scale than the model (e.g., Hips at Y=95
-            // in animation vs Y=0.9 in model). We apply positions as DELTAS from animation rest,
-            // added to the model's bind pose position.
-            if (propName === 'position') {
-                binding.bindPos = [bone.position.x, bone.position.y, bone.position.z];
-                // Animation rest position = first keyframe values
-                binding.animRestPos = [track.values[0], track.values[1], track.values[2]];
-            }
+            // Position tracks are handled by restoring bind positions (bone._bindPos)
+            // in directBoneAnimUpdate, so no extra data needed here.
             bindings.push(binding);
         }
     }
@@ -7615,6 +7605,27 @@ function cpuSkinUpdate(cpuSkinData) {
         skeleton.update();
         var bm = skeleton.boneMatrices;
         if (!bm || bm.length === 0) return;
+
+        // One-time bone world position diagnostic
+        if (!cpuSkinData._boneDiagDone) {
+            cpuSkinData._boneDiagDone = true;
+            var _keyBones = ['Hips', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightUpLeg', 'Spine'];
+            var _diagLines = [];
+            var _wp = new THREE.Vector3();
+            cpuSkinData.sourceScene.traverse(function(c) {
+                if (!c.isBone) return;
+                for (var ki = 0; ki < _keyBones.length; ki++) {
+                    if (c.name.toLowerCase().indexOf(_keyBones[ki].toLowerCase()) !== -1) {
+                        c.getWorldPosition(_wp);
+                        _diagLines.push(c.name + ': wY=' + _wp.y.toFixed(2) + ' lY=' + c.position.y.toFixed(4));
+                        break;
+                    }
+                }
+            });
+            var _boneDiag = '[BONE-DIAG]\n' + _diagLines.join('\n');
+            console.log(_boneDiag);
+            showGLBDiag(_boneDiag);
+        }
 
         var _boneMat = new THREE.Matrix4();
         var _v = new THREE.Vector4();
@@ -7862,9 +7873,14 @@ function processOniGLTF(group, gltf, stageId) {
     sourceScene.updateMatrixWorld(true);
 
     // Sanitize bone names: remove ':' (reserved in Three.js PropertyBinding)
+    // Also save bind pose positions BEFORE any animation runs (for cpuSkinUpdate)
     sourceScene.traverse(function(child) {
-        if (child.isBone && child.name && child.name.indexOf(':') !== -1) {
-            child.name = child.name.replace(/:/g, '');
+        if (child.isBone) {
+            if (child.name && child.name.indexOf(':') !== -1) {
+                child.name = child.name.replace(/:/g, '');
+            }
+            // Save original bind pose position (GLTF loader values)
+            child._bindPos = child.position.clone();
         }
     });
 
@@ -8768,7 +8784,11 @@ function updateOniAI(delta) {
 
         // ─── Animation mixer ───
         if (oni.group.userData.mixer) {
-            oni.group.userData.mixer.update(delta);
+            // FIX: Do NOT call mixer.update() for ONI — directBoneAnimUpdate in
+            // cpuSkinUpdate handles ALL bone transforms. The mixer's PropertyBinding
+            // sets absolute animation positions (wrong scale for shared anims) which
+            // conflict with the bind-pose restoration in directBoneAnimUpdate.
+            // oni.group.userData.mixer.update(delta);
             // Switch animation state based on AI state
             var oniAnimState = (oni.aiState === 'chase' || oni.aiState === 'lunge') ? 'run' :
                                (oni.aiState === 'patrol') ? 'walk' : 'idle';
