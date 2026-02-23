@@ -6733,13 +6733,9 @@ function placeStairs(floors, cols, rows, numStairs) {
         floors[toFloor][cell.z][cell.x].connectsTo = { floor: fromFloor, x: cell.x, z: cell.z };
         floors[toFloor][cell.z][cell.x].stairDirection = oppositeDir;
 
-        // Remove only travel-direction walls (keeps side walls to prevent falling)
+        // Remove only travel-direction walls (side walls from maze generation naturally remain)
         removeStairDirectionWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
         removeStairDirectionWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
-
-        // Force side walls CLOSED on stair cells to prevent walking off the side
-        ensureStairSideWalls(floors[fromFloor], cols, rows, cell.x, cell.z, dir);
-        ensureStairSideWalls(floors[toFloor], cols, rows, cell.x, cell.z, oppositeDir);
 
         stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
     }
@@ -6782,29 +6778,6 @@ function removeStairDirectionWalls(grid, cols, rows, x, z, direction) {
     }
 }
 
-/* Force side walls closed on stair cells to prevent walking off the side.
-   Side walls = perpendicular to travel direction. */
-function ensureStairSideWalls(grid, cols, rows, x, z, direction) {
-    const cell = grid[z][x];
-    switch (direction) {
-        case 'north':
-        case 'south':
-            // Travel is N-S, so side walls are left and right
-            cell.left = true;
-            cell.right = true;
-            if (x > 0) grid[z][x - 1].right = true;
-            if (x < cols - 1) grid[z][x + 1].left = true;
-            break;
-        case 'east':
-        case 'west':
-            // Travel is E-W, so side walls are top and bottom
-            cell.top = true;
-            cell.bottom = true;
-            if (z > 0) grid[z - 1][x].bottom = true;
-            if (z < rows - 1) grid[z + 1][x].top = true;
-            break;
-    }
-}
 
 /* --- Stair 3D Mesh Creation --- */
 function createStairs(cellX, cellZ, fromFloor, toFloor, direction, stageId) {
@@ -9708,8 +9681,7 @@ function buildMaze3D(floors, cols, rows, stageId) {
         const grid = floorArray[f];
         const yOffset = f * FLOOR_H;
 
-        // Floor plane
-        const floorGeo = new THREE.PlaneGeometry(cols * CL, rows * CL);
+        // Floor tiles (individual tiles with holes at stair cells)
         const floorMat = new THREE.MeshStandardMaterial({
             color: 0x08080a,
             emissive: colors.emissive,
@@ -9717,13 +9689,21 @@ function buildMaze3D(floors, cols, rows, stageId) {
             roughness: 0.95,
             metalness: 0.05,
         });
-        const floorMesh = new THREE.Mesh(floorGeo, floorMat);
-        floorMesh.rotation.x = -Math.PI / 2;
-        floorMesh.position.set(cols * CL / 2, yOffset, rows * CL / 2);
-        floorMesh.receiveShadow = true;
-        floorMesh.userData.floor = f;
-        scene.add(floorMesh);
-        wallMeshes.push(floorMesh);
+        for (let fy = 0; fy < rows; fy++) {
+            for (let fx = 0; fx < cols; fx++) {
+                // Skip floor tile at stair cells (prevents z-fighting and allows passage)
+                if (grid[fy][fx].isStairs) continue;
+
+                const tileGeo = new THREE.PlaneGeometry(CL, CL);
+                const tile = new THREE.Mesh(tileGeo, floorMat);
+                tile.rotation.x = -Math.PI / 2;
+                tile.position.set(fx * CL + CL / 2, yOffset, fy * CL + CL / 2);
+                tile.receiveShadow = true;
+                tile.userData.floor = f;
+                scene.add(tile);
+                wallMeshes.push(tile);
+            }
+        }
 
         // Floor grid lines
         const gridLineMat = new THREE.LineBasicMaterial({ color: colors.emissive, transparent: true, opacity: 0.05 });
@@ -9761,8 +9741,8 @@ function buildMaze3D(floors, cols, rows, stageId) {
 
             for (let cy = 0; cy < rows; cy++) {
                 for (let cx = 0; cx < cols; cx++) {
-                    // Skip ceiling tile if this cell has stairs going up
-                    if (grid[cy][cx].isStairs && grid[cy][cx].connectsTo && grid[cy][cx].connectsTo.floor > f) continue;
+                    // Skip ceiling tile at all stair cells (allows passage up/down)
+                    if (grid[cy][cx].isStairs) continue;
 
                     const tileGeo = new THREE.PlaneGeometry(CL, CL);
                     const tile = new THREE.Mesh(tileGeo, ceilMat);
