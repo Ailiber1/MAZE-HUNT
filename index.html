@@ -6974,6 +6974,18 @@ function updatePlayerY() {
             var highY = upperFloor * FLOOR_H + PLAYER_HEIGHT;
             targetY = lowY + (highY - lowY) * clampedProgress;
             _lastStairInfo = { lowerFloor: lowerFloor, upperFloor: upperFloor };
+
+            // Mid-stair floor transition: switch floor BEFORE reaching the back wall
+            // so the player uses the new floor's grid (where the exit wall is open)
+            if (currentFloor === lowerFloor && clampedProgress >= 0.85) {
+                GameState.playerCurrentFloor = upperFloor;
+                _stairCellKey = ''; // Re-evaluate entry on new floor
+                updateFloorLabel();
+            } else if (currentFloor === upperFloor && clampedProgress <= 0.15) {
+                GameState.playerCurrentFloor = lowerFloor;
+                _stairCellKey = '';
+                updateFloorLabel();
+            }
         } else {
             // Entered from behind — stay at current floor level
             targetY = currentFloor * FLOOR_H + PLAYER_HEIGHT;
@@ -9130,6 +9142,13 @@ function updateOniY(oni) {
         const highY = upperFloor * FLOOR_H;
         oni.position.y = lowY + (highY - lowY) * clampedProgress;
         oni.onStairs = true;
+
+        // Mid-stair floor transition for oni (same as player)
+        if (oni.currentFloor === lowerFloor && clampedProgress >= 0.85) {
+            oni.currentFloor = upperFloor;
+        } else if (oni.currentFloor === upperFloor && clampedProgress <= 0.15) {
+            oni.currentFloor = lowerFloor;
+        }
     } else {
         // Floor transition on exit: snap to nearest floor
         if (oni.onStairs) {
