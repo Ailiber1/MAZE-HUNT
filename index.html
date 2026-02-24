@@ -4298,7 +4298,7 @@ function createPlayerModel(playerIndex) {
     nctx.fillText(pname, 64, 22);
     var nameTex = new THREE.CanvasTexture(nameCanvas);
     var nameSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: nameTex, transparent: true, opacity: 0.8 }));
-    nameSprite.position.set(0, 2.0, 0);
+    nameSprite.position.set(0, 2.8, 0);
     nameSprite.scale.set(1.5, 0.4, 1);
     group.add(nameSprite);
     group.userData.nameSprite = nameSprite;
@@ -4462,7 +4462,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 sourceScene.traverse(function(child) {
                     if (child.isMesh && child.geometry) {
                         var clonedGeoFb = child.geometry.clone();
-                        clonedGeoFb.clearGroups();
+                        if (!Array.isArray(child.material)) {
+                            clonedGeoFb.clearGroups();
+                        }
                         clonedGeoFb.setDrawRange(0, Infinity);
                         allMeshData.push({ geometry: clonedGeoFb, material: cloneMatForRemote(child.material) });
                     }
@@ -4558,20 +4560,15 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     dstGeo.setIndex(new THREE.BufferAttribute(newIdx, 1));
                 }
 
-                dstGeo.clearGroups();
+                // Multi-material: preserve groups for correct face/body textures
+                if (!Array.isArray(origSM.material)) {
+                    dstGeo.clearGroups();
+                }
                 dstGeo.setDrawRange(0, Infinity);
                 dstGeo.computeVertexNormals();
 
-                // Fresh MeshBasicMaterial
-                var origMat = origSM.material;
-                var firstMat = Array.isArray(origMat) ? origMat[0] : origMat;
-                var bodyMat = new THREE.MeshBasicMaterial({
-                    side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
-                });
-                if (firstMat) {
-                    if (firstMat.map) bodyMat.map = firstMat.map;
-                    if (firstMat.color) bodyMat.color.copy(firstMat.color);
-                }
+                // Fresh MeshBasicMaterial (preserves multi-material for face textures)
+                var bodyMat = cloneMatForRemote(origSM.material);
 
                 var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
                 bodyMesh.frustumCulled = false;
@@ -8538,28 +8535,28 @@ function processOniGLTF(group, gltf, stageId) {
         showGLBDiag('[ONI-FIX] vtx=' + vtxCount + ' idx=' + idxCount + ' type=' + idxType +
             ' srcGroups=' + origGroups.length + ' srcDR=[' + origDrawRange.start + ',' + origDrawRange.count + ']');
 
-        // === FIX: Clear ALL geometry groups - use single drawRange instead ===
-        // Groups can restrict rendering to only their covered index ranges.
-        // Any indices not covered by a group will NOT be drawn.
-        // By clearing groups, Three.js uses drawRange for the entire geometry.
-        dstGeo.clearGroups();
+        // Multi-material: preserve groups for correct face/body textures
+        if (!Array.isArray(origSM.material)) {
+            dstGeo.clearGroups();
+        }
         dstGeo.setDrawRange(0, Infinity);
-        console.log('[ONI-FIX] Cleared groups, drawRange set to [0, Infinity]');
+        console.log('[ONI-FIX] drawRange set to [0, Infinity], groups=' + (Array.isArray(origSM.material) ? 'preserved' : 'cleared'));
 
         // Recompute normals
         dstGeo.computeVertexNormals();
 
-        // === Create FRESH MeshBasicMaterial (single material, no groups needed) ===
+        // === Create FRESH MeshBasicMaterial (preserves multi-material for face textures) ===
         var origMat = origSM.material;
         var singleMat;
         if (Array.isArray(origMat)) {
-            // Use the first material's texture for the single material
-            var firstMat = origMat[0];
-            singleMat = new THREE.MeshBasicMaterial({
-                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+            singleMat = origMat.map(function(m) {
+                var bm = new THREE.MeshBasicMaterial({
+                    side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+                });
+                if (m.map) bm.map = m.map;
+                if (m.color) bm.color.copy(m.color);
+                return bm;
             });
-            if (firstMat && firstMat.map) singleMat.map = firstMat.map;
-            if (firstMat && firstMat.color) singleMat.color.copy(firstMat.color);
         } else if (origMat) {
             singleMat = new THREE.MeshBasicMaterial({
                 side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
@@ -8605,18 +8602,32 @@ function processOniGLTF(group, gltf, stageId) {
             Object.keys(clonedGeo.morphAttributes).forEach(function(k) { delete clonedGeo.morphAttributes[k]; });
         }
 
-        clonedGeo.clearGroups();
+        // Multi-material: preserve groups for correct face/body textures
+        if (!Array.isArray(origMesh.material)) {
+            clonedGeo.clearGroups();
+        }
         clonedGeo.setDrawRange(0, Infinity);
         clonedGeo.computeVertexNormals();
 
         var origMatS = origMesh.material;
-        var staticMat = new THREE.MeshBasicMaterial({
-            side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
-        });
-        if (origMatS) {
-            var firstMatS = Array.isArray(origMatS) ? origMatS[0] : origMatS;
-            if (firstMatS && firstMatS.map) staticMat.map = firstMatS.map;
-            if (firstMatS && firstMatS.color) staticMat.color.copy(firstMatS.color);
+        var staticMat;
+        if (Array.isArray(origMatS)) {
+            staticMat = origMatS.map(function(m) {
+                var bm = new THREE.MeshBasicMaterial({
+                    side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+                });
+                if (m.map) bm.map = m.map;
+                if (m.color) bm.color.copy(m.color);
+                return bm;
+            });
+        } else {
+            staticMat = new THREE.MeshBasicMaterial({
+                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+            });
+            if (origMatS) {
+                if (origMatS.map) staticMat.map = origMatS.map;
+                if (origMatS.color) staticMat.color.copy(origMatS.color);
+            }
         }
 
         var staticBodyMesh = new THREE.Mesh(clonedGeo, staticMat);
