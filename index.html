@@ -4198,11 +4198,17 @@ const SyncLayer = {
         this.roomRef.child('playerPositions/' + playerIndex).onDisconnect().remove();
     },
 
-    disconnect() {
+    // Clear all Firebase listeners without removing player data or roomRef.
+    // Use between stages to prevent listener duplication.
+    clearListeners() {
         this.listeners.forEach(function(l) {
             l.ref.off(l.event, l.cb);
         });
         this.listeners = [];
+    },
+
+    disconnect() {
+        this.clearListeners();
         if (this.roomRef && GameState.playerIndex !== null) {
             this.roomRef.child('playerPositions/' + GameState.playerIndex).remove();
             this.roomRef.child('pins/' + GameState.playerIndex).remove();
@@ -5501,7 +5507,9 @@ function launchMultiGame(config) {
     // Spawn remote player models
     spawnRemotePlayers();
 
-    // Start SyncLayer
+    // Clear old SyncLayer listeners from previous stage to prevent duplication.
+    // Use clearListeners() instead of disconnect() to preserve player data and roomRef.
+    SyncLayer.clearListeners();
     SyncLayer.connect(GameState.roomId);
     SyncLayer.setupDisconnect(GameState.playerIndex);
 
@@ -5876,6 +5884,8 @@ function nextMultiStage() {
         }
     }
     GameState.coopRetrying = false;
+    // Clear synced ONI model IDs so new stage gets fresh models
+    GameState.syncedOniModelIds = null;
 
     if (GameState.isHost) {
         startMultiplayerGame();
@@ -8011,12 +8021,59 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
         }
     }
 
+    // === WORLD-SPACE ARM DOWN ROTATION ===
+    // Previous attempts with bone-local/parent-local Euler angles failed because
+    // bone axis orientations vary per model. Instead, compute the rotation in
+    // WORLD space (rotate around world Z axis to bring horizontal arms downward)
+    // and convert to parent frame using the parent's world quaternion.
+    if (!cpuSkinData._armDownCache) {
+        // Compute once: parent world quaternions in rest pose → arm-down deltas
+        cpuSkinData.sourceScene.updateMatrixWorld(true);
+        cpuSkinData._armDownCache = { leftDelta: null, rightDelta: null };
+        var _armAngle = 1.15; // ~66° down from horizontal
+        var _worldZ = new THREE.Vector3(0, 0, 1);
+        // LeftArm: rotate around world +Z by +angle (right-hand rule: -X → -Y = down)
+        var leftBones = findBones('LeftArm');
+        if (leftBones && leftBones[0] && leftBones[0].bone.parent) {
+            var lpwq = new THREE.Quaternion();
+            leftBones[0].bone.parent.getWorldQuaternion(lpwq);
+            var lWorldRot = new THREE.Quaternion().setFromAxisAngle(_worldZ, _armAngle);
+            var lpInv = lpwq.clone().invert();
+            cpuSkinData._armDownCache.leftDelta = lpInv.multiply(lWorldRot).multiply(lpwq.clone());
+        }
+        // RightArm: rotate around world +Z by -angle (right-hand rule: +X → -Y = down)
+        var rightBones = findBones('RightArm');
+        if (rightBones && rightBones[0] && rightBones[0].bone.parent) {
+            var rpwq = new THREE.Quaternion();
+            rightBones[0].bone.parent.getWorldQuaternion(rpwq);
+            var rWorldRot = new THREE.Quaternion().setFromAxisAngle(_worldZ, -_armAngle);
+            var rpInv = rpwq.clone().invert();
+            cpuSkinData._armDownCache.rightDelta = rpInv.multiply(rWorldRot).multiply(rpwq.clone());
+        }
+        console.log('[ANIM] Arm-down cache built: left=' + !!cpuSkinData._armDownCache.leftDelta +
+            ' right=' + !!cpuSkinData._armDownCache.rightDelta);
+    }
+
+    // Helper: apply cached arm-down world rotation to arm bones
+    function applyArmDown() {
+        if (cpuSkinData._armDownCache.leftDelta) {
+            var lb = findBones('LeftArm');
+            if (lb) { for (var bi = 0; bi < lb.length; bi++) {
+                lb[bi].bone.quaternion.copy(lb[bi].restQuat);
+                lb[bi].bone.quaternion.premultiply(cpuSkinData._armDownCache.leftDelta);
+            }}
+        }
+        if (cpuSkinData._armDownCache.rightDelta) {
+            var rb = findBones('RightArm');
+            if (rb) { for (var bi = 0; bi < rb.length; bi++) {
+                rb[bi].bone.quaternion.copy(rb[bi].restQuat);
+                rb[bi].bone.quaternion.premultiply(cpuSkinData._armDownCache.rightDelta);
+            }}
+        }
+    }
+
     // Base arm pose: always applied (idle, walk, run)
-    // FIX: premultiply (parent-space) Z-rotation to bring arms down from T-pose.
-    // premultiply Z=+1.15 → arms UP (banzai), Z=-1.15 → arms DOWN (correct).
-    var armDown = -1.15; // negative Z in parent-space = downward from T-pose
-    applyDelta('LeftArm', 0, 0, armDown, true);
-    applyDelta('RightArm', 0, 0, -armDown, true);
+    applyArmDown();
     applyDelta('LeftForeArm', -0.4, 0, 0);
     applyDelta('RightForeArm', -0.4, 0, 0);
 
@@ -8041,9 +8098,8 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
     // Lower legs (knees)
     applyDelta('LeftLeg', kneeFlexL, 0, 0);
     applyDelta('RightLeg', kneeFlexR, 0, 0);
-    // Upper arms: base down-rotation (Z, parent-space) + walking swing (X, local-space)
-    applyDelta('LeftArm', 0, 0, armDown, true);
-    applyDelta('RightArm', 0, 0, -armDown, true);
+    // Upper arms: world-space arm-down + local walking swing
+    applyArmDown();
     applyDelta('LeftArm', armSwing, 0, 0, false, true);
     applyDelta('RightArm', -armSwing, 0, 0, false, true);
     // Forearms: natural elbow bend + slight walking flex
@@ -8213,17 +8269,39 @@ function cpuSkinUpdate(cpuSkinData) {
             }
 
             if (cpuSkinData._bodyGroup) {
-                // FIX: Cache first-frame boneTransform output dimensions.
-                // Raw geometry srcHeight and boneTransform output height can be in
-                // DIFFERENT unit scales (e.g., geometry=1.8m vs boneTransform=180cm).
-                // By caching the first frame's boneTransform values, we get the correct
-                // unit scale AND avoid per-frame fluctuation from animation.
+                // FIX: Compute feetMinY from ONLY lower-body vertices.
+                // Previous bug: globalMinY includes hand vertices which may be
+                // BELOW feet due to arm-down rotation. Using globalMinY placed
+                // HANDS at Y=0 instead of FEET, causing characters to float.
+                // Solution: only consider vertices whose SOURCE geometry Y is in
+                // the lower 30% of the model (legs/feet area, never hands).
                 var targetH = 2.5;
                 if (!cpuSkinData._cachedOutHeight) {
+                    var srcH = cpuSkinData.srcHeight || 1.8;
+                    var srcMin = cpuSkinData._srcMinY || 0;
+                    var footThreshY = srcMin + srcH * 0.3;
+                    var feetMinY = Infinity;
+                    var vtxOff2 = 0;
+                    for (var fm = 0; fm < origSMs.length; fm++) {
+                        var fmCount = origSMs[fm].geometry.attributes.position.count;
+                        var fmSrcPos = origSMs[fm].geometry.attributes.position;
+                        for (var fi = 0; fi < fmCount; fi++) {
+                            var fSrcY = fmSrcPos.getY(fi);
+                            if (fSrcY < footThreshY) {
+                                var fOutY = tempBuf[(vtxOff2 + fi) * 3 + 1];
+                                if (fOutY < feetMinY) feetMinY = fOutY;
+                            }
+                        }
+                        vtxOff2 += fmCount;
+                    }
+                    if (feetMinY === Infinity) feetMinY = globalMinY;
                     cpuSkinData._cachedOutHeight = outHeight;
-                    cpuSkinData._cachedMinY = globalMinY;
-                    console.log('[SKIN] Cached first-frame: outH=' + outHeight.toFixed(4) +
-                        ' minY=' + globalMinY.toFixed(4) + ' srcH=' + (cpuSkinData.srcHeight || 0).toFixed(4));
+                    cpuSkinData._cachedFeetMinY = feetMinY;
+                    console.log('[SKIN] Cached: outH=' + outHeight.toFixed(4) +
+                        ' globalMinY=' + globalMinY.toFixed(4) +
+                        ' feetMinY=' + feetMinY.toFixed(4) +
+                        ' diff=' + (feetMinY - globalMinY).toFixed(4) +
+                        ' srcH=' + srcH.toFixed(4));
                 }
                 var scaleFix = targetH / cpuSkinData._cachedOutHeight;
                 var centerX = (globalMinX + globalMaxX) / 2;
@@ -8231,7 +8309,7 @@ function cpuSkinUpdate(cpuSkinData) {
                 cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
                 cpuSkinData._bodyGroup.position.set(
                     -centerX * scaleFix,
-                    -cpuSkinData._cachedMinY * scaleFix,
+                    -cpuSkinData._cachedFeetMinY * scaleFix,
                     -centerZ * scaleFix
                 );
             }
