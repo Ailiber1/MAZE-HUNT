@@ -5587,6 +5587,19 @@ function launchMultiGame(config) {
                 rp.model.visible = false;
                 // Show capture notification to all players
                 showCaptureNotification(pi);
+                // Enable ONI diagnostic logging after catch event
+                console.log('[CATCH-FB] Remote player ' + pi + ' caught via Firebase. Enabling ONI diagnostics.');
+                GameState.onis.forEach(function(o) {
+                    o._catchLogFrames = 180;
+                    o._stuckTimer = 0;
+                    // Force path reset so ONI retargets
+                    o.pathTimer = 0;
+                    o.path = [];
+                    o.lastKnownPos = null;
+                    if (o.aiState === 'chase' || o.aiState === 'alert') {
+                        o.aiState = 'patrol';
+                    }
+                });
             }
             if (pdata.escaped === true && !rp.escaped) {
                 rp.escaped = true;
@@ -9223,6 +9236,17 @@ function updateOniAI(delta) {
     GameState.onis.forEach(oni => {
         const detMul = oni.detectionMul || 1.0;
 
+        // ─── STUCK DETECTION: track position changes ───
+        if (!oni._stuckPosX) { oni._stuckPosX = oni.position.x; oni._stuckPosZ = oni.position.z; oni._stuckTimer = 0; oni._catchLogFrames = 0; }
+        var posDelta = Math.abs(oni.position.x - oni._stuckPosX) + Math.abs(oni.position.z - oni._stuckPosZ);
+        if (posDelta < 0.01) {
+            oni._stuckTimer += delta;
+        } else {
+            oni._stuckTimer = 0;
+        }
+        oni._stuckPosX = oni.position.x;
+        oni._stuckPosZ = oni.position.z;
+
         // ─── Detection: check ALL alive targets ───
         let canDetect = false;
         let detectionPos = null;
@@ -9404,6 +9428,49 @@ function updateOniAI(delta) {
             oni.position.z += (dzToPlayer / distToPlayer) * speed * delta;
         }
 
+        // ─── STUCK RECOVERY: if ONI hasn't moved for 1.5s with alive targets ───
+        if (oni._stuckTimer > 1.5 && hasTargets) {
+            console.warn('[ONI-STUCK] Recovery triggered! stuckTime=' + oni._stuckTimer.toFixed(1) +
+                ' state=' + oni.aiState + ' path=' + oni.path.length +
+                ' targets=' + oniTargets.length + ' dist=' + distToPlayer.toFixed(1) +
+                ' sameFloor=' + sameFloor + ' canDetect=' + canDetect +
+                ' speed=' + speed.toFixed(2) + ' delta=' + delta.toFixed(4));
+            // Force state reset and new pathfinding
+            oni.aiState = 'chase';
+            oni.alertTimer = 0;
+            oni.pathTimer = 0;
+            oni.path = [];
+            oni.patrolTarget = null;
+            oni.lastKnownPos = null;
+            // Force recalculate immediately
+            if (sameFloor && closestTargetDist < Infinity) {
+                var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
+                var goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
+                oni.path = bfsPathfind3D(floors, start, goal);
+                console.warn('[ONI-STUCK] Recalculated path: ' + oni.path.length + ' steps to (' + playerCellX + ',' + playerCellZ + ')');
+            }
+            // If no path, force direct movement
+            if (oni.path.length === 0 && closestTargetDist > 0.1 && closestTargetDist < Infinity) {
+                oni.position.x += (dxToPlayer / distToPlayer) * speed * delta * 3;
+                oni.position.z += (dzToPlayer / distToPlayer) * speed * delta * 3;
+                console.warn('[ONI-STUCK] Forced direct movement toward target');
+            }
+            oni._stuckTimer = 0;
+        }
+
+        // ─── POST-CATCH DIAGNOSTIC: log for 180 frames after catch event ───
+        if (oni._catchLogFrames > 0) {
+            oni._catchLogFrames--;
+            if (oni._catchLogFrames % 10 === 0) {
+                console.log('[ONI-DIAG] f=' + oni._catchLogFrames +
+                    ' state=' + oni.aiState + ' path=' + oni.path.length +
+                    ' pos=(' + oni.position.x.toFixed(2) + ',' + oni.position.z.toFixed(2) + ')' +
+                    ' targets=' + oniTargets.length + ' dist=' + distToPlayer.toFixed(2) +
+                    ' sameFloor=' + sameFloor + ' canDetect=' + canDetect +
+                    ' speed=' + speed.toFixed(2) + ' stuck=' + oni._stuckTimer.toFixed(2));
+            }
+        }
+
         // ─── Cell / position updates ───
         oni.cellX = Math.max(0, Math.min(GameState.mazeCols - 1, Math.floor(oni.position.x / CL)));
         oni.cellZ = Math.max(0, Math.min(GameState.mazeRows - 1, Math.floor(oni.position.z / CL)));
@@ -9450,8 +9517,11 @@ function updateOniAI(delta) {
                 oni.pathTimer = 0;
                 oni.path = [];
                 oni.lastKnownPos = null;
-                oni.alertTimer = ONI_CONFIG.alertDuration; // Skip alert, go straight to patrol/chase
-                console.log('[ONI-AI] Catch processed, forcing retarget. aiState=' + oni.aiState);
+                oni.aiState = 'patrol'; // Reset to patrol so detection can trigger chase
+                oni.alertTimer = 0;
+                oni._catchLogFrames = 180; // Enable diagnostic logging for 3s
+                oni._stuckTimer = 0;
+                console.log('[ONI-AI] Catch processed, forcing retarget to patrol');
             }
         }
 
@@ -12575,6 +12645,18 @@ function onMultiPlayerCaught() {
     SyncLayer.reportCaught(GameState.playerIndex);
     // Show capture notification for self (visible to this player)
     showCaptureNotification(GameState.playerIndex);
+    // Force ONI to retarget remaining alive players
+    console.log('[CATCH-LOCAL] Local player caught. Resetting ONI state for retarget.');
+    GameState.onis.forEach(function(o) {
+        o._catchLogFrames = 180;
+        o._stuckTimer = 0;
+        o.pathTimer = 0;
+        o.path = [];
+        o.lastKnownPos = null;
+        if (o.aiState === 'chase' || o.aiState === 'alert') {
+            o.aiState = 'patrol';
+        }
+    });
 
     if (GameState.multiMode === 'coop' || GameState.multiMode === 'teamBattle') {
         // Enter spectator mode — watch alive teammates
