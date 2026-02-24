@@ -4553,7 +4553,30 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbLoaded = true;
             group.userData.glbModel = bodyGroup;
 
-            // Setup CPU skinning data
+            // === SAVE REST-POSE BONE DATA for procedural animation ===
+            // Must happen BEFORE any animation is applied (bones are in bind/rest pose)
+            sourceScene.updateMatrixWorld(true);
+            if (origSkinned.skeleton) origSkinned.skeleton.update();
+            var restPoseBones = {};
+            var rpBoneNameList = [];
+            var rpTotalBoneObjects = 0;
+            sourceScene.traverse(function(c) {
+                if (c.isBone) {
+                    if (!restPoseBones[c.name]) {
+                        restPoseBones[c.name] = [];
+                        rpBoneNameList.push(c.name);
+                    }
+                    restPoseBones[c.name].push({
+                        bone: c,
+                        restQuat: c.quaternion.clone(),
+                        restPos: c.position.clone()
+                    });
+                    rpTotalBoneObjects++;
+                }
+            });
+            console.log('[RemotePlayer] Saved rest-pose for ' + rpBoneNameList.length + ' unique bone names, ' + rpTotalBoneObjects + ' total bone objects');
+
+            // Setup CPU skinning data (matching ONI format for cpuSkinUpdate)
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
                 skeleton: origSkinned.skeleton,
@@ -4565,73 +4588,25 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     bindMatrix: origSkinned.bindMatrix,
                     bindMatrixInverse: origSkinned.bindMatrixInverse,
                 }],
+                origSkinnedMeshes: [origSkinned], // Required by cpuSkinUpdate
                 frameCount: 0,
                 srcHeight: srcGeoHeight,
                 _srcMinY: srcBB.min.y,
                 _bodyGroup: bodyGroup,
-                _tempBuf: new Float32Array(vtxCountR * 3)
+                _tempBuf: new Float32Array(vtxCountR * 3),
+                restPoseBones: restPoseBones, // for procedural animation
+                animTime: 0
             };
 
-            // Setup animation mixer on the ORIGINAL sourceScene
-            var mixer = null;
-            var usedEmbedded = false;
-            if (gltf.animations && gltf.animations.length > 0) {
-                group.userData.animations = gltf.animations;
-                // Look for walk/run/idle clips — try broader matching
-                var walkClip = null;
-                var anyClip = gltf.animations[0];
-                for (var i = 0; i < gltf.animations.length; i++) {
-                    var aname = gltf.animations[i].name.toLowerCase();
-                    if (aname.indexOf('walk') !== -1 || aname.indexOf('run') !== -1 ||
-                        aname.indexOf('locomotion') !== -1 || aname.indexOf('move') !== -1) {
-                        walkClip = gltf.animations[i]; break;
-                    }
-                }
-                // If no walk/run found, use any embedded animation
-                if (!walkClip && gltf.animations.length > 0) walkClip = anyClip;
-                if (walkClip) {
-                    mixer = new THREE.AnimationMixer(sourceScene);
-                    group.userData.mixer = mixer;
-                    var embAction = mixer.clipAction(walkClip);
-                    embAction.play();
-                    // Store as currentAction so setCharacterAnimation can properly fade it out
-                    // when switching states (run→idle→run). Without this, embedded animation
-                    // would play at full weight forever, blending with shared animations.
-                    group.userData.currentAction = embAction;
-                    group.userData.currentAnimState = 'run';
-                    usedEmbedded = true;
-                    console.log('[RemotePlayer] Using embedded anim:', walkClip.name, 'tracks:', walkClip.tracks.length);
-                }
-            }
-            if (!usedEmbedded) {
-                if (sharedAnimationsLoaded) {
-                    applySharedAnimation(group, sourceScene);
-                } else {
-                    pendingAnimationGroups.push(group);
-                }
-                console.log('[RemotePlayer] Using shared animations. loaded:', sharedAnimationsLoaded);
-            }
-
-            // Setup direct bone animation (bypasses PropertyBinding)
-            var animClipForDirect = walkClip; // embedded clip if available
-            if (!animClipForDirect && sharedAnimationsLoaded) {
-                // Use shared running animation for models without embedded anims
-                var sharedClip = sharedAnimations.running || sharedAnimations.walking || sharedAnimations.idle;
-                if (sharedClip) {
-                    animClipForDirect = retargetClipForModel(sharedClip, sourceScene);
-                }
-            }
-            if (animClipForDirect && group.userData.cpuSkin) {
-                group.userData.cpuSkin._directAnim = buildDirectAnimData(sourceScene, animClipForDirect);
-            }
+            // === NO AnimationMixer ===
+            // Same as ONI: external animations cause incompatible bone transforms.
+            // Procedural animation (proceduralWalkUpdate) drives bones instead.
+            // group.userData.mixer is NOT set.
 
             // Log bone names for debug
-            var boneNames = [];
-            sourceScene.traverse(function(c) { if (c.isBone) boneNames.push(c.name); });
-            console.log('[RemotePlayer] GLB loaded. charId:', charId,
-                'geoH:', geoHeight.toFixed(4), 'boneScale:', boneScale.toFixed(4),
-                'meshScale:', meshScale.toFixed(4), 'bones:', boneNames.length,
-                'firstBones:', boneNames.slice(0, 5).join(','));
+            console.log('[RemotePlayer] GLB loaded (procedural anim). charId:', charId,
+                'bones:', rpBoneNameList.length,
+                'firstBones:', rpBoneNameList.slice(0, 5).join(','));
         } catch(e) {
             console.error('[RemotePlayer] GLB error:', charId, e.message, e.stack);
         }
@@ -4724,14 +4699,14 @@ function updateRemotePlayers(delta) {
         rp.model.position.set(rp.position.x, rp.position.y, rp.position.z);
         rp.model.rotation.y = rp.rotationY;
 
-        // Animate: use mixer for GLB models, fallback to leg bob for geometric
+        // Animate: procedural animation (same as ONI, replaces AnimationMixer)
         var isMoving = Math.abs(rp.targetPosition.x - rp.position.x) > 0.05 ||
                        Math.abs(rp.targetPosition.z - rp.position.z) > 0.05;
-        if (rp.model.userData.glbLoaded && rp.model.userData.mixer) {
-            rp.model.userData.mixer.update(delta);
-            // Switch animation state based on movement
-            setCharacterAnimation(rp.model, isMoving ? 'run' : 'idle');
+        if (rp.model.userData.cpuSkin && rp.model.userData.cpuSkin.restPoseBones) {
+            var rpAnimState = isMoving ? 'run' : 'idle';
+            proceduralWalkUpdate(rp.model.userData.cpuSkin, delta, rpAnimState);
         } else if (isMoving) {
+            // Fallback: geometric model leg bob
             var legPhase = (Date.now() * 0.01) % (Math.PI * 2);
             if (rp.model.children[2]) rp.model.children[2].rotation.x = Math.sin(legPhase) * 0.3;
             if (rp.model.children[3]) rp.model.children[3].rotation.x = -Math.sin(legPhase) * 0.3;
@@ -8928,54 +8903,109 @@ function spawnOnis(stageId) {
 
 /* --- C5: Update ONI AI --- */
 function updateOniAI(delta) {
-    if (!GameState.alive || GameState.onis.length === 0) return;
+    if (GameState.onis.length === 0) return;
+    var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+    // In multiplayer, host must keep running ONI AI even after being caught
+    if (!GameState.alive && !isMulti) return;
     const floors = GameState.mazeFloors;
     if (!floors || floors.length === 0) return;
 
-    const playerCellX = Math.floor(camera.position.x / CL);
-    const playerCellZ = Math.floor(camera.position.z / CL);
-    const playerFloor = GameState.playerCurrentFloor;
-    const isPlayerMoving = GameState.moveForward || GameState.moveBackward;
-    const isPlayerSprinting = GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0 && isPlayerMoving;
+    // Build list of alive targets (local player + alive remote players)
+    var oniTargets = [];
+    if (GameState.alive) {
+        oniTargets.push({
+            x: camera.position.x,
+            z: camera.position.z,
+            floor: GameState.playerCurrentFloor,
+            isMoving: GameState.moveForward || GameState.moveBackward,
+            isSprinting: GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0 && (GameState.moveForward || GameState.moveBackward)
+        });
+    }
+    // In multiplayer, also consider alive remote players
+    if (isMulti) {
+        Object.keys(GameState.remotePlayers).forEach(function(idx) {
+            var rp = GameState.remotePlayers[idx];
+            if (!rp.alive) return;
+            // Estimate movement from interpolation delta
+            var rpMoving = Math.abs(rp.targetPosition.x - rp.position.x) > 0.05 ||
+                           Math.abs(rp.targetPosition.z - rp.position.z) > 0.05;
+            oniTargets.push({
+                x: rp.position.x,
+                z: rp.position.z,
+                floor: rp.currentFloor,
+                isMoving: rpMoving,
+                isSprinting: rpMoving // Assume sprinting for remote players (conservative)
+            });
+        });
+    }
+
+    // If no alive targets, ONIs just patrol
+    var hasTargets = oniTargets.length > 0;
 
     GameState.onis.forEach(oni => {
-        const dxToPlayer = camera.position.x - oni.position.x;
-        const dzToPlayer = camera.position.z - oni.position.z;
-        const distToPlayer = Math.sqrt(dxToPlayer * dxToPlayer + dzToPlayer * dzToPlayer);
-        const sameFloor = oni.currentFloor === playerFloor;
         const detMul = oni.detectionMul || 1.0;
 
-        // ─── Detection ───
+        // ─── Detection: check ALL alive targets ───
         let canDetect = false;
         let detectionPos = null;
         let inSight = false;
+        let closestTargetDist = Infinity;
+        let closestTargetX = 0, closestTargetZ = 0;
+        let closestTargetFloor = 0;
 
-        // Sound detection: player must be moving and on same floor
-        if (sameFloor && isPlayerMoving) {
-            const soundRange = isPlayerSprinting
-                ? ONI_CONFIG.sprintSoundRange * detMul
-                : ONI_CONFIG.walkSoundRange * detMul;
-            if (distToPlayer < soundRange) {
-                canDetect = true;
-                // Sprint gives precise location; walk gives approximate
-                const inaccuracy = isPlayerSprinting ? 0.5 : CL * 1.5;
-                detectionPos = {
-                    x: camera.position.x + (Math.random() - 0.5) * inaccuracy,
-                    z: camera.position.z + (Math.random() - 0.5) * inaccuracy
-                };
+        for (var ti = 0; ti < oniTargets.length; ti++) {
+            var tgt = oniTargets[ti];
+            var tdx = tgt.x - oni.position.x;
+            var tdz = tgt.z - oni.position.z;
+            var tDist = Math.sqrt(tdx * tdx + tdz * tdz);
+            var tSameFloor = oni.currentFloor === tgt.floor;
+
+            // Track closest target for pathfinding
+            if (tDist < closestTargetDist && tSameFloor) {
+                closestTargetDist = tDist;
+                closestTargetX = tgt.x;
+                closestTargetZ = tgt.z;
+                closestTargetFloor = tgt.floor;
+            }
+
+            // Sound detection
+            if (tSameFloor && tgt.isMoving) {
+                var soundRange = tgt.isSprinting
+                    ? ONI_CONFIG.sprintSoundRange * detMul
+                    : ONI_CONFIG.walkSoundRange * detMul;
+                if (tDist < soundRange) {
+                    canDetect = true;
+                    var inaccuracy = tgt.isSprinting ? 0.5 : CL * 1.5;
+                    detectionPos = {
+                        x: tgt.x + (Math.random() - 0.5) * inaccuracy,
+                        z: tgt.z + (Math.random() - 0.5) * inaccuracy
+                    };
+                }
+            }
+
+            // Sight detection
+            if (tSameFloor && tDist < ONI_CONFIG.sightRange * detMul) {
+                var grid = floors[oni.currentFloor];
+                if (grid && hasLineOfSight(grid, oni.position.x, oni.position.z, tgt.x, tgt.z)) {
+                    canDetect = true;
+                    inSight = true;
+                    detectionPos = { x: tgt.x, z: tgt.z };
+                    closestTargetDist = tDist;
+                    closestTargetX = tgt.x;
+                    closestTargetZ = tgt.z;
+                    closestTargetFloor = tgt.floor;
+                }
             }
         }
 
-        // Sight detection: wall-blocked line of sight
-        if (sameFloor && distToPlayer < ONI_CONFIG.sightRange * detMul) {
-            const grid = floors[oni.currentFloor];
-            if (grid && hasLineOfSight(grid, oni.position.x, oni.position.z,
-                                        camera.position.x, camera.position.z)) {
-                canDetect = true;
-                inSight = true;
-                detectionPos = { x: camera.position.x, z: camera.position.z };
-            }
-        }
+        // Use closest target for distance-based calculations
+        var distToPlayer = closestTargetDist;
+        var dxToPlayer = closestTargetX - oni.position.x;
+        var dzToPlayer = closestTargetZ - oni.position.z;
+        var sameFloor = oni.currentFloor === closestTargetFloor;
+        var playerCellX = Math.floor(closestTargetX / CL);
+        var playerCellZ = Math.floor(closestTargetZ / CL);
+        var playerFloor = closestTargetFloor;
 
         // ─── State transitions ───
         if (canDetect) {
