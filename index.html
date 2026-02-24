@@ -4348,23 +4348,19 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 if (!origSkinned && child.isSkinnedMesh) origSkinned = child;
             });
 
-            // Helper: create fresh MeshBasicMaterial (NOT cloned from SkinnedMesh)
+            // Helper: clone original material preserving all properties (map, emissive, normalMap etc.)
             function cloneMatForRemote(mat) {
                 if (Array.isArray(mat)) {
                     return mat.map(function(m) {
-                        var fm = new THREE.MeshBasicMaterial({
-                            side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
-                        });
-                        if (m.map) fm.map = m.map;
-                        if (m.color) fm.color.copy(m.color);
+                        var fm = m.clone();
+                        fm.side = THREE.DoubleSide;
+                        fm.depthWrite = true;
                         return fm;
                     });
                 } else if (mat) {
-                    var fm = new THREE.MeshBasicMaterial({
-                        side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
-                    });
-                    if (mat.map) fm.map = mat.map;
-                    if (mat.color) fm.color.copy(mat.color);
+                    var fm = mat.clone();
+                    fm.side = THREE.DoubleSide;
+                    fm.depthWrite = true;
                     return fm;
                 }
                 return new THREE.MeshBasicMaterial({
@@ -4524,6 +4520,20 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             var totalVertexCount = 0;
 
             allSkinnedMeshes.forEach(function(origSM) {
+                // Diagnostic: log material structure
+                var _matInfo = origSM.material;
+                if (Array.isArray(_matInfo)) {
+                    console.log('[RUNNER-MAT] mesh:', origSM.name, 'materials:', _matInfo.length, 'groups:', origSM.geometry.groups.length);
+                    _matInfo.forEach(function(m, idx) {
+                        console.log('  [' + idx + '] type:', m.type, 'map:', !!m.map, 'color:', m.color ? m.color.getHexString() : 'none',
+                            'emissive:', m.emissive ? m.emissive.getHexString() : 'none', 'emissiveMap:', !!m.emissiveMap);
+                    });
+                } else {
+                    console.log('[RUNNER-MAT] mesh:', origSM.name, 'type:', _matInfo.type, 'map:', !!_matInfo.map,
+                        'color:', _matInfo.color ? _matInfo.color.getHexString() : 'none',
+                        'emissive:', _matInfo.emissive ? _matInfo.emissive.getHexString() : 'none',
+                        'emissiveMap:', !!_matInfo.emissiveMap, 'groups:', origSM.geometry.groups.length);
+                }
                 var srcGeo = origSM.geometry;
                 var dstGeo = srcGeo.clone();
                 var srcPos = srcGeo.attributes.position;
@@ -8550,19 +8560,15 @@ function processOniGLTF(group, gltf, stageId) {
         var singleMat;
         if (Array.isArray(origMat)) {
             singleMat = origMat.map(function(m) {
-                var bm = new THREE.MeshBasicMaterial({
-                    side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
-                });
-                if (m.map) bm.map = m.map;
-                if (m.color) bm.color.copy(m.color);
+                var bm = m.clone();
+                bm.side = THREE.DoubleSide;
+                bm.depthWrite = true;
                 return bm;
             });
         } else if (origMat) {
-            singleMat = new THREE.MeshBasicMaterial({
-                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
-            });
-            if (origMat.map) singleMat.map = origMat.map;
-            if (origMat.color) singleMat.color.copy(origMat.color);
+            singleMat = origMat.clone();
+            singleMat.side = THREE.DoubleSide;
+            singleMat.depthWrite = true;
         } else {
             singleMat = new THREE.MeshBasicMaterial({
                 color: 0xcc44cc, side: THREE.DoubleSide
@@ -8574,8 +8580,8 @@ function processOniGLTF(group, gltf, stageId) {
         bodyMesh.morphTargetInfluences = [];
         bodyGroup.add(bodyMesh);
 
-        showGLBDiag('[ONI-FIX] Material: MeshBasicMaterial, map=' + (origMat && (Array.isArray(origMat) ? origMat[0] && origMat[0].map : origMat.map) ? 'YES' : 'NO') +
-            ' groups=CLEARED drawRange=[0,Inf]');
+        showGLBDiag('[ONI-FIX] Material: cloned, isArray=' + Array.isArray(origMat) +
+            ' groups=' + (Array.isArray(origSM.material) ? 'preserved' : 'cleared') + ' drawRange=[0,Inf]');
 
         meshDataArr.push({
             srcPositions: srcPos,
@@ -8613,21 +8619,19 @@ function processOniGLTF(group, gltf, stageId) {
         var staticMat;
         if (Array.isArray(origMatS)) {
             staticMat = origMatS.map(function(m) {
-                var bm = new THREE.MeshBasicMaterial({
-                    side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
-                });
-                if (m.map) bm.map = m.map;
-                if (m.color) bm.color.copy(m.color);
+                var bm = m.clone();
+                bm.side = THREE.DoubleSide;
+                bm.depthWrite = true;
                 return bm;
             });
+        } else if (origMatS) {
+            staticMat = origMatS.clone();
+            staticMat.side = THREE.DoubleSide;
+            staticMat.depthWrite = true;
         } else {
             staticMat = new THREE.MeshBasicMaterial({
-                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+                color: 0x888888, side: THREE.DoubleSide
             });
-            if (origMatS) {
-                if (origMatS.map) staticMat.map = origMatS.map;
-                if (origMatS.color) staticMat.color.copy(origMatS.color);
-            }
         }
 
         var staticBodyMesh = new THREE.Mesh(clonedGeo, staticMat);
