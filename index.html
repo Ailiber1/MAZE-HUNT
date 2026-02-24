@@ -4769,7 +4769,9 @@ function updateRemotePlayers(delta) {
         rp.rotationY += rotDiff * Math.min(1, delta * 10);
 
         rp.model.position.set(rp.position.x, rp.position.y, rp.position.z);
-        rp.model.rotation.y = rp.rotationY;
+        // FIX: Camera faces -Z at rotY=0, but GLB model faces +Z at rotation.y=0.
+        // Add PI to align model facing direction with camera direction.
+        rp.model.rotation.y = rp.rotationY + Math.PI;
 
         // Animate: procedural animation (same as ONI, replaces AnimationMixer)
         var isMoving = Math.abs(rp.targetPosition.x - rp.position.x) > 0.05 ||
@@ -12272,6 +12274,20 @@ function gameLoop() {
             updateOniAI(delta);
             SyncLayer.updateOniPositions(GameState.onis);
         }
+        // Guest: animate ONI visuals while spectating
+        if (!GameState.isHost && GameState.multiMode !== 'teamBattle') {
+            GameState.onis.forEach(function(oni) {
+                if (!oni.group.userData.cpuSkin) return;
+                var cs = oni.group.userData.cpuSkin;
+                if (!oni._prevPosX) { oni._prevPosX = oni.position.x; oni._prevPosZ = oni.position.z; }
+                var moveDist = Math.abs(oni.position.x - oni._prevPosX) + Math.abs(oni.position.z - oni._prevPosZ);
+                oni._prevPosX = oni.position.x; oni._prevPosZ = oni.position.z;
+                var oniAnimState = moveDist > 0.01 ? 'run' : 'idle';
+                if (cs.restPoseBones) proceduralWalkUpdate(cs, delta, oniAnimState);
+                cs.frameCount = (cs.frameCount || 0) + 1;
+                if (cs.frameCount % 2 === 0) cpuSkinUpdate(cs);
+            });
+        }
         updateExitPulse();
         updateDustParticles(delta);
         drawMinimap();
@@ -12301,6 +12317,29 @@ function gameLoop() {
         if (GameState.multiMode !== 'teamBattle' || !isMulti) {
             updateOniAI(delta);
         }
+    }
+
+    // FIX: Guest ONI visual animation. updateOniAI() (host-only) contains the
+    // proceduralWalkUpdate + cpuSkinUpdate calls. Guests never run updateOniAI,
+    // so ONI meshes stayed in T-pose. Animate ONI visuals on guest side here.
+    if (isMulti && !GameState.isHost && GameState.multiMode !== 'teamBattle') {
+        GameState.onis.forEach(function(oni) {
+            if (!oni.group.userData.cpuSkin) return;
+            var cs = oni.group.userData.cpuSkin;
+            // Infer animation state from position changes
+            if (!oni._prevPosX) { oni._prevPosX = oni.position.x; oni._prevPosZ = oni.position.z; }
+            var moveDist = Math.abs(oni.position.x - oni._prevPosX) + Math.abs(oni.position.z - oni._prevPosZ);
+            oni._prevPosX = oni.position.x;
+            oni._prevPosZ = oni.position.z;
+            var oniAnimState = moveDist > 0.01 ? 'run' : 'idle';
+            if (cs.restPoseBones) {
+                proceduralWalkUpdate(cs, delta, oniAnimState);
+            }
+            cs.frameCount = (cs.frameCount || 0) + 1;
+            if (cs.frameCount % 2 === 0) {
+                cpuSkinUpdate(cs);
+            }
+        });
     }
 
     // Phase 7: Oni footstep manager
