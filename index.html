@@ -5475,6 +5475,13 @@ function launchMultiGame(config) {
     GameState.nearestOniDistance = Infinity;
     GameState.currentBPM = 72;
 
+    // Reset catch diagnostic counter for new game
+    if (typeof checkCatch === 'function') checkCatch._diagCount = 0;
+
+    // FIX: Log oni state to diagnose catch detection after rematch
+    console.log('[LAUNCH-MULTI] onis=' + GameState.onis.length + ' alive=' + GameState.alive +
+        ' capIP=' + GameState.captureInProgress + ' gameActive=' + GameState.gameActive);
+
     // Preload player character GLB for capture drag animation
     preloadPlayerGLB();
     // Preload shared Mixamo animations (Running/Walking/Idle)
@@ -5596,16 +5603,19 @@ function launchMultiGame(config) {
         });
     }
 
-    // Listen for disconnects
+    // Listen for disconnects (tracked via SyncLayer to prevent duplication)
     if (firebaseReady && GameState.roomId) {
-        database.ref('rooms/' + GameState.roomId + '/players').on('child_removed', function(snap) {
+        var disconnRef = database.ref('rooms/' + GameState.roomId + '/players');
+        var disconnCb = function(snap) {
             var removedIdx = parseInt(snap.key);
             if (removedIdx === GameState.playerIndex) return;
             var pdata = snap.val();
             var username = pdata ? pdata.username : ('P' + (removedIdx + 1));
             showDisconnectNotification(username);
             handlePlayerDisconnect(removedIdx);
-        });
+        };
+        disconnRef.on('child_removed', disconnCb);
+        SyncLayer.listeners.push({ ref: disconnRef, event: 'child_removed', cb: disconnCb });
     }
 
     // Timer
@@ -5634,6 +5644,7 @@ function launchMultiGame(config) {
     }
 
     GameState.gameActive = true;
+    GameState._multiGameStartTime = Date.now();  // For grace period in checkMultiGameEnd
     clock.start();
     gameLoop();
 }
@@ -5644,6 +5655,12 @@ function launchMultiGame(config) {
 function checkMultiGameEnd(playersData) {
     if (!GameState.gameActive) return;
     if (!playersData) return;
+
+    // FIX: Prevent stale Firebase data from ending the game immediately after start.
+    // After rematch, a player status update with stale alive:false could arrive before
+    // the host's alive:true reset has propagated. Grace period prevents this.
+    if (!GameState._multiGameStartTime) GameState._multiGameStartTime = Date.now();
+    if (Date.now() - GameState._multiGameStartTime < 3000) return;
 
     var playerCount = Object.keys(playersData).length;
 
@@ -8032,21 +8049,23 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
         cpuSkinData._armDownCache = { leftDelta: null, rightDelta: null };
         var _armAngle = 1.15; // ~66° down from horizontal
         var _worldZ = new THREE.Vector3(0, 0, 1);
-        // LeftArm: rotate around world +Z by +angle (right-hand rule: -X → -Y = down)
+        // LeftArm extends along +X in Mixamo models (facing +Z).
+        // World +Z rotation on +X axis → +Y = UP (banzai). Need -angle for DOWN.
         var leftBones = findBones('LeftArm');
         if (leftBones && leftBones[0] && leftBones[0].bone.parent) {
             var lpwq = new THREE.Quaternion();
             leftBones[0].bone.parent.getWorldQuaternion(lpwq);
-            var lWorldRot = new THREE.Quaternion().setFromAxisAngle(_worldZ, _armAngle);
+            var lWorldRot = new THREE.Quaternion().setFromAxisAngle(_worldZ, -_armAngle);
             var lpInv = lpwq.clone().invert();
             cpuSkinData._armDownCache.leftDelta = lpInv.multiply(lWorldRot).multiply(lpwq.clone());
         }
-        // RightArm: rotate around world +Z by -angle (right-hand rule: +X → -Y = down)
+        // RightArm extends along -X. World +Z rotation on -X axis → -Y = DOWN.
+        // Need +angle for DOWN.
         var rightBones = findBones('RightArm');
         if (rightBones && rightBones[0] && rightBones[0].bone.parent) {
             var rpwq = new THREE.Quaternion();
             rightBones[0].bone.parent.getWorldQuaternion(rpwq);
-            var rWorldRot = new THREE.Quaternion().setFromAxisAngle(_worldZ, -_armAngle);
+            var rWorldRot = new THREE.Quaternion().setFromAxisAngle(_worldZ, _armAngle);
             var rpInv = rpwq.clone().invert();
             cpuSkinData._armDownCache.rightDelta = rpInv.multiply(rWorldRot).multiply(rpwq.clone());
         }
@@ -8072,10 +8091,12 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
         }
     }
 
-    // Base arm pose: always applied (idle, walk, run)
-    applyArmDown();
-    applyDelta('LeftForeArm', -0.4, 0, 0);
-    applyDelta('RightForeArm', -0.4, 0, 0);
+    // Base arm pose: applied to RUNNERS only (not ONI — ONI keeps kyonshi/zombie arms)
+    if (!cpuSkinData.isOni) {
+        applyArmDown();
+        applyDelta('LeftForeArm', -0.4, 0, 0);
+        applyDelta('RightForeArm', -0.4, 0, 0);
+    }
 
     if (speed === 0) return; // idle = arms-down pose (no walking motion)
 
@@ -8098,13 +8119,15 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
     // Lower legs (knees)
     applyDelta('LeftLeg', kneeFlexL, 0, 0);
     applyDelta('RightLeg', kneeFlexR, 0, 0);
-    // Upper arms: world-space arm-down + local walking swing
-    applyArmDown();
-    applyDelta('LeftArm', armSwing, 0, 0, false, true);
-    applyDelta('RightArm', -armSwing, 0, 0, false, true);
-    // Forearms: natural elbow bend + slight walking flex
-    applyDelta('LeftForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
-    applyDelta('RightForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
+    // Upper arms: world-space arm-down + local walking swing (RUNNERS only)
+    if (!cpuSkinData.isOni) {
+        applyArmDown();
+        applyDelta('LeftArm', armSwing, 0, 0, false, true);
+        applyDelta('RightArm', -armSwing, 0, 0, false, true);
+        // Forearms: natural elbow bend + slight walking flex
+        applyDelta('LeftForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
+        applyDelta('RightForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
+    }
     // Spine twist
     applyDelta('Spine', 0, spineRot, 0);
     // Head stays stable (slight counter-rotation)
@@ -8253,9 +8276,58 @@ function cpuSkinUpdate(cpuSkinData) {
                 '\n  Upper(' + upperCount + '): Y=[' + uMinY.toFixed(2) + ',' + uMaxY.toFixed(2) + ']');
         }
 
-        // Write to destination buffers + scale bodyGroup
+        // FIX: Apply scaling and offset DIRECTLY to vertex positions in tempBuf
+        // instead of using bodyGroup.scale/position. Previous approach relied on
+        // Three.js matrix composition (bodyGroup transform × mesh vertices) which
+        // caused characters to float. Direct vertex modification guarantees feet at Y=0.
         var outHeight = globalMaxY - globalMinY;
         if (outHeight > 0.01) {
+            var targetH = 2.5;
+
+            // Cache feetMinY and outHeight on first frame
+            if (!cpuSkinData._cachedOutHeight) {
+                var srcH = cpuSkinData.srcHeight || 1.8;
+                var srcMin = cpuSkinData._srcMinY || 0;
+                var footThreshY = srcMin + srcH * 0.3;
+                var feetMinY = Infinity;
+                var vtxOff2 = 0;
+                for (var fm = 0; fm < origSMs.length; fm++) {
+                    var fmCount = origSMs[fm].geometry.attributes.position.count;
+                    var fmSrcPos = origSMs[fm].geometry.attributes.position;
+                    for (var fi = 0; fi < fmCount; fi++) {
+                        var fSrcY = fmSrcPos.getY(fi);
+                        if (fSrcY < footThreshY) {
+                            var fOutY = tempBuf[(vtxOff2 + fi) * 3 + 1];
+                            if (fOutY < feetMinY) feetMinY = fOutY;
+                        }
+                    }
+                    vtxOff2 += fmCount;
+                }
+                if (feetMinY === Infinity) feetMinY = globalMinY;
+                cpuSkinData._cachedOutHeight = outHeight;
+                cpuSkinData._cachedFeetMinY = feetMinY;
+                console.log('[SKIN] Cached: outH=' + outHeight.toFixed(4) +
+                    ' globalMinY=' + globalMinY.toFixed(4) +
+                    ' feetMinY=' + feetMinY.toFixed(4) +
+                    ' diff=' + (feetMinY - globalMinY).toFixed(4) +
+                    ' srcH=' + srcH.toFixed(4));
+            }
+
+            var scaleFix = targetH / cpuSkinData._cachedOutHeight;
+            var centerX = (globalMinX + globalMaxX) / 2;
+            var centerZ = (globalMinZ + globalMaxZ) / 2;
+            var feetOff = cpuSkinData._cachedFeetMinY;
+
+            // Transform ALL vertices in tempBuf: center XZ, place feet at Y=0, scale to targetH
+            var totalVerts = tempIdx / 3;
+            for (var vi = 0; vi < totalVerts; vi++) {
+                var bx = vi * 3, by = vi * 3 + 1, bz = vi * 3 + 2;
+                tempBuf[bx] = (tempBuf[bx] - centerX) * scaleFix;
+                tempBuf[by] = (tempBuf[by] - feetOff) * scaleFix;
+                tempBuf[bz] = (tempBuf[bz] - centerZ) * scaleFix;
+            }
+
+            // Write transformed vertices to destination buffers
             tempIdx = 0;
             for (var m = 0; m < meshDataArr.length; m++) {
                 var dp = meshDataArr[m].dstPositions;
@@ -8268,50 +8340,10 @@ function cpuSkinUpdate(cpuSkinData) {
                 if (geo && geo.geometry) geo.geometry.computeBoundingSphere();
             }
 
+            // Reset bodyGroup transform to identity — all transform is now in vertices
             if (cpuSkinData._bodyGroup) {
-                // FIX: Compute feetMinY from ONLY lower-body vertices.
-                // Previous bug: globalMinY includes hand vertices which may be
-                // BELOW feet due to arm-down rotation. Using globalMinY placed
-                // HANDS at Y=0 instead of FEET, causing characters to float.
-                // Solution: only consider vertices whose SOURCE geometry Y is in
-                // the lower 30% of the model (legs/feet area, never hands).
-                var targetH = 2.5;
-                if (!cpuSkinData._cachedOutHeight) {
-                    var srcH = cpuSkinData.srcHeight || 1.8;
-                    var srcMin = cpuSkinData._srcMinY || 0;
-                    var footThreshY = srcMin + srcH * 0.3;
-                    var feetMinY = Infinity;
-                    var vtxOff2 = 0;
-                    for (var fm = 0; fm < origSMs.length; fm++) {
-                        var fmCount = origSMs[fm].geometry.attributes.position.count;
-                        var fmSrcPos = origSMs[fm].geometry.attributes.position;
-                        for (var fi = 0; fi < fmCount; fi++) {
-                            var fSrcY = fmSrcPos.getY(fi);
-                            if (fSrcY < footThreshY) {
-                                var fOutY = tempBuf[(vtxOff2 + fi) * 3 + 1];
-                                if (fOutY < feetMinY) feetMinY = fOutY;
-                            }
-                        }
-                        vtxOff2 += fmCount;
-                    }
-                    if (feetMinY === Infinity) feetMinY = globalMinY;
-                    cpuSkinData._cachedOutHeight = outHeight;
-                    cpuSkinData._cachedFeetMinY = feetMinY;
-                    console.log('[SKIN] Cached: outH=' + outHeight.toFixed(4) +
-                        ' globalMinY=' + globalMinY.toFixed(4) +
-                        ' feetMinY=' + feetMinY.toFixed(4) +
-                        ' diff=' + (feetMinY - globalMinY).toFixed(4) +
-                        ' srcH=' + srcH.toFixed(4));
-                }
-                var scaleFix = targetH / cpuSkinData._cachedOutHeight;
-                var centerX = (globalMinX + globalMaxX) / 2;
-                var centerZ = (globalMinZ + globalMaxZ) / 2;
-                cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
-                cpuSkinData._bodyGroup.position.set(
-                    -centerX * scaleFix,
-                    -cpuSkinData._cachedFeetMinY * scaleFix,
-                    -centerZ * scaleFix
-                );
+                cpuSkinData._bodyGroup.scale.setScalar(1);
+                cpuSkinData._bodyGroup.position.set(0, 0, 0);
             }
         }
 
@@ -8705,7 +8737,8 @@ function processOniGLTF(group, gltf, stageId) {
         _tempBuf: new Float32Array(totalVertexCount * 3),
         _allBones: allBonesList,
         restPoseBones: restPoseBones,  // for procedural animation
-        animTime: 0
+        animTime: 0,
+        isOni: true  // ONI characters keep kyonshi (zombie) arms
     };
 
     // === NO AnimationMixer ===
@@ -9592,6 +9625,29 @@ function updateExitPulse() {
 function checkCatch() {
     if (!GameState.alive || GameState.captureInProgress) return;
     const playerFloor = GameState.playerCurrentFloor;
+
+    // Diagnostic: log catch state periodically (first 60 frames then every 300)
+    if (!checkCatch._diagCount) checkCatch._diagCount = 0;
+    checkCatch._diagCount++;
+    if (checkCatch._diagCount <= 60 || checkCatch._diagCount % 300 === 0) {
+        var nearestDist = Infinity;
+        for (var di = 0; di < GameState.onis.length; di++) {
+            var doni = GameState.onis[di];
+            var ddx = camera.position.x - doni.position.x;
+            var ddz = camera.position.z - doni.position.z;
+            var dd = Math.sqrt(ddx * ddx + ddz * ddz);
+            if (dd < nearestDist) nearestDist = dd;
+        }
+        if (checkCatch._diagCount <= 3 || checkCatch._diagCount % 300 === 0) {
+            console.log('[CATCH] frame=' + checkCatch._diagCount +
+                ' onis=' + GameState.onis.length +
+                ' alive=' + GameState.alive +
+                ' capIP=' + GameState.captureInProgress +
+                ' pFloor=' + playerFloor +
+                ' nearDist=' + nearestDist.toFixed(2) +
+                ' catchDist=' + ONI_CONFIG.catchDistance);
+        }
+    }
 
     for (const oni of GameState.onis) {
         if (oni.currentFloor !== playerFloor) continue;
