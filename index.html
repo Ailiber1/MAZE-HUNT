@@ -12471,7 +12471,7 @@ function onMultiPlayerCaught() {
             enterSpectatorMode();
         }, 1500);
     } else {
-        // Show brief caught effect
+        // freeForAll: show caught effect then enter spectator mode
         GameState.captureInProgress = true;
         document.getElementById('danger-frame').style.boxShadow = 'inset 0 0 60px rgba(255,0,0,0.6)';
         document.getElementById('danger-frame').style.display = 'block';
@@ -12482,6 +12482,7 @@ function onMultiPlayerCaught() {
             text.classList.remove('visible');
             document.getElementById('danger-frame').style.display = 'none';
             GameState.captureInProgress = false;
+            enterSpectatorMode();
         }, 2000);
     }
 }
