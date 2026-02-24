@@ -3904,6 +3904,8 @@ function proceedJoinRoom(roomId) {
                         GameState.multiMode = config.mode;
                         GameState.multiCurrentStage = config.stage;
                         GameState.teamAssignment = config.teamAssignment || {};
+                        // FIX: Store host's ONI model IDs so non-host uses same characters
+                        GameState.syncedOniModelIds = config.oniModelIds || null;
                         launchMultiGame(config);
                     }
                 });
@@ -4483,7 +4485,9 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     pLightFb.position.set(0, 1.2, 0);
                     group.add(pLightFb);
                     group.userData.glbLoaded = true;
+                    group.userData.glbPending = false;
                     group.userData.glbModel = bodyGroupFb;
+                    group.visible = true; // Show after static mesh loaded
                     console.log('[RemotePlayer] Static mesh loaded. charId:', charId);
                 }
                 return;
@@ -4600,7 +4604,10 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             rBackLight.position.set(0, 0.9, -0.5);
             group.add(rBackLight);
             group.userData.glbLoaded = true;
+            group.userData.glbPending = false;
             group.userData.glbModel = bodyGroup;
+            // FIX: Show model now that GLB is loaded (was hidden to prevent fallback flash)
+            group.visible = true;
 
             // === SAVE REST-POSE BONE DATA for procedural animation ===
             // Must happen BEFORE any animation (bones are in bind/rest pose)
@@ -4659,9 +4666,11 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 'totalVtx:', totalVertexCount);
         } catch(e) {
             console.error('[RemotePlayer] GLB error:', charId, e.message, e.stack);
+            group.visible = true; // Show fallback on error
         }
     }, undefined, function(err) {
         console.error('[RemotePlayer] GLB load failed:', charId, err);
+        group.visible = true; // Show fallback on load failure
     });
 }
 
@@ -4692,8 +4701,11 @@ function spawnRemotePlayers() {
         if (scene) scene.add(model);
 
         // Load GLB character model if player selected one
+        // FIX: Hide geometric fallback until GLB loads to prevent stick-figure flash
         var playerData = GameState.players[pi];
         if (playerData && playerData.character) {
+            model.visible = false; // Hide fallback, loadRemotePlayerGLB sets visible=true on load
+            model.userData.glbPending = true; // Flag: GLB is being loaded
             loadRemotePlayerGLB(model, playerData.character, isOniTeam);
         }
 
@@ -4733,7 +4745,11 @@ function updateRemotePlayers(delta) {
             rp.model.visible = false;
             return;
         }
-        rp.model.visible = true;
+        // FIX: Only show model if GLB is loaded (or no GLB was requested)
+        // Prevents geometric fallback from flashing before GLB loads
+        if (!rp.model.userData.glbPending || rp.model.userData.glbLoaded) {
+            rp.model.visible = true;
+        }
 
         // Interpolate position
         rp.position.x += (rp.targetPosition.x - rp.position.x) * Math.min(1, delta * 10);
@@ -5254,6 +5270,11 @@ function startMultiplayerGame() {
 
     var stageConfig = getMultiStageConfig(GameState.multiMode, GameState.multiCurrentStage);
 
+    // FIX: Pre-generate ONI model IDs on host and store in GameState
+    // This ensures host also uses the same IDs it sends to non-host clients
+    var hostOniModelIds = getOniModelsForStage(GameState.multiCurrentStage);
+    GameState.syncedOniModelIds = hostOniModelIds;
+
     // Write game config and status to Firebase
     if (firebaseReady && GameState.roomId) {
         var roomRef = database.ref('rooms/' + GameState.roomId);
@@ -5270,7 +5291,9 @@ function startMultiplayerGame() {
                 mode: GameState.multiMode,
                 seed: Math.floor(Math.random() * 999999),
                 stage: GameState.multiCurrentStage,
-                teamAssignment: GameState.teamAssignment || {}
+                teamAssignment: GameState.teamAssignment || {},
+                // FIX: Sync ONI model IDs so all clients use the same characters
+                oniModelIds: hostOniModelIds
             }
         });
     }
@@ -7441,6 +7464,13 @@ function bfsPathfind3D(floors, start, goal) {
 
 /* --- C4: Get ONI model IDs for stage --- */
 function getOniModelsForStage(stageId) {
+    // FIX: In multiplayer, use synced ONI model IDs (set by host pre-game, received by non-host via Firebase)
+    // This prevents each client from independently randomizing different ONI characters
+    // Also prevents host from calling Math.random() twice and getting different results
+    if (GameState.syncedOniModelIds) {
+        console.log('[ONI] Using synced model IDs:', GameState.syncedOniModelIds);
+        return GameState.syncedOniModelIds;
+    }
     const assignment = STAGE_ONI_ASSIGNMENTS[stageId];
     // Always random: pick a random enemy each time
     const enemies = CHARACTER_LIST.enemies;
@@ -8136,9 +8166,16 @@ function cpuSkinUpdate(cpuSkinData) {
                 var centerX = (globalMinX + globalMaxX) / 2;
                 var centerZ = (globalMinZ + globalMaxZ) / 2;
                 cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
+                // FIX: Use rest-pose _srcMinY for Y offset.
+                // Using animated globalMinY causes floating because procedural
+                // animation moves feet below rest-pose origin → globalMinY < 0
+                // → -globalMinY*scaleFix > 0 → character pushed upward.
+                var yOffset = (typeof cpuSkinData._srcMinY === 'number')
+                    ? -cpuSkinData._srcMinY * scaleFix
+                    : -globalMinY * scaleFix;
                 cpuSkinData._bodyGroup.position.set(
                     -centerX * scaleFix,
-                    -globalMinY * scaleFix,
+                    yOffset,
                     -centerZ * scaleFix
                 );
             }
@@ -12442,6 +12479,7 @@ function cleanupGame() {
     if (pauseScreen) pauseScreen.classList.remove('active');
 
     GameState.gameActive = false;
+    GameState.syncedOniModelIds = null; // Clear synced ONI model IDs for next game
     if (GameState.animationId) {
         cancelAnimationFrame(GameState.animationId);
         GameState.animationId = null;
