@@ -2977,6 +2977,7 @@ function initVisibilityHandler() {
     });
 }
 
+var _bgLoopInterval = null;
 function onTabHidden() {
     if (isMultiplayerMode()) {
         GameState.moveForward = false;
@@ -2987,6 +2988,35 @@ function onTabHidden() {
         if (GameState.isMobile) {
             VirtualJoystick.reset();
         }
+        // ─── CRITICAL FIX: Browser throttles requestAnimationFrame to ~1fps in background tabs.
+        // In multiplayer, the HOST must keep running ONI AI + position sync even in background.
+        // Start a setInterval fallback that runs the essential game logic at ~10fps. ───
+        if (GameState.isHost && GameState.gameActive && !_bgLoopInterval) {
+            console.log('[BG-LOOP] Host tab hidden → starting background game loop (100ms)');
+            _bgLoopInterval = setInterval(function() {
+                if (!GameState.gameActive || gamePaused) {
+                    clearInterval(_bgLoopInterval);
+                    _bgLoopInterval = null;
+                    return;
+                }
+                var bgDelta = 0.1; // 100ms fixed timestep
+                try {
+                    // Run ONI AI
+                    if (GameState.multiMode !== 'teamBattle') {
+                        updateOniAI(bgDelta);
+                        SyncLayer.updateOniPositions(GameState.onis);
+                    }
+                    // Update remote player interpolation (needed for ONI target tracking)
+                    updateRemotePlayers(bgDelta);
+                    // Sync timer
+                    if (GameState.timeRemaining > 0) {
+                        SyncLayer.updateGameTimer(GameState.timeRemaining);
+                    }
+                } catch(e) {
+                    console.error('[BG-LOOP] Error:', e.message);
+                }
+            }, 100);
+        }
     } else {
         pauseGame();
     }
@@ -2994,7 +3024,12 @@ function onTabHidden() {
 
 function onTabVisible() {
     // Solo: pause screen is already shown from pauseGame()
-    // Multiplayer: nothing to do, controls resume on input
+    // Multiplayer: clear background loop — rAF takes over
+    if (_bgLoopInterval) {
+        console.log('[BG-LOOP] Tab visible → clearing background game loop');
+        clearInterval(_bgLoopInterval);
+        _bgLoopInterval = null;
+    }
 }
 
 function pauseGame() {
@@ -5203,8 +5238,12 @@ function getSpawnPosition(playerIndex, cols, rows) {
             return { x: rx, z: rz };
         }
     }
-    // Default: all modes — each player near the start with slight offset
-    return { x: CL * 1.5 + playerIndex * 2, z: CL * 1.5 };
+    // Default: all modes — all players spawn at cell (1,1) center with tiny visual offsets.
+    // Previous code used playerIndex*2 which placed players 2 cells apart, causing spawns
+    // in walled-off cells. Cell (1,1) is always reachable in a recursive-backtracker maze.
+    var offsetX = (playerIndex % 3) * 0.25;
+    var offsetZ = Math.floor(playerIndex / 3) * 0.25;
+    return { x: CL * 1.5 + offsetX, z: CL * 1.5 + offsetZ };
 }
 
 function autoAssignCharacters() {
@@ -12972,6 +13011,11 @@ function cleanupGame() {
 
     GameState.gameActive = false;
     GameState.syncedOniModelIds = null; // Clear synced ONI model IDs for next game
+    // Clear background loop if running (multiplayer host tab hidden)
+    if (_bgLoopInterval) {
+        clearInterval(_bgLoopInterval);
+        _bgLoopInterval = null;
+    }
     if (GameState.animationId) {
         cancelAnimationFrame(GameState.animationId);
         GameState.animationId = null;
