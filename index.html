@@ -5587,18 +5587,17 @@ function launchMultiGame(config) {
                 rp.model.visible = false;
                 // Show capture notification to all players
                 showCaptureNotification(pi);
-                // Enable ONI diagnostic logging after catch event
-                console.log('[CATCH-FB] Remote player ' + pi + ' caught via Firebase. Enabling ONI diagnostics.');
+                // Enable ONI diagnostic logging after catch event — FULL state reset
+                console.log('[CATCH-FB] Remote player ' + pi + ' caught via Firebase. FULL ONI state reset.');
                 GameState.onis.forEach(function(o) {
                     o._catchLogFrames = 180;
                     o._stuckTimer = 0;
-                    // Force path reset so ONI retargets
                     o.pathTimer = 0;
                     o.path = [];
                     o.lastKnownPos = null;
-                    if (o.aiState === 'chase' || o.aiState === 'alert') {
-                        o.aiState = 'patrol';
-                    }
+                    o.patrolTarget = null;
+                    o.patrolPauseTimer = 0;
+                    o.aiState = 'patrol';
                 });
             }
             if (pdata.escaped === true && !rp.escaped) {
@@ -5671,6 +5670,11 @@ function launchMultiGame(config) {
 
     GameState.gameActive = true;
     GameState._multiGameStartTime = Date.now();  // For grace period in checkMultiGameEnd
+    _glDiagCount = 0;
+    _glStoppedLogged = false;
+    if (gameLoop._errCount) gameLoop._errCount = 0;
+    console.log('[MULTI-START] gameActive=true host=' + GameState.isHost + ' mode=' + GameState.multiMode +
+        ' onis=' + GameState.onis.length + ' gameMode=' + GameState.gameMode);
     clock.start();
     gameLoop();
 }
@@ -5693,11 +5697,15 @@ function checkMultiGameEnd(playersData) {
     if (GameState.multiMode === 'freeForAll') {
         // Check if all escaped/caught/timeout
         var allDone = true;
+        var _statusSummary = [];
         Object.keys(playersData).forEach(function(idx) {
             var p = playersData[idx];
+            _statusSummary.push('p' + idx + ':alive=' + p.alive + ',esc=' + p.escaped);
             if (p.alive !== false && !p.escaped) allDone = false;
         });
         if (allDone) {
+            console.warn('[GAME-END] freeForAll allDone=true! ' + _statusSummary.join(' | ') +
+                ' → setting gameActive=false');
             GameState.gameActive = false;
             if (GameState.timerInterval) clearInterval(GameState.timerInterval);
             setTimeout(function() { showMultiStageResult(); }, 1500);
@@ -9186,10 +9194,21 @@ function updateOniAI(delta) {
     if (!updateOniAI._fc) updateOniAI._fc = 0;
     updateOniAI._fc++;
     if (updateOniAI._fc % 120 === 1) {
+        // Count alive remote players
+        var _aliveRemote = 0;
+        if (isMulti) {
+            Object.keys(GameState.remotePlayers).forEach(function(idx) {
+                if (GameState.remotePlayers[idx].alive) _aliveRemote++;
+            });
+        }
         GameState.onis.forEach(function(oni, i) {
             console.log('[ONI-AI] #' + i + ' state=' + oni.aiState + ' path=' + oni.path.length +
                 ' pos=(' + oni.position.x.toFixed(1) + ',' + oni.position.z.toFixed(1) + ')' +
-                ' speed=' + oni.speed.toFixed(2) + ' delta=' + delta.toFixed(4));
+                ' floor=' + oni.currentFloor + ' cell=(' + oni.cellX + ',' + oni.cellZ + ')' +
+                ' stuckT=' + (oni._stuckTimer || 0).toFixed(1) +
+                ' patrolTarget=' + (oni.patrolTarget ? '(' + oni.patrolTarget.x + ',' + oni.patrolTarget.z + ')' : 'null') +
+                ' pauseT=' + (oni.patrolPauseTimer || 0).toFixed(1) +
+                ' localAlive=' + GameState.alive + ' remoteAlive=' + _aliveRemote);
         });
     }
 
@@ -9393,6 +9412,12 @@ function updateOniAI(delta) {
                     var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
                     oni.path = bfsPathfind3D(floors, start, oni.patrolTarget);
                     oni.pathTimer = ONI_CONFIG.patrolRecalcInterval;
+                    // BFS failed — log and try another target
+                    if (oni.path.length === 0) {
+                        console.warn('[ONI-PATROL] BFS empty! cell=(' + oni.cellX + ',' + oni.cellZ +
+                            ') floor=' + oni.currentFloor + ' target=(' + oni.patrolTarget.x + ',' + oni.patrolTarget.z + ')');
+                        oni.patrolTarget = null;
+                    }
                 }
             }
             // Reached patrol target?
@@ -9456,36 +9481,40 @@ function updateOniAI(delta) {
             }
         }
 
-        // ─── STUCK RECOVERY: if ONI hasn't moved for 1.5s with alive targets ───
-        if (oni._stuckTimer > 1.5 && hasTargets) {
+        // ─── STUCK RECOVERY: if ONI hasn't moved for 1.5s (with OR without targets) ───
+        if (oni._stuckTimer > 1.5) {
             console.warn('[ONI-STUCK] Recovery! stuckT=' + oni._stuckTimer.toFixed(1) +
                 ' state=' + oni.aiState + ' path=' + oni.path.length +
-                ' targets=' + oniTargets.length + ' dist=' + distToPlayer.toFixed(1) +
-                ' cell=(' + oni.cellX + ',' + oni.cellZ + ')');
+                ' targets=' + oniTargets.length + ' dist=' + (distToPlayer === Infinity ? 'INF' : distToPlayer.toFixed(1)) +
+                ' cell=(' + oni.cellX + ',' + oni.cellZ + ') floor=' + oni.currentFloor);
             // Snap to cell center first (escape wall)
             oni.position.x = oni.cellX * CL + CL / 2;
             oni.position.z = oni.cellZ * CL + CL / 2;
-            // Force pathfinding
-            oni.aiState = 'chase';
-            oni.alertTimer = 0;
-            oni.pathTimer = 0;
-            oni.path = [];
-            oni.patrolTarget = null;
-            oni.lastKnownPos = null;
-            if (sameFloor && closestTargetDist < Infinity) {
+            // Try chase if there are same-floor targets
+            if (hasTargets && sameFloor && closestTargetDist < Infinity) {
+                oni.aiState = 'chase';
+                oni.alertTimer = 0;
+                oni.pathTimer = 0;
+                oni.path = [];
+                oni.patrolTarget = null;
+                oni.lastKnownPos = null;
                 var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
                 var goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
                 oni.path = bfsPathfind3D(floors, start, goal);
-                console.warn('[ONI-STUCK] Recalculated path: ' + oni.path.length + ' steps');
+                console.warn('[ONI-STUCK] Chase path: ' + oni.path.length + ' steps');
             }
-            // If still no path, try random patrol target
+            // Always fallback to patrol if no chase path
             if (oni.path.length === 0) {
                 oni.aiState = 'patrol';
                 oni.patrolTarget = getRandomPatrolTarget(oni, floors);
+                oni.patrolPauseTimer = 0;
+                oni.pathTimer = 0;
+                oni.lastKnownPos = null;
                 if (oni.patrolTarget) {
                     var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
                     oni.path = bfsPathfind3D(floors, start, oni.patrolTarget);
-                    console.warn('[ONI-STUCK] Fallback patrol path: ' + oni.path.length + ' steps');
+                    console.warn('[ONI-STUCK] Patrol path: ' + oni.path.length + ' steps to (' +
+                        oni.patrolTarget.x + ',' + oni.patrolTarget.z + ')');
                 }
             }
             oni._stuckTimer = 0;
@@ -9545,16 +9574,18 @@ function updateOniAI(delta) {
                     caughtSomeone = true;
                 }
             });
-            // After catching someone, force immediate path recalculation to retarget
+            // After catching someone — FULL state reset for retarget
             if (caughtSomeone) {
                 oni.pathTimer = 0;
                 oni.path = [];
                 oni.lastKnownPos = null;
-                oni.aiState = 'patrol'; // Reset to patrol so detection can trigger chase
+                oni.patrolTarget = null;
+                oni.patrolPauseTimer = 0;
+                oni.aiState = 'patrol';
                 oni.alertTimer = 0;
-                oni._catchLogFrames = 180; // Enable diagnostic logging for 3s
+                oni._catchLogFrames = 180;
                 oni._stuckTimer = 0;
-                console.log('[ONI-AI] Catch processed, forcing retarget to patrol');
+                console.log('[ONI-AI] FULL reset after catch, retarget to patrol');
             }
         }
 
@@ -12426,8 +12457,17 @@ function updateFloorVisibility() {
 }
 
 /* --- Game Loop --- */
+var _glDiagCount = 0;
+var _glStoppedLogged = false;
 function gameLoop() {
-    if (!GameState.gameActive || gamePaused) return;
+    if (!GameState.gameActive || gamePaused) {
+        if (!_glStoppedLogged) {
+            console.warn('[GL] Game loop STOPPED: gameActive=' + GameState.gameActive + ' paused=' + gamePaused);
+            _glStoppedLogged = true;
+        }
+        return;
+    }
+    _glStoppedLogged = false;
     // Schedule next frame FIRST — prevents loop death from uncaught errors
     GameState.animationId = requestAnimationFrame(gameLoop);
     var delta;
@@ -12435,6 +12475,20 @@ function gameLoop() {
     delta = Math.min(clock.getDelta(), 0.1);
 
     var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
+
+    // ─── DIAGNOSTIC: Log game loop state every 120 frames ───
+    _glDiagCount++;
+    if (_glDiagCount % 120 === 1) {
+        console.log('[GL] f=' + _glDiagCount +
+            ' host=' + GameState.isHost +
+            ' multi=' + isMulti +
+            ' mode=' + GameState.multiMode +
+            ' gm=' + GameState.gameMode +
+            ' spec=' + GameState.isSpectating +
+            ' onis=' + GameState.onis.length +
+            ' alive=' + GameState.alive +
+            ' active=' + GameState.gameActive);
+    }
 
     // Spectator mode
     if (GameState.isSpectating) {
@@ -12498,8 +12552,15 @@ function gameLoop() {
     // ONI AI - host runs it, guests receive positions
     if (!isMulti || GameState.isHost) {
         if (GameState.multiMode !== 'teamBattle' || !isMulti) {
+            if (_glDiagCount % 120 === 2) {
+                console.log('[GL] >>> calling updateOniAI (normal path)');
+            }
             updateOniAI(delta);
+        } else if (_glDiagCount % 120 === 2) {
+            console.log('[GL] !!! updateOniAI SKIPPED: multiMode=' + GameState.multiMode + ' isMulti=' + isMulti);
         }
+    } else if (_glDiagCount % 120 === 2) {
+        console.log('[GL] !!! updateOniAI SKIPPED: isMulti=' + isMulti + ' isHost=' + GameState.isHost);
     }
 
     // FIX: Guest ONI visual animation. updateOniAI() (host-only) contains the
@@ -12624,7 +12685,13 @@ function gameLoop() {
 
     if (renderer && scene && camera) renderer.render(scene, camera);
     } catch(e) {
-        console.error('[gameLoop] Error (loop continues):', e.message, e.stack);
+        if (!gameLoop._errCount) gameLoop._errCount = 0;
+        gameLoop._errCount++;
+        // Log first 5 errors prominently, then every 60th
+        if (gameLoop._errCount <= 5 || gameLoop._errCount % 60 === 0) {
+            console.error('[gameLoop] ERROR #' + gameLoop._errCount + ':', e.message);
+            console.error('[gameLoop] Stack:', e.stack);
+        }
     }
 }
 
@@ -12678,17 +12745,17 @@ function onMultiPlayerCaught() {
     SyncLayer.reportCaught(GameState.playerIndex);
     // Show capture notification for self (visible to this player)
     showCaptureNotification(GameState.playerIndex);
-    // Force ONI to retarget remaining alive players
-    console.log('[CATCH-LOCAL] Local player caught. Resetting ONI state for retarget.');
+    // Force ONI to retarget remaining alive players — FULL state reset
+    console.log('[CATCH-LOCAL] Local player caught. FULL ONI state reset for retarget.');
     GameState.onis.forEach(function(o) {
         o._catchLogFrames = 180;
         o._stuckTimer = 0;
         o.pathTimer = 0;
         o.path = [];
         o.lastKnownPos = null;
-        if (o.aiState === 'chase' || o.aiState === 'alert') {
-            o.aiState = 'patrol';
-        }
+        o.patrolTarget = null;
+        o.patrolPauseTimer = 0;
+        o.aiState = 'patrol';
     });
 
     if (GameState.multiMode === 'coop' || GameState.multiMode === 'teamBattle') {
@@ -12890,6 +12957,9 @@ function startGame(stageId) {
 
     // Activate game
     GameState.gameActive = true;
+    _glDiagCount = 0;
+    _glStoppedLogged = false;
+    if (gameLoop._errCount) gameLoop._errCount = 0;
     clock.start();
     gameLoop();
 }
