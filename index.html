@@ -2978,6 +2978,8 @@ function initVisibilityHandler() {
 }
 
 var _bgLoopInterval = null;
+var _bgLoopActive = false;  // Flag: prevents rAF from also running ONI AI while bg loop is active
+var _bgLastTime = 0;        // Tracks real elapsed time for background loop
 function onTabHidden() {
     if (isMultiplayerMode()) {
         GameState.moveForward = false;
@@ -2993,15 +2995,22 @@ function onTabHidden() {
         // Start a setInterval fallback that runs the essential game logic at ~10fps. ───
         if (GameState.isHost && GameState.gameActive && !_bgLoopInterval) {
             console.log('[BG-LOOP] Host tab hidden → starting background game loop (100ms)');
+            _bgLastTime = performance.now();
+            _bgLoopActive = true;
             _bgLoopInterval = setInterval(function() {
                 if (!GameState.gameActive || gamePaused) {
                     clearInterval(_bgLoopInterval);
                     _bgLoopInterval = null;
+                    _bgLoopActive = false;
                     return;
                 }
-                var bgDelta = 0.1; // 100ms fixed timestep
+                // Use actual elapsed time instead of fixed timestep to prevent teleporting
+                var now = performance.now();
+                var elapsed = _bgLastTime > 0 ? (now - _bgLastTime) / 1000 : 0.1;
+                _bgLastTime = now;
+                var bgDelta = Math.min(elapsed, 0.15); // Cap at 150ms
                 try {
-                    // Run ONI AI
+                    // Run ONI AI (ONLY here — rAF skips ONI when _bgLoopActive)
                     if (GameState.multiMode !== 'teamBattle') {
                         updateOniAI(bgDelta);
                         SyncLayer.updateOniPositions(GameState.onis);
@@ -3029,6 +3038,10 @@ function onTabVisible() {
         console.log('[BG-LOOP] Tab visible → clearing background game loop');
         clearInterval(_bgLoopInterval);
         _bgLoopInterval = null;
+        _bgLoopActive = false;
+        _bgLastTime = 0;
+        // Discard accumulated clock delta to prevent position spike on first visible frame
+        if (typeof clock !== 'undefined' && clock.getDelta) clock.getDelta();
     }
 }
 
@@ -4749,7 +4762,11 @@ function spawnRemotePlayers() {
             GameState.teamAssignment[pi] === 'oni';
         var model = isOniTeam ? createOniPlayerModel(pi) : createPlayerModel(pi);
         var rSpawn = getSpawnPosition(pi, GameState.mazeCols, GameState.mazeRows);
-        model.position.set(rSpawn.x, 0, rSpawn.z);
+        // Validate remote player spawn against maze walls
+        var rSafe = (typeof checkWallCollision === 'function')
+            ? checkWallCollision(rSpawn.x, rSpawn.z, null)
+            : rSpawn;
+        model.position.set(rSafe.x, 0, rSafe.z);
         if (scene) scene.add(model);
 
         // Load GLB character model if player selected one
@@ -4763,8 +4780,8 @@ function spawnRemotePlayers() {
 
         GameState.remotePlayers[pi] = {
             model: model,
-            position: { x: rSpawn.x, y: 0, z: rSpawn.z },
-            targetPosition: { x: rSpawn.x, y: 0, z: rSpawn.z },
+            position: { x: rSafe.x, y: 0, z: rSafe.z },
+            targetPosition: { x: rSafe.x, y: 0, z: rSafe.z },
             rotationY: 0,
             targetRotationY: 0,
             currentFloor: 0,
@@ -5238,12 +5255,42 @@ function getSpawnPosition(playerIndex, cols, rows) {
             return { x: rx, z: rz };
         }
     }
-    // Default: all modes — all players spawn at cell (1,1) center with tiny visual offsets.
-    // Previous code used playerIndex*2 which placed players 2 cells apart, causing spawns
-    // in walled-off cells. Cell (1,1) is always reachable in a recursive-backtracker maze.
-    var offsetX = (playerIndex % 3) * 0.25;
-    var offsetZ = Math.floor(playerIndex / 3) * 0.25;
-    return { x: CL * 1.5 + offsetX, z: CL * 1.5 + offsetZ };
+    // Default: all modes — find a safe spawn cell near (1,1) that has open passages.
+    // Validates against the actual maze grid to ensure spawn cell isn't surrounded by walls.
+    var spawnCellX = 1, spawnCellZ = 1;
+    var grid = GameState.mazeFloors && GameState.mazeFloors[0];
+    if (grid) {
+        // Check cell (1,1) — count open walls (fewer walls = more open space)
+        var cell = grid[1] && grid[1][1];
+        var wallCount = cell ? ((cell.top ? 1 : 0) + (cell.right ? 1 : 0) + (cell.bottom ? 1 : 0) + (cell.left ? 1 : 0)) : 4;
+        // If cell (1,1) is a dead end (3 walls), find a better cell nearby
+        if (wallCount >= 3) {
+            var bestWalls = wallCount;
+            // Search nearby cells for a more open one
+            for (var sz = 1; sz <= Math.min(3, rows - 2); sz++) {
+                for (var sx = 1; sx <= Math.min(3, cols - 2); sx++) {
+                    if (sx === 1 && sz === 1) continue;
+                    var c = grid[sz] && grid[sz][sx];
+                    if (c) {
+                        var wc = (c.top ? 1 : 0) + (c.right ? 1 : 0) + (c.bottom ? 1 : 0) + (c.left ? 1 : 0);
+                        if (wc < bestWalls) {
+                            bestWalls = wc;
+                            spawnCellX = sx;
+                            spawnCellZ = sz;
+                            if (wc <= 1) break; // Found a great cell, stop searching
+                        }
+                    }
+                }
+                if (bestWalls <= 1) break;
+            }
+        }
+    }
+    // Center of chosen cell with tiny offsets per player
+    var baseX = spawnCellX * CL + CL / 2;
+    var baseZ = spawnCellZ * CL + CL / 2;
+    var offsetX = (playerIndex % 3) * 0.3;
+    var offsetZ = Math.floor(playerIndex / 3) * 0.3;
+    return { x: baseX + offsetX, z: baseZ + offsetZ };
 }
 
 function autoAssignCharacters() {
@@ -5541,9 +5588,11 @@ function launchMultiGame(config) {
 
     // Player start position — scattered by team in team battle
     var spawnPos = getSpawnPosition(GameState.playerIndex, cols, rows);
-    camera.position.set(spawnPos.x, PLAYER_HEIGHT, spawnPos.z);
+    // Validate spawn against actual maze walls to prevent wall-embedded spawns
+    var safeSpawn = checkWallCollision(spawnPos.x, spawnPos.z, null);
+    camera.position.set(safeSpawn.x, PLAYER_HEIGHT, safeSpawn.z);
     GameState.playerRotationY = 0;
-    GameState.playerPosition = { x: spawnPos.x, y: PLAYER_HEIGHT, z: spawnPos.z };
+    GameState.playerPosition = { x: safeSpawn.x, y: PLAYER_HEIGHT, z: safeSpawn.z };
     GameState.stamina = 100;
     GameState.sprintLocked = false;
     GameState.alive = true;
@@ -5589,7 +5638,7 @@ function launchMultiGame(config) {
         });
     });
 
-    // Guest: listen for oni position updates
+    // Guest: listen for oni position updates (use interpolation to prevent teleporting)
     if (!GameState.isHost && GameState.multiMode !== 'teamBattle') {
         SyncLayer.onOniUpdate(function(snap) {
             var data = snap.val();
@@ -5598,12 +5647,21 @@ function launchMultiGame(config) {
                 var oi = parseInt(idx);
                 if (oi >= GameState.onis.length) return;
                 var oni = GameState.onis[oi];
-                oni.position.x = data[idx].x;
-                oni.position.y = data[idx].y;
-                oni.position.z = data[idx].z;
+                // Store target position for smooth interpolation (like remote players)
+                if (!oni._targetPos) {
+                    // First update: set position directly
+                    oni.position.x = data[idx].x;
+                    oni.position.y = data[idx].y;
+                    oni.position.z = data[idx].z;
+                    oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
+                }
+                oni._targetPos = {
+                    x: data[idx].x,
+                    y: data[idx].y,
+                    z: data[idx].z
+                };
+                oni._targetRotY = data[idx].rotY;
                 oni.currentFloor = data[idx].floor;
-                oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
-                oni.group.rotation.y = data[idx].rotY;
             });
         });
     }
@@ -12536,14 +12594,28 @@ function gameLoop() {
         if (isMulti) {
             updateRemotePlayers(delta);
         }
-        // Host still runs oni AI even while spectating
-        if (GameState.isHost && GameState.multiMode !== 'teamBattle') {
+        // Host still runs oni AI even while spectating (skip if background loop handles it)
+        if (GameState.isHost && GameState.multiMode !== 'teamBattle' && !_bgLoopActive) {
             updateOniAI(delta);
             SyncLayer.updateOniPositions(GameState.onis);
         }
-        // Guest: animate ONI visuals while spectating
+        // Guest: interpolate + animate ONI visuals while spectating
         if (!GameState.isHost && GameState.multiMode !== 'teamBattle') {
             GameState.onis.forEach(function(oni) {
+                // Interpolate position toward Firebase target
+                if (oni._targetPos) {
+                    var lf = Math.min(1, delta * 12);
+                    oni.position.x += (oni._targetPos.x - oni.position.x) * lf;
+                    oni.position.y += (oni._targetPos.y - oni.position.y) * lf;
+                    oni.position.z += (oni._targetPos.z - oni.position.z) * lf;
+                    oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
+                }
+                if (oni._targetRotY !== undefined) {
+                    var rd = oni._targetRotY - oni.group.rotation.y;
+                    while (rd > Math.PI) rd -= Math.PI * 2;
+                    while (rd < -Math.PI) rd += Math.PI * 2;
+                    oni.group.rotation.y += rd * Math.min(1, delta * 12);
+                }
                 if (!oni.group.userData.cpuSkin) return;
                 var cs = oni.group.userData.cpuSkin;
                 if (!oni._prevPosX) { oni._prevPosX = oni.position.x; oni._prevPosZ = oni.position.z; }
@@ -12589,7 +12661,8 @@ function gameLoop() {
     updateLightFlickerEnhanced(delta);
 
     // ONI AI - host runs it, guests receive positions
-    if (!isMulti || GameState.isHost) {
+    // Skip if background loop is handling ONI AI (prevents double-movement / teleporting)
+    if (!_bgLoopActive && (!isMulti || GameState.isHost)) {
         if (GameState.multiMode !== 'teamBattle' || !isMulti) {
             if (_glDiagCount % 120 === 2) {
                 console.log('[GL] >>> calling updateOniAI (normal path)');
@@ -12599,14 +12672,33 @@ function gameLoop() {
             console.log('[GL] !!! updateOniAI SKIPPED: multiMode=' + GameState.multiMode + ' isMulti=' + isMulti);
         }
     } else if (_glDiagCount % 120 === 2) {
-        console.log('[GL] !!! updateOniAI SKIPPED: isMulti=' + isMulti + ' isHost=' + GameState.isHost);
+        if (_bgLoopActive) {
+            console.log('[GL] updateOniAI delegated to background loop');
+        } else {
+            console.log('[GL] !!! updateOniAI SKIPPED: isMulti=' + isMulti + ' isHost=' + GameState.isHost);
+        }
     }
 
-    // FIX: Guest ONI visual animation. updateOniAI() (host-only) contains the
-    // proceduralWalkUpdate + cpuSkinUpdate calls. Guests never run updateOniAI,
-    // so ONI meshes stayed in T-pose. Animate ONI visuals on guest side here.
+    // FIX: Guest ONI — smooth interpolation + visual animation.
+    // Guests receive ONI positions from Firebase and interpolate toward them (prevents teleporting).
+    // Also runs proceduralWalkUpdate + cpuSkinUpdate since guests don't run updateOniAI.
     if (isMulti && !GameState.isHost && GameState.multiMode !== 'teamBattle') {
         GameState.onis.forEach(function(oni) {
+            // ─── Interpolate position toward Firebase target (like remote players) ───
+            if (oni._targetPos) {
+                var lerpFactor = Math.min(1, delta * 12); // Smooth factor ~12Hz catch-up
+                oni.position.x += (oni._targetPos.x - oni.position.x) * lerpFactor;
+                oni.position.y += (oni._targetPos.y - oni.position.y) * lerpFactor;
+                oni.position.z += (oni._targetPos.z - oni.position.z) * lerpFactor;
+                oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
+            }
+            if (oni._targetRotY !== undefined) {
+                var rotDiff = oni._targetRotY - oni.group.rotation.y;
+                while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+                while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+                oni.group.rotation.y += rotDiff * Math.min(1, delta * 12);
+            }
+            // ─── Visual animation ───
             if (!oni.group.userData.cpuSkin) return;
             var cs = oni.group.userData.cpuSkin;
             // Infer animation state from position changes
@@ -12646,7 +12738,8 @@ function gameLoop() {
         }
 
         // Host ALWAYS syncs oni positions (even after being caught)
-        if (GameState.isHost && GameState.multiMode !== 'teamBattle') {
+        // Skip if background loop handles sync (prevents duplicate Firebase writes)
+        if (GameState.isHost && GameState.multiMode !== 'teamBattle' && !_bgLoopActive) {
             SyncLayer.updateOniPositions(GameState.onis);
         }
 
@@ -13016,6 +13109,8 @@ function cleanupGame() {
         clearInterval(_bgLoopInterval);
         _bgLoopInterval = null;
     }
+    _bgLoopActive = false;
+    _bgLastTime = 0;
     if (GameState.animationId) {
         cancelAnimationFrame(GameState.animationId);
         GameState.animationId = null;
