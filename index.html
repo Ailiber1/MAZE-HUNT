@@ -9402,7 +9402,7 @@ function updateOniAI(delta) {
             }
         }
 
-        // ─── Movement along path ───
+        // ─── Movement along path (WALL-SAFE: only follow BFS path, never beeline) ───
         if (oni.path.length > 0) {
             const target = oni.path[0];
             const targetX = target.x * CL + CL / 2;
@@ -9422,38 +9422,71 @@ function updateOniAI(delta) {
                 oni.position.x += (dx / dist) * speed * delta;
                 oni.position.z += (dz / dist) * speed * delta;
             }
-        } else if (oni.aiState === 'chase' && sameFloor && hasTargets && distToPlayer > 0.1) {
-            // Path exhausted in chase — beeline toward closest alive target
-            oni.position.x += (dxToPlayer / distToPlayer) * speed * delta;
-            oni.position.z += (dzToPlayer / distToPlayer) * speed * delta;
+        } else if (hasTargets && closestTargetDist > CL && sameFloor) {
+            // Path exhausted but target exists — force immediate BFS recalculation (NO beeline)
+            var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
+            var goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
+            oni.path = bfsPathfind3D(floors, start, goal);
+            oni.pathTimer = ONI_CONFIG.pathRecalcInterval;
+        }
+
+        // ─── WALL CONTAINMENT: ensure ONI stays inside valid maze cell ───
+        var newCellX = Math.floor(oni.position.x / CL);
+        var newCellZ = Math.floor(oni.position.z / CL);
+        var grid = floors[oni.currentFloor];
+        if (grid) {
+            // Clamp to grid bounds
+            newCellX = Math.max(0, Math.min(grid[0].length - 1, newCellX));
+            newCellZ = Math.max(0, Math.min(grid.length - 1, newCellZ));
+            // Check if moved to an adjacent cell — verify wall passage is allowed
+            if (newCellX !== oni.cellX || newCellZ !== oni.cellZ) {
+                var oldCell = grid[oni.cellZ] && grid[oni.cellZ][oni.cellX];
+                if (oldCell) {
+                    var blocked = false;
+                    if (newCellX > oni.cellX && oldCell.right) blocked = true;
+                    if (newCellX < oni.cellX && oldCell.left) blocked = true;
+                    if (newCellZ > oni.cellZ && oldCell.bottom) blocked = true;
+                    if (newCellZ < oni.cellZ && oldCell.top) blocked = true;
+                    if (blocked) {
+                        // Revert position to cell center of current cell
+                        oni.position.x = oni.cellX * CL + CL / 2;
+                        oni.position.z = oni.cellZ * CL + CL / 2;
+                    }
+                }
+            }
         }
 
         // ─── STUCK RECOVERY: if ONI hasn't moved for 1.5s with alive targets ───
         if (oni._stuckTimer > 1.5 && hasTargets) {
-            console.warn('[ONI-STUCK] Recovery triggered! stuckTime=' + oni._stuckTimer.toFixed(1) +
+            console.warn('[ONI-STUCK] Recovery! stuckT=' + oni._stuckTimer.toFixed(1) +
                 ' state=' + oni.aiState + ' path=' + oni.path.length +
                 ' targets=' + oniTargets.length + ' dist=' + distToPlayer.toFixed(1) +
-                ' sameFloor=' + sameFloor + ' canDetect=' + canDetect +
-                ' speed=' + speed.toFixed(2) + ' delta=' + delta.toFixed(4));
-            // Force state reset and new pathfinding
+                ' cell=(' + oni.cellX + ',' + oni.cellZ + ')');
+            // Snap to cell center first (escape wall)
+            oni.position.x = oni.cellX * CL + CL / 2;
+            oni.position.z = oni.cellZ * CL + CL / 2;
+            // Force pathfinding
             oni.aiState = 'chase';
             oni.alertTimer = 0;
             oni.pathTimer = 0;
             oni.path = [];
             oni.patrolTarget = null;
             oni.lastKnownPos = null;
-            // Force recalculate immediately
             if (sameFloor && closestTargetDist < Infinity) {
                 var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
                 var goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
                 oni.path = bfsPathfind3D(floors, start, goal);
-                console.warn('[ONI-STUCK] Recalculated path: ' + oni.path.length + ' steps to (' + playerCellX + ',' + playerCellZ + ')');
+                console.warn('[ONI-STUCK] Recalculated path: ' + oni.path.length + ' steps');
             }
-            // If no path, force direct movement
-            if (oni.path.length === 0 && closestTargetDist > 0.1 && closestTargetDist < Infinity) {
-                oni.position.x += (dxToPlayer / distToPlayer) * speed * delta * 3;
-                oni.position.z += (dzToPlayer / distToPlayer) * speed * delta * 3;
-                console.warn('[ONI-STUCK] Forced direct movement toward target');
+            // If still no path, try random patrol target
+            if (oni.path.length === 0) {
+                oni.aiState = 'patrol';
+                oni.patrolTarget = getRandomPatrolTarget(oni, floors);
+                if (oni.patrolTarget) {
+                    var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
+                    oni.path = bfsPathfind3D(floors, start, oni.patrolTarget);
+                    console.warn('[ONI-STUCK] Fallback patrol path: ' + oni.path.length + ' steps');
+                }
             }
             oni._stuckTimer = 0;
         }
