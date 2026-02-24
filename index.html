@@ -4604,18 +4604,12 @@ function loadRemotePlayerGLB(group, charId, isOni) {
 
             removeFallbackChildren();
             group.add(bodyGroup);
-            // Lighting
-            var rAmbLight = new THREE.AmbientLight(0xffffff, 0.6);
+            // Lighting — minimal for MeshStandardMaterial (scene lights also contribute)
+            var rAmbLight = new THREE.AmbientLight(0xffffff, 0.35);
             group.add(rAmbLight);
-            var rBodyLight = new THREE.PointLight(0xffffff, 2.0, 10);
-            rBodyLight.position.set(0, 1.2, 0.5);
-            group.add(rBodyLight);
-            var rLowerLight = new THREE.PointLight(0xffffff, 1.5, 8);
-            rLowerLight.position.set(0, 0.3, 0.8);
-            group.add(rLowerLight);
-            var rBackLight = new THREE.PointLight(0xffffff, 1.0, 8);
-            rBackLight.position.set(0, 0.9, -0.5);
-            group.add(rBackLight);
+            var rFillLight = new THREE.PointLight(0xffffff, 0.6, 6);
+            rFillLight.position.set(0, 1.2, 0.5);
+            group.add(rFillLight);
             group.userData.glbLoaded = true;
             group.userData.glbPending = false;
             group.userData.glbModel = bodyGroup;
@@ -5920,6 +5914,13 @@ function nextMultiStage() {
 }
 
 function rematchMulti() {
+    // Reset game state flags to prevent stale state in next game
+    GameState.gameActive = false;
+    GameState.isSpectating = false;
+    GameState.spectateTarget = -1;
+    GameState.captureInProgress = false;
+    updateOniAI._fc = 0;  // Reset ONI AI diagnostic counter
+    checkCatch._diagCount = 0;  // Reset catch diagnostic counter
     // Team battle: reset to stage 1 default (host can re-select)
     GameState.multiCurrentStage = 1;
     GameState.multiPoints = [0, 0, 0, 0];
@@ -8285,43 +8286,16 @@ function cpuSkinUpdate(cpuSkinData) {
         // instead of using bodyGroup.scale/position. Previous approach relied on
         // Three.js matrix composition (bodyGroup transform × mesh vertices) which
         // caused characters to float. Direct vertex modification guarantees feet at Y=0.
+        // Per-frame computation (no caching) ensures feet always touch ground regardless
+        // of animation state.
         var outHeight = globalMaxY - globalMinY;
         if (outHeight > 0.01) {
             var targetH = 2.5;
 
-            // Cache feetMinY and outHeight on first frame
-            if (!cpuSkinData._cachedOutHeight) {
-                var srcH = cpuSkinData.srcHeight || 1.8;
-                var srcMin = cpuSkinData._srcMinY || 0;
-                var footThreshY = srcMin + srcH * 0.3;
-                var feetMinY = Infinity;
-                var vtxOff2 = 0;
-                for (var fm = 0; fm < origSMs.length; fm++) {
-                    var fmCount = origSMs[fm].geometry.attributes.position.count;
-                    var fmSrcPos = origSMs[fm].geometry.attributes.position;
-                    for (var fi = 0; fi < fmCount; fi++) {
-                        var fSrcY = fmSrcPos.getY(fi);
-                        if (fSrcY < footThreshY) {
-                            var fOutY = tempBuf[(vtxOff2 + fi) * 3 + 1];
-                            if (fOutY < feetMinY) feetMinY = fOutY;
-                        }
-                    }
-                    vtxOff2 += fmCount;
-                }
-                if (feetMinY === Infinity) feetMinY = globalMinY;
-                cpuSkinData._cachedOutHeight = outHeight;
-                cpuSkinData._cachedFeetMinY = feetMinY;
-                console.log('[SKIN] Cached: outH=' + outHeight.toFixed(4) +
-                    ' globalMinY=' + globalMinY.toFixed(4) +
-                    ' feetMinY=' + feetMinY.toFixed(4) +
-                    ' diff=' + (feetMinY - globalMinY).toFixed(4) +
-                    ' srcH=' + srcH.toFixed(4));
-            }
-
-            var scaleFix = targetH / cpuSkinData._cachedOutHeight;
+            var scaleFix = targetH / outHeight;
             var centerX = (globalMinX + globalMaxX) / 2;
             var centerZ = (globalMinZ + globalMaxZ) / 2;
-            var feetOff = cpuSkinData._cachedFeetMinY;
+            var feetOff = globalMinY;
 
             // Transform ALL vertices in tempBuf: center XZ, place feet at Y=0, scale to targetH
             var totalVerts = tempIdx / 3;
@@ -9175,6 +9149,16 @@ function updateOniAI(delta) {
     if (!GameState.alive && !isMulti) return;
     const floors = GameState.mazeFloors;
     if (!floors || floors.length === 0) return;
+    // Diagnostic: log ONI AI state periodically (every 120 frames)
+    if (!updateOniAI._fc) updateOniAI._fc = 0;
+    updateOniAI._fc++;
+    if (updateOniAI._fc % 120 === 1) {
+        GameState.onis.forEach(function(oni, i) {
+            console.log('[ONI-AI] #' + i + ' state=' + oni.aiState + ' path=' + oni.path.length +
+                ' pos=(' + oni.position.x.toFixed(1) + ',' + oni.position.z.toFixed(1) + ')' +
+                ' speed=' + oni.speed.toFixed(2) + ' delta=' + delta.toFixed(4));
+        });
+    }
 
     // Build list of alive targets (local player + alive remote players)
     var oniTargets = [];
@@ -12273,7 +12257,11 @@ function updateFloorVisibility() {
 /* --- Game Loop --- */
 function gameLoop() {
     if (!GameState.gameActive || gamePaused) return;
-    const delta = Math.min(clock.getDelta(), 0.1);
+    // Schedule next frame FIRST — prevents loop death from uncaught errors
+    GameState.animationId = requestAnimationFrame(gameLoop);
+    var delta;
+    try {
+    delta = Math.min(clock.getDelta(), 0.1);
 
     var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
 
@@ -12307,7 +12295,6 @@ function gameLoop() {
         updateDustParticles(delta);
         drawMinimap();
         if (renderer && scene && camera) renderer.render(scene, camera);
-        GameState.animationId = requestAnimationFrame(gameLoop);
         return;
     }
 
@@ -12455,7 +12442,9 @@ function gameLoop() {
     updateFloorVisibility();
 
     if (renderer && scene && camera) renderer.render(scene, camera);
-    GameState.animationId = requestAnimationFrame(gameLoop);
+    } catch(e) {
+        console.error('[gameLoop] Error (loop continues):', e.message, e.stack);
+    }
 }
 
 /* ============================================
