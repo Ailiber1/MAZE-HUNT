@@ -4610,6 +4610,16 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             var rFillLight = new THREE.PointLight(0xffffff, 0.6, 6);
             rFillLight.position.set(0, 1.2, 0.5);
             group.add(rFillLight);
+            // Shadow circle under feet for ground contact visual cue
+            var shadowGeo = new THREE.CircleGeometry(0.35, 16);
+            var shadowMat = new THREE.MeshBasicMaterial({
+                color: 0x000000, transparent: true, opacity: 0.35,
+                depthWrite: false, side: THREE.DoubleSide
+            });
+            var shadowCircle = new THREE.Mesh(shadowGeo, shadowMat);
+            shadowCircle.rotation.x = -Math.PI / 2;
+            shadowCircle.position.set(0, 0.01, 0);
+            group.add(shadowCircle);
             group.userData.glbLoaded = true;
             group.userData.glbPending = false;
             group.userData.glbModel = bodyGroup;
@@ -9115,6 +9125,16 @@ function spawnOnis(stageId) {
         const worldY = floor * FLOOR_H;
 
         model.position.set(worldX, worldY, worldZ);
+        // Shadow circle under ONI for ground contact visual cue
+        var oniShadowGeo = new THREE.CircleGeometry(0.4, 16);
+        var oniShadowMat = new THREE.MeshBasicMaterial({
+            color: 0x000000, transparent: true, opacity: 0.4,
+            depthWrite: false, side: THREE.DoubleSide
+        });
+        var oniShadowCircle = new THREE.Mesh(oniShadowGeo, oniShadowMat);
+        oniShadowCircle.rotation.x = -Math.PI / 2;
+        oniShadowCircle.position.set(0, 0.01, 0);
+        model.add(oniShadowCircle);
         scene.add(model);
 
         // No scene-level light — oni visibility uses emissive self-glow
@@ -9192,6 +9212,14 @@ function updateOniAI(delta) {
     // If no alive targets, ONIs just patrol
     var hasTargets = oniTargets.length > 0;
 
+    // Log target changes for debugging
+    if (!updateOniAI._prevTargetCount) updateOniAI._prevTargetCount = -1;
+    if (oniTargets.length !== updateOniAI._prevTargetCount) {
+        console.log('[ONI-AI] Target count changed: ' + updateOniAI._prevTargetCount + ' → ' + oniTargets.length +
+            ' (alive=' + GameState.alive + ' spectating=' + GameState.isSpectating + ')');
+        updateOniAI._prevTargetCount = oniTargets.length;
+    }
+
     GameState.onis.forEach(oni => {
         const detMul = oni.detectionMul || 1.0;
 
@@ -9265,6 +9293,15 @@ function updateOniAI(delta) {
                 oni.aiState = 'chase';
             } else if (oni.aiState === 'patrol') {
                 oni.aiState = 'alert';
+            }
+        } else if (!hasTargets) {
+            // No alive targets at all — skip alert phase, go straight to patrol
+            if (oni.aiState !== 'patrol') {
+                oni.aiState = 'patrol';
+                oni.lastKnownPos = null;
+                oni.patrolTarget = null;
+                oni.path = [];
+                oni.pathTimer = 0;
             }
         } else {
             oni.alertTimer += delta;
@@ -9361,8 +9398,8 @@ function updateOniAI(delta) {
                 oni.position.x += (dx / dist) * speed * delta;
                 oni.position.z += (dz / dist) * speed * delta;
             }
-        } else if (oni.aiState === 'chase' && sameFloor && distToPlayer > ONI_CONFIG.catchDistance * 0.5) {
-            // Path exhausted in chase — beeline toward player
+        } else if (oni.aiState === 'chase' && sameFloor && hasTargets && distToPlayer > 0.1) {
+            // Path exhausted in chase — beeline toward closest alive target
             oni.position.x += (dxToPlayer / distToPlayer) * speed * delta;
             oni.position.z += (dzToPlayer / distToPlayer) * speed * delta;
         }
@@ -9385,6 +9422,37 @@ function updateOniAI(delta) {
             var ntX = nextTarget.x * CL + CL / 2;
             var ntZ = nextTarget.z * CL + CL / 2;
             oni.group.rotation.y = Math.atan2(ntX - oni.position.x, ntZ - oni.position.z);
+        }
+
+        // ─── HOST: detect catch for remote players (prevents ONI from being stuck ───
+        // while waiting for remote player's Firebase update)
+        if (isMulti && GameState.isHost) {
+            var caughtSomeone = false;
+            Object.keys(GameState.remotePlayers).forEach(function(ridx) {
+                var rpi = parseInt(ridx);
+                var rp = GameState.remotePlayers[rpi];
+                if (!rp || !rp.alive) return;
+                if (rp.currentFloor !== oni.currentFloor) return;
+                var rpDx = rp.position.x - oni.position.x;
+                var rpDz = rp.position.z - oni.position.z;
+                var rpDist = Math.sqrt(rpDx * rpDx + rpDz * rpDz);
+                if (rpDist < ONI_CONFIG.catchDistance) {
+                    console.log('[ONI-AI] Host detected catch for remote player ' + rpi + ' dist=' + rpDist.toFixed(2));
+                    rp.alive = false;
+                    if (rp.model) rp.model.visible = false;
+                    SyncLayer.reportCaught(rpi);
+                    showCaptureNotification(rpi);
+                    caughtSomeone = true;
+                }
+            });
+            // After catching someone, force immediate path recalculation to retarget
+            if (caughtSomeone) {
+                oni.pathTimer = 0;
+                oni.path = [];
+                oni.lastKnownPos = null;
+                oni.alertTimer = ONI_CONFIG.alertDuration; // Skip alert, go straight to patrol/chase
+                console.log('[ONI-AI] Catch processed, forcing retarget. aiState=' + oni.aiState);
+            }
         }
 
         // ─── Lunge posture ───
@@ -12290,6 +12358,16 @@ function gameLoop() {
                 cs.frameCount = (cs.frameCount || 0) + 1;
                 if (cs.frameCount % 2 === 0) cpuSkinUpdate(cs);
             });
+        }
+        // Update floor visibility based on spectated player's floor
+        if (GameState.spectateTarget >= 0) {
+            var specRP = GameState.remotePlayers[GameState.spectateTarget];
+            if (specRP) {
+                var savedFloor = GameState.playerCurrentFloor;
+                GameState.playerCurrentFloor = specRP.currentFloor;
+                updateFloorVisibility();
+                GameState.playerCurrentFloor = savedFloor;
+            }
         }
         updateExitPulse();
         updateDustParticles(delta);
