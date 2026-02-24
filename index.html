@@ -8091,12 +8091,10 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
         }
     }
 
-    // Base arm pose: applied to RUNNERS only (not ONI — ONI keeps kyonshi/zombie arms)
-    if (!cpuSkinData.isOni) {
-        applyArmDown();
-        applyDelta('LeftForeArm', -0.4, 0, 0);
-        applyDelta('RightForeArm', -0.4, 0, 0);
-    }
+    // Base arm pose: always applied (idle, walk, run)
+    applyArmDown();
+    applyDelta('LeftForeArm', -0.4, 0, 0);
+    applyDelta('RightForeArm', -0.4, 0, 0);
 
     if (speed === 0) return; // idle = arms-down pose (no walking motion)
 
@@ -8119,15 +8117,13 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
     // Lower legs (knees)
     applyDelta('LeftLeg', kneeFlexL, 0, 0);
     applyDelta('RightLeg', kneeFlexR, 0, 0);
-    // Upper arms: world-space arm-down + local walking swing (RUNNERS only)
-    if (!cpuSkinData.isOni) {
-        applyArmDown();
-        applyDelta('LeftArm', armSwing, 0, 0, false, true);
-        applyDelta('RightArm', -armSwing, 0, 0, false, true);
-        // Forearms: natural elbow bend + slight walking flex
-        applyDelta('LeftForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
-        applyDelta('RightForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
-    }
+    // Upper arms: world-space arm-down + local walking swing
+    applyArmDown();
+    applyDelta('LeftArm', armSwing, 0, 0, false, true);
+    applyDelta('RightArm', -armSwing, 0, 0, false, true);
+    // Forearms: natural elbow bend + slight walking flex
+    applyDelta('LeftForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
+    applyDelta('RightForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
     // Spine twist
     applyDelta('Spine', 0, spineRot, 0);
     // Head stays stable (slight counter-rotation)
@@ -8737,8 +8733,7 @@ function processOniGLTF(group, gltf, stageId) {
         _tempBuf: new Float32Array(totalVertexCount * 3),
         _allBones: allBonesList,
         restPoseBones: restPoseBones,  // for procedural animation
-        animTime: 0,
-        isOni: true  // ONI characters keep kyonshi (zombie) arms
+        animTime: 0
     };
 
     // === NO AnimationMixer ===
