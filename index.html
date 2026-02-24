@@ -5275,6 +5275,21 @@ function startMultiplayerGame() {
     var hostOniModelIds = getOniModelsForStage(GameState.multiCurrentStage);
     GameState.syncedOniModelIds = hostOniModelIds;
 
+    // FIX: Reset player alive/escaped status in Firebase before starting new round.
+    // Without this, stale 'alive:false' from previous round triggers onPlayerStatusUpdate
+    // and immediately marks players as caught in the new round.
+    if (firebaseReady && GameState.roomId) {
+        var roomRef = database.ref('rooms/' + GameState.roomId);
+        var playerResetData = {};
+        Object.keys(GameState.players).forEach(function(idx) {
+            playerResetData[idx + '/alive'] = true;
+            playerResetData[idx + '/escaped'] = false;
+            playerResetData[idx + '/catchTimestamp'] = null;
+            playerResetData[idx + '/escapeTime'] = null;
+        });
+        roomRef.child('players').update(playerResetData);
+    }
+
     // Write game config and status to Firebase
     if (firebaseReady && GameState.roomId) {
         var roomRef = database.ref('rooms/' + GameState.roomId);
@@ -5530,6 +5545,9 @@ function launchMultiGame(config) {
     SyncLayer.onPlayerStatusUpdate(function(snap) {
         var data = snap.val();
         if (!data) return;
+        // FIX: Ignore status updates if game is not yet active (prevents stale data from
+        // previous round triggering instant capture at the start of a new round)
+        if (!GameState.gameActive) return;
         Object.keys(data).forEach(function(idx) {
             var pi = parseInt(idx);
             var pdata = data[idx];
@@ -7994,11 +8012,9 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
     }
 
     // Base arm pose: always applied (idle, walk, run)
-    // FIX: Use premultiply (parent-space) for arm-down rotation.
-    // With multiply (bone-local), Z-rotation swings arms FORWARD (zombie pose)
-    // because Mixamo bone local Z-axis points along character's facing direction.
-    // With premultiply (parent-space), Z-rotation correctly swings arms DOWNWARD.
-    var armDown = 1.15; // ~66 degrees down from T-pose
+    // FIX: premultiply (parent-space) Z-rotation to bring arms down from T-pose.
+    // premultiply Z=+1.15 → arms UP (banzai), Z=-1.15 → arms DOWN (correct).
+    var armDown = -1.15; // negative Z in parent-space = downward from T-pose
     applyDelta('LeftArm', 0, 0, armDown, true);
     applyDelta('RightArm', 0, 0, -armDown, true);
     applyDelta('LeftForeArm', -0.4, 0, 0);
@@ -8026,7 +8042,6 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
     applyDelta('LeftLeg', kneeFlexL, 0, 0);
     applyDelta('RightLeg', kneeFlexR, 0, 0);
     // Upper arms: base down-rotation (Z, parent-space) + walking swing (X, local-space)
-    // FIX: arm-down uses premultiply (parent-space), arm-swing accumulates on top (local-space)
     applyDelta('LeftArm', 0, 0, armDown, true);
     applyDelta('RightArm', 0, 0, -armDown, true);
     applyDelta('LeftArm', armSwing, 0, 0, false, true);
@@ -8198,22 +8213,25 @@ function cpuSkinUpdate(cpuSkinData) {
             }
 
             if (cpuSkinData._bodyGroup) {
-                // FIX: Use FIXED rest-pose srcHeight for scaling instead of animated outHeight.
-                // Using animated outHeight causes scale to fluctuate every frame as limbs move,
-                // which combined with Y offset causes characters to float/bob.
+                // FIX: Cache first-frame boneTransform output dimensions.
+                // Raw geometry srcHeight and boneTransform output height can be in
+                // DIFFERENT unit scales (e.g., geometry=1.8m vs boneTransform=180cm).
+                // By caching the first frame's boneTransform values, we get the correct
+                // unit scale AND avoid per-frame fluctuation from animation.
                 var targetH = 2.5;
-                var fixedHeight = cpuSkinData.srcHeight || outHeight;
-                var scaleFix = targetH / fixedHeight;
+                if (!cpuSkinData._cachedOutHeight) {
+                    cpuSkinData._cachedOutHeight = outHeight;
+                    cpuSkinData._cachedMinY = globalMinY;
+                    console.log('[SKIN] Cached first-frame: outH=' + outHeight.toFixed(4) +
+                        ' minY=' + globalMinY.toFixed(4) + ' srcH=' + (cpuSkinData.srcHeight || 0).toFixed(4));
+                }
+                var scaleFix = targetH / cpuSkinData._cachedOutHeight;
                 var centerX = (globalMinX + globalMaxX) / 2;
                 var centerZ = (globalMinZ + globalMaxZ) / 2;
                 cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
-                // FIX: Use rest-pose _srcMinY for Y offset (fixed, not animated).
-                var yOffset = (typeof cpuSkinData._srcMinY === 'number')
-                    ? -cpuSkinData._srcMinY * scaleFix
-                    : -globalMinY * scaleFix;
                 cpuSkinData._bodyGroup.position.set(
                     -centerX * scaleFix,
-                    yOffset,
+                    -cpuSkinData._cachedMinY * scaleFix,
                     -centerZ * scaleFix
                 );
             }
