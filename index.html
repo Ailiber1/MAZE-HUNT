@@ -4426,8 +4426,30 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                 boneOffsetY = -boneBox.min.y * boneScale;
             }
 
-            if (!origSkinned || !origSkinned.geometry) {
-                // Fallback: extract regular meshes without CPU skinning
+            // === Find ALL SkinnedMeshes (same approach as ONI processOniGLTF) ===
+            var allSkinnedMeshesRaw = [];
+            var allStaticMeshes = [];
+            sourceScene.traverse(function(child) {
+                if (child.isSkinnedMesh && child.geometry) {
+                    allSkinnedMeshesRaw.push(child);
+                } else if (child.isMesh && child.geometry) {
+                    allStaticMeshes.push(child);
+                }
+            });
+
+            // Deduplicate SkinnedMeshes (same vertex count = duplicate armature)
+            var allSkinnedMeshes = [];
+            var seenVtxCounts = {};
+            for (var smi = 0; smi < allSkinnedMeshesRaw.length; smi++) {
+                var sm = allSkinnedMeshesRaw[smi];
+                var vtxC = sm.geometry.attributes.position.count;
+                if (seenVtxCounts[vtxC]) continue;
+                seenVtxCounts[vtxC] = sm.name || ('SM' + smi);
+                allSkinnedMeshes.push(sm);
+            }
+
+            if (allSkinnedMeshes.length === 0) {
+                // No SkinnedMesh — fallback to static meshes
                 var allMeshData = [];
                 sourceScene.traverse(function(child) {
                     if (child.isMesh && child.geometry) {
@@ -4438,17 +4460,13 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     }
                 });
                 if (allMeshData.length > 0) {
-                    // Use bone-based scale if available, else geometry-based
-                    var meshScaleFb, offsetYFb;
-                    if (hasBones) {
-                        meshScaleFb = boneScale;
-                        offsetYFb = boneOffsetY;
-                    } else {
-                        var refGeo = allMeshData[0].geometry;
-                        refGeo.computeBoundingBox();
-                        var bbFb = refGeo.boundingBox;
-                        var geoHeightFb = bbFb.max.y - bbFb.min.y;
-                        meshScaleFb = (geoHeightFb > 0.001) ? (1.8 / geoHeightFb) : 100;
+                    var meshScaleFb = hasBones ? boneScale : 1.0;
+                    var offsetYFb = hasBones ? boneOffsetY : 0;
+                    if (!hasBones && allMeshData[0].geometry) {
+                        allMeshData[0].geometry.computeBoundingBox();
+                        var bbFb = allMeshData[0].geometry.boundingBox;
+                        var geoHFb = bbFb.max.y - bbFb.min.y;
+                        meshScaleFb = (geoHFb > 0.001) ? (1.8 / geoHFb) : 100;
                         offsetYFb = -bbFb.min.y * meshScaleFb;
                     }
                     var bodyGroupFb = new THREE.Group();
@@ -4461,84 +4479,115 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     bodyGroupFb.position.y = offsetYFb;
                     removeFallbackChildren();
                     group.add(bodyGroupFb);
-                    // Light on PARENT group (not inside scaled bodyGroup)
                     var pLightFb = new THREE.PointLight(0xffffff, 1.5, 8);
                     pLightFb.position.set(0, 1.2, 0);
                     group.add(pLightFb);
                     group.userData.glbLoaded = true;
                     group.userData.glbModel = bodyGroupFb;
-                    console.log('[RemotePlayer] Static mesh loaded. charId:', charId, 'scale:', meshScaleFb.toFixed(4));
+                    console.log('[RemotePlayer] Static mesh loaded. charId:', charId);
                 }
                 return;
             }
 
-            // SkinnedMesh found — setup CPU skinning with source geometry scale
-            var srcGeo = origSkinned.geometry;
-            srcGeo.computeBoundingBox();
-            var srcBB = srcGeo.boundingBox;
-            var srcGeoHeight = srcBB.max.y - srcBB.min.y;
-            var cpuMeshScale = (srcGeoHeight > 0.001) ? (1.8 / srcGeoHeight) : 100;
-
-            // Create visible regular Mesh with fresh independent position buffer
-            var dstGeo = srcGeo.clone();
-            var srcPosR = srcGeo.attributes.position;
-            var vtxCountR = srcPosR.count;
-            var freshArrR = new Float32Array(vtxCountR * 3);
-            for (var ri = 0; ri < vtxCountR; ri++) {
-                freshArrR[ri*3]   = srcPosR.getX(ri);
-                freshArrR[ri*3+1] = srcPosR.getY(ri);
-                freshArrR[ri*3+2] = srcPosR.getZ(ri);
-            }
-            dstGeo.setAttribute('position', new THREE.BufferAttribute(freshArrR, 3));
-            // Remove morph/skin attributes
-            if (dstGeo.morphAttributes) {
-                Object.keys(dstGeo.morphAttributes).forEach(function(k) { delete dstGeo.morphAttributes[k]; });
-            }
-            dstGeo.deleteAttribute('skinIndex');
-            dstGeo.deleteAttribute('skinWeight');
-
-            // === STEP 1: Clean geometry, clear groups, set drawRange ===
-            var keepAttrsR = ['position', 'normal', 'uv', 'uv2', 'color', 'tangent'];
-            Object.keys(dstGeo.attributes).forEach(function(name) {
-                if (keepAttrsR.indexOf(name) === -1) dstGeo.deleteAttribute(name);
+            // === CRITICAL: Set bindMode='detached' on ALL SkinnedMeshes ===
+            // Without this, boneTransform() produces 28x amplified vertex positions.
+            // In 'attached' mode, updateMatrixWorld resets bindMatrixInverse every frame,
+            // causing bindMatrix * bindMatrixInverse != Identity.
+            allSkinnedMeshes.forEach(function(sm) {
+                sm.bindMode = 'detached';
+                sm.bindMatrixInverse.copy(sm.bindMatrix).invert();
             });
-            // Ensure index buffer is Uint32 for large meshes
-            if (vtxCountR > 65535 && dstGeo.index && dstGeo.index.array instanceof Uint16Array) {
-                var oldIdxR = dstGeo.index.array;
-                var newIdxR = new Uint32Array(oldIdxR.length);
-                for (var iiR = 0; iiR < oldIdxR.length; iiR++) newIdxR[iiR] = oldIdxR[iiR];
-                dstGeo.setIndex(new THREE.BufferAttribute(newIdxR, 1));
-            }
-            // Clear groups and use full drawRange to ensure all triangles render
-            dstGeo.clearGroups();
-            dstGeo.setDrawRange(0, Infinity);
-            dstGeo.computeVertexNormals();
 
-            // === STEP 2: Create fresh MeshBasicMaterial (single, no groups) ===
-            var origMatR = origSkinned.material;
-            var firstMatR = Array.isArray(origMatR) ? origMatR[0] : origMatR;
-            var bodyMat = new THREE.MeshBasicMaterial({
-                side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+            // Compute combined bounding box from ALL SkinnedMeshes
+            var combinedBB = new THREE.Box3();
+            allSkinnedMeshes.forEach(function(sm) {
+                sm.geometry.computeBoundingBox();
+                combinedBB.union(sm.geometry.boundingBox);
             });
-            if (firstMatR) {
-                if (firstMatR.map) bodyMat.map = firstMatR.map;
-                if (firstMatR.color) bodyMat.color.copy(firstMatR.color);
-            }
-            var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
-            bodyMesh.frustumCulled = false;
-            bodyMesh.morphTargetInfluences = [];
+            var rpGeoHeight = combinedBB.max.y - combinedBB.min.y;
 
+            // Create visible Mesh for EACH SkinnedMesh (same as ONI)
             var bodyGroup = new THREE.Group();
-            bodyGroup.add(bodyMesh);
+            var meshDataArr = [];
+            var totalVertexCount = 0;
+
+            allSkinnedMeshes.forEach(function(origSM) {
+                var srcGeo = origSM.geometry;
+                var dstGeo = srcGeo.clone();
+                var srcPos = srcGeo.attributes.position;
+                var vtxCount = srcPos.count;
+                totalVertexCount += vtxCount;
+
+                // Fresh independent position buffer
+                var freshArr = new Float32Array(vtxCount * 3);
+                for (var pi = 0; pi < vtxCount; pi++) {
+                    freshArr[pi*3]   = srcPos.getX(pi);
+                    freshArr[pi*3+1] = srcPos.getY(pi);
+                    freshArr[pi*3+2] = srcPos.getZ(pi);
+                }
+                dstGeo.setAttribute('position', new THREE.BufferAttribute(freshArr, 3));
+
+                // Remove morph/skin attributes from destination
+                if (dstGeo.morphAttributes) {
+                    Object.keys(dstGeo.morphAttributes).forEach(function(k) { delete dstGeo.morphAttributes[k]; });
+                }
+                dstGeo.deleteAttribute('skinIndex');
+                dstGeo.deleteAttribute('skinWeight');
+
+                // Keep only essential attributes
+                var keepAttrs = ['position', 'normal', 'uv', 'uv2', 'color', 'tangent'];
+                Object.keys(dstGeo.attributes).forEach(function(name) {
+                    if (keepAttrs.indexOf(name) === -1) dstGeo.deleteAttribute(name);
+                });
+
+                // Uint32 index for large meshes
+                if (vtxCount > 65535 && dstGeo.index && dstGeo.index.array instanceof Uint16Array) {
+                    var oldIdx = dstGeo.index.array;
+                    var newIdx = new Uint32Array(oldIdx.length);
+                    for (var ii = 0; ii < oldIdx.length; ii++) newIdx[ii] = oldIdx[ii];
+                    dstGeo.setIndex(new THREE.BufferAttribute(newIdx, 1));
+                }
+
+                dstGeo.clearGroups();
+                dstGeo.setDrawRange(0, Infinity);
+                dstGeo.computeVertexNormals();
+
+                // Fresh MeshBasicMaterial
+                var origMat = origSM.material;
+                var firstMat = Array.isArray(origMat) ? origMat[0] : origMat;
+                var bodyMat = new THREE.MeshBasicMaterial({
+                    side: THREE.DoubleSide, transparent: false, alphaTest: 0, depthWrite: true
+                });
+                if (firstMat) {
+                    if (firstMat.map) bodyMat.map = firstMat.map;
+                    if (firstMat.color) bodyMat.color.copy(firstMat.color);
+                }
+
+                var bodyMesh = new THREE.Mesh(dstGeo, bodyMat);
+                bodyMesh.frustumCulled = false;
+                bodyMesh.morphTargetInfluences = [];
+                bodyGroup.add(bodyMesh);
+
+                meshDataArr.push({
+                    srcPositions: srcPos,
+                    dstPositions: dstGeo.attributes.position,
+                    skinIndex: srcGeo.attributes.skinIndex,
+                    skinWeight: srcGeo.attributes.skinWeight,
+                    bindMatrix: origSM.bindMatrix,
+                    bindMatrixInverse: origSM.bindMatrixInverse,
+                });
+            });
+
+            // bodyGroup uses identity transform (cpuSkinUpdate does dynamic scaling)
             bodyGroup.scale.setScalar(1);
             bodyGroup.position.set(0, 0, 0);
 
-            // Keep sourceScene DETACHED (not added to group)
+            // Keep sourceScene DETACHED
             group.userData.sourceScene = sourceScene;
 
             removeFallbackChildren();
             group.add(bodyGroup);
-            // Lighting for MeshStandardMaterial (remote ONI)
+            // Lighting
             var rAmbLight = new THREE.AmbientLight(0xffffff, 0.6);
             group.add(rAmbLight);
             var rBodyLight = new THREE.PointLight(0xffffff, 2.0, 10);
@@ -4554,9 +4603,17 @@ function loadRemotePlayerGLB(group, charId, isOni) {
             group.userData.glbModel = bodyGroup;
 
             // === SAVE REST-POSE BONE DATA for procedural animation ===
-            // Must happen BEFORE any animation is applied (bones are in bind/rest pose)
+            // Must happen BEFORE any animation (bones are in bind/rest pose)
             sourceScene.updateMatrixWorld(true);
-            if (origSkinned.skeleton) origSkinned.skeleton.update();
+            // Update ALL skeletons
+            var _initSkeletons = [];
+            for (var isi = 0; isi < allSkinnedMeshes.length; isi++) {
+                var isk = allSkinnedMeshes[isi].skeleton;
+                if (isk && _initSkeletons.indexOf(isk) === -1) {
+                    isk.update();
+                    _initSkeletons.push(isk);
+                }
+            }
             var restPoseBones = {};
             var rpBoneNameList = [];
             var rpTotalBoneObjects = 0;
@@ -4574,39 +4631,32 @@ function loadRemotePlayerGLB(group, charId, isOni) {
                     rpTotalBoneObjects++;
                 }
             });
-            console.log('[RemotePlayer] Saved rest-pose for ' + rpBoneNameList.length + ' unique bone names, ' + rpTotalBoneObjects + ' total bone objects');
 
-            // Setup CPU skinning data (matching ONI format for cpuSkinUpdate)
+            // Setup CPU skinning data (EXACT same format as ONI)
+            var skeletonRef = null;
+            for (var si = 0; si < allSkinnedMeshes.length; si++) {
+                if (allSkinnedMeshes[si].skeleton) { skeletonRef = allSkinnedMeshes[si].skeleton; break; }
+            }
             group.userData.cpuSkin = {
                 sourceScene: sourceScene,
-                skeleton: origSkinned.skeleton,
-                meshes: [{
-                    srcPositions: srcPosR,
-                    dstPositions: dstGeo.attributes.position,
-                    skinIndex: srcGeo.attributes.skinIndex,
-                    skinWeight: srcGeo.attributes.skinWeight,
-                    bindMatrix: origSkinned.bindMatrix,
-                    bindMatrixInverse: origSkinned.bindMatrixInverse,
-                }],
-                origSkinnedMeshes: [origSkinned], // Required by cpuSkinUpdate
+                skeleton: skeletonRef,
+                meshes: meshDataArr,
+                origSkinnedMeshes: allSkinnedMeshes,
                 frameCount: 0,
-                srcHeight: srcGeoHeight,
-                _srcMinY: srcBB.min.y,
+                srcHeight: rpGeoHeight,
+                _srcMinY: combinedBB.min.y,
                 _bodyGroup: bodyGroup,
-                _tempBuf: new Float32Array(vtxCountR * 3),
-                restPoseBones: restPoseBones, // for procedural animation
+                _tempBuf: new Float32Array(totalVertexCount * 3),
+                restPoseBones: restPoseBones,
                 animTime: 0
             };
 
             // === NO AnimationMixer ===
-            // Same as ONI: external animations cause incompatible bone transforms.
-            // Procedural animation (proceduralWalkUpdate) drives bones instead.
-            // group.userData.mixer is NOT set.
+            // Same as ONI: procedural animation (proceduralWalkUpdate) drives bones.
 
-            // Log bone names for debug
-            console.log('[RemotePlayer] GLB loaded (procedural anim). charId:', charId,
-                'bones:', rpBoneNameList.length,
-                'firstBones:', rpBoneNameList.slice(0, 5).join(','));
+            console.log('[RemotePlayer] GLB loaded (ONI-style). charId:', charId,
+                'skinned:', allSkinnedMeshes.length, 'bones:', rpBoneNameList.length,
+                'totalVtx:', totalVertexCount);
         } catch(e) {
             console.error('[RemotePlayer] GLB error:', charId, e.message, e.stack);
         }
@@ -12040,24 +12090,28 @@ function gameLoop() {
     );
 
     // Multiplayer sync
-    if (isMulti && GameState.alive) {
-        SyncLayer.updatePlayerPosition(
-            GameState.playerIndex,
-            GameState.playerPosition,
-            GameState.playerRotationY,
-            GameState.playerCurrentFloor
-        );
+    if (isMulti) {
+        // Only sync own position while alive
+        if (GameState.alive) {
+            SyncLayer.updatePlayerPosition(
+                GameState.playerIndex,
+                GameState.playerPosition,
+                GameState.playerRotationY,
+                GameState.playerCurrentFloor
+            );
+        }
 
-        // Host syncs oni positions
+        // Host ALWAYS syncs oni positions (even after being caught)
         if (GameState.isHost && GameState.multiMode !== 'teamBattle') {
             SyncLayer.updateOniPositions(GameState.onis);
         }
 
-        // Host syncs timer
+        // Host ALWAYS syncs timer
         if (GameState.isHost && GameState.timeRemaining > 0) {
             SyncLayer.updateGameTimer(GameState.timeRemaining);
         }
 
+        // ALWAYS update remote player animations
         updateRemotePlayers(delta);
     }
 
