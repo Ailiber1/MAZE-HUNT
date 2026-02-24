@@ -5723,11 +5723,30 @@ function showMultiStageResult() {
         }
     }
 
+    // FIX: In freeForAll, check if ANY player escaped.
+    // If no one escaped (all caught), game over — no "次のステージ" button.
+    var anyEscaped = false;
+    if (GameState.multiMode === 'freeForAll') {
+        Object.keys(GameState.players).forEach(function(idx) {
+            var p = GameState.players[parseInt(idx)];
+            if (p && p.escaped) anyEscaped = true;
+        });
+    }
+
     // Buttons
     if (isLastStage && !GameState.coopRetrying) {
         btnsEl.innerHTML =
             '<button class="btn btn-neon" onclick="showMultiResult()">' +
             (GameState.language === 'ja' ? '最終結果' : 'Final Result') + '</button>';
+    } else if (GameState.multiMode === 'freeForAll' && !anyEscaped) {
+        // All runners caught — game over, show only final result / back to title
+        titleEl.textContent = 'STAGE ' + GameState.multiCurrentStage + ' ' +
+            (GameState.language === 'ja' ? '結果' : 'RESULT');
+        titleEl.className = 'gameover';
+        btnsEl.innerHTML =
+            '<button class="btn btn-neon" onclick="showMultiResult()">' +
+            (GameState.language === 'ja' ? '最終結果' : 'Final Result') + '</button>' +
+            '<button class="btn btn-thin" onclick="backToMultiTitle()">' + lang.backTitle + '</button>';
     } else {
         var nextLabel = GameState.coopRetrying ?
             (GameState.language === 'ja' ? 'リトライ' : 'Retry') :
@@ -7950,22 +7969,38 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
 
     // Helper: apply DELTA rotation to ALL bone objects with matching name.
     // This ensures models with multiple skeletons (body + clothes) all animate together.
+    // 'premul' flag: true = parent-space rotation (premultiply), false = local-space (multiply)
+    // 'accumulate' flag: true = multiply on current quaternion (don't reset to restQuat)
     var _euler = new THREE.Euler();
     var _deltaQ = new THREE.Quaternion();
-    function applyDelta(partialName, rx, ry, rz) {
+    function applyDelta(partialName, rx, ry, rz, premul, accumulate) {
         var bones = findBones(partialName);
         if (!bones) return;
         _euler.set(rx, ry, rz);
         _deltaQ.setFromEuler(_euler);
         for (var bi = 0; bi < bones.length; bi++) {
-            bones[bi].bone.quaternion.copy(bones[bi].restQuat).multiply(_deltaQ);
+            if (!accumulate) {
+                // First delta for this bone: reset to rest pose first
+                bones[bi].bone.quaternion.copy(bones[bi].restQuat);
+            }
+            if (premul) {
+                // Parent-space: deltaQ * currentQ (rotation in parent's coordinate frame)
+                bones[bi].bone.quaternion.premultiply(_deltaQ);
+            } else {
+                // Local-space: currentQ * deltaQ (rotation in bone's own frame)
+                bones[bi].bone.quaternion.multiply(_deltaQ);
+            }
         }
     }
 
     // Base arm pose: always applied (idle, walk, run)
+    // FIX: Use premultiply (parent-space) for arm-down rotation.
+    // With multiply (bone-local), Z-rotation swings arms FORWARD (zombie pose)
+    // because Mixamo bone local Z-axis points along character's facing direction.
+    // With premultiply (parent-space), Z-rotation correctly swings arms DOWNWARD.
     var armDown = 1.15; // ~66 degrees down from T-pose
-    applyDelta('LeftArm', 0, 0, armDown);
-    applyDelta('RightArm', 0, 0, -armDown);
+    applyDelta('LeftArm', 0, 0, armDown, true);
+    applyDelta('RightArm', 0, 0, -armDown, true);
     applyDelta('LeftForeArm', -0.4, 0, 0);
     applyDelta('RightForeArm', -0.4, 0, 0);
 
@@ -7990,9 +8025,12 @@ function proceduralWalkUpdate(cpuSkinData, delta, animState) {
     // Lower legs (knees)
     applyDelta('LeftLeg', kneeFlexL, 0, 0);
     applyDelta('RightLeg', kneeFlexR, 0, 0);
-    // Upper arms: base down-rotation (Z) + walking swing (X)
-    applyDelta('LeftArm', armSwing, 0, armDown);
-    applyDelta('RightArm', -armSwing, 0, -armDown);
+    // Upper arms: base down-rotation (Z, parent-space) + walking swing (X, local-space)
+    // FIX: arm-down uses premultiply (parent-space), arm-swing accumulates on top (local-space)
+    applyDelta('LeftArm', 0, 0, armDown, true);
+    applyDelta('RightArm', 0, 0, -armDown, true);
+    applyDelta('LeftArm', armSwing, 0, 0, false, true);
+    applyDelta('RightArm', -armSwing, 0, 0, false, true);
     // Forearms: natural elbow bend + slight walking flex
     applyDelta('LeftForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
     applyDelta('RightForeArm', -0.4 - Math.abs(armSwing) * 0.3, 0, 0);
@@ -8160,16 +8198,16 @@ function cpuSkinUpdate(cpuSkinData) {
             }
 
             if (cpuSkinData._bodyGroup) {
-                // DYNAMIC scaling: scale boneTransform output to target height.
+                // FIX: Use FIXED rest-pose srcHeight for scaling instead of animated outHeight.
+                // Using animated outHeight causes scale to fluctuate every frame as limbs move,
+                // which combined with Y offset causes characters to float/bob.
                 var targetH = 2.5;
-                var scaleFix = targetH / outHeight;
+                var fixedHeight = cpuSkinData.srcHeight || outHeight;
+                var scaleFix = targetH / fixedHeight;
                 var centerX = (globalMinX + globalMaxX) / 2;
                 var centerZ = (globalMinZ + globalMaxZ) / 2;
                 cpuSkinData._bodyGroup.scale.setScalar(scaleFix);
-                // FIX: Use rest-pose _srcMinY for Y offset.
-                // Using animated globalMinY causes floating because procedural
-                // animation moves feet below rest-pose origin → globalMinY < 0
-                // → -globalMinY*scaleFix > 0 → character pushed upward.
+                // FIX: Use rest-pose _srcMinY for Y offset (fixed, not animated).
                 var yOffset = (typeof cpuSkinData._srcMinY === 'number')
                     ? -cpuSkinData._srcMinY * scaleFix
                     : -globalMinY * scaleFix;
