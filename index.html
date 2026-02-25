@@ -3656,6 +3656,31 @@ function buildStageList() {
 /* ============================================
    Ranking (Firebase)
    ============================================ */
+// Save a ranking entry and keep only top 10 per gameMode
+function saveRanking(entry) {
+    if (!firebaseReady) return;
+    var KEEP_MAX = 10;
+    database.ref('rankings').push(entry).then(function() {
+        // Cleanup: keep only top KEEP_MAX entries for this gameMode
+        database.ref('rankings').orderByChild('score').once('value').then(function(snap) {
+            var modeEntries = [];
+            snap.forEach(function(child) {
+                var d = child.val();
+                if (d.gameMode === entry.gameMode) {
+                    modeEntries.push({ key: child.key, score: d.score });
+                }
+            });
+            if (modeEntries.length <= KEEP_MAX) return;
+            // Sort descending by score, delete entries beyond top 10
+            modeEntries.sort(function(a, b) { return b.score - a.score; });
+            var toDelete = modeEntries.slice(KEEP_MAX);
+            toDelete.forEach(function(e) {
+                database.ref('rankings/' + e.key).remove();
+            });
+        });
+    });
+}
+
 function loadRankings(gameMode) {
     const listEl = document.getElementById('ranking-list');
     const lang = GameState.language === 'ja';
@@ -3668,43 +3693,32 @@ function loadRankings(gameMode) {
 
     listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:20px 0;">Loading...</div>`;
 
-    // FFA: load from ffaStats (aggregated per-player stats)
+    var RANKING_MAX = 10; // Show top 10 only
+
+    // FFA: load from ffaStats (wins only, per-player)
     if (gameMode === 'freeForAll') {
         database.ref('ffaStats')
             .orderByChild('wins')
-            .limitToLast(50)
+            .limitToLast(RANKING_MAX)
             .once('value')
             .then(snap => {
                 const entries = [];
                 snap.forEach(child => {
                     const d = child.val();
-                    if (d && d.username) entries.push(d);
+                    if (d && d.username && (d.wins || 0) > 0) entries.push(d);
                 });
-                // Sort by wins (desc), then bestTime (desc)
-                entries.sort((a, b) => {
-                    if ((b.wins || 0) !== (a.wins || 0)) return (b.wins || 0) - (a.wins || 0);
-                    return (b.bestTime || 0) - (a.bestTime || 0);
-                });
+                entries.sort((a, b) => (b.wins || 0) - (a.wins || 0));
+                entries.splice(RANKING_MAX);
 
                 if (entries.length === 0) {
                     listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
                     return;
                 }
 
-                // Header
-                var headerLabel = lang ? '勝利数 / 最長タイム' : 'Wins / Best Time';
-                var headerHtml = '<div class="ranking-row" style="color:var(--text-dim);font-size:11px;border-bottom:1px solid var(--text-dim);padding-bottom:4px;margin-bottom:4px;">' +
-                    '<span class="rank"></span><span class="name">' + (lang ? '名前' : 'Name') + '</span>' +
-                    '<span class="score">' + headerLabel + '</span></div>';
-
-                listEl.innerHTML = headerHtml + entries.map((e, i) => {
+                listEl.innerHTML = entries.map((e, i) => {
                     var wins = e.wins || 0;
-                    var bt = e.bestTime || 0;
-                    var bm = Math.floor(bt / 60);
-                    var bs = bt % 60;
-                    var timeStr = bm + ':' + (bs < 10 ? '0' : '') + bs;
-                    var winsLabel = lang ? wins + '勝' : wins + 'W';
-                    return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${winsLabel} / ${timeStr}</span></div>`;
+                    var winsLabel = lang ? wins + '勝' : wins + (wins === 1 ? ' Win' : ' Wins');
+                    return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${winsLabel}</span></div>`;
                 }).join('');
             })
             .catch(() => {
@@ -3713,7 +3727,7 @@ function loadRankings(gameMode) {
         return;
     }
 
-    // Other modes: load from rankings (individual entries)
+    // Other modes: load from rankings (individual entries), top 10 only
     database.ref('rankings')
         .orderByChild('score')
         .limitToLast(50)
@@ -3725,6 +3739,7 @@ function loadRankings(gameMode) {
                 if (d.gameMode === gameMode) entries.push(d);
             });
             entries.sort((a, b) => b.score - a.score);
+            entries.splice(RANKING_MAX);
 
             if (entries.length === 0) {
                 listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
@@ -6065,46 +6080,23 @@ function showMultiStageResult() {
         }
     }
 
-    // FFA: Save stats per player (wins + bestTime) using transaction
+    // FFA: Save winner's win count using transaction
     if (GameState.multiMode === 'freeForAll' && firebaseReady && GameState.isHost) {
-        // Save winner's stats
         if (GameState.ffaWinner >= 0) {
             var winnerPlayer = GameState.players[GameState.ffaWinner];
             if (winnerPlayer && winnerPlayer.deviceId) {
-                var winnerTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(GameState.ffaWinner)
-                    ? GameState.ffaPlayerCaughtTimes[GameState.ffaWinner] : GameState.ffaSurvivalTime;
                 var winnerRef = database.ref('ffaStats/' + winnerPlayer.deviceId);
                 winnerRef.transaction(function(current) {
                     if (!current) {
-                        return { username: winnerPlayer.username, wins: 1, bestTime: winnerTime, timestamp: Date.now() };
+                        return { username: winnerPlayer.username, wins: 1, timestamp: Date.now() };
                     }
                     current.username = winnerPlayer.username;
                     current.wins = (current.wins || 0) + 1;
-                    if (winnerTime > (current.bestTime || 0)) current.bestTime = winnerTime;
                     current.timestamp = Date.now();
                     return current;
                 });
             }
         }
-        // Save all players' bestTime (even losers, for tracking longest survival)
-        Object.keys(GameState.players).forEach(function(idx) {
-            var pi = parseInt(idx);
-            var p = GameState.players[pi];
-            if (!p || !p.deviceId || pi === GameState.ffaWinner) return;
-            var survTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(pi)
-                ? GameState.ffaPlayerCaughtTimes[pi] : 0;
-            if (survTime <= 0) return;
-            var playerRef = database.ref('ffaStats/' + p.deviceId);
-            playerRef.transaction(function(current) {
-                if (!current) {
-                    return { username: p.username, wins: 0, bestTime: survTime, timestamp: Date.now() };
-                }
-                current.username = p.username;
-                if (survTime > (current.bestTime || 0)) current.bestTime = survTime;
-                current.timestamp = Date.now();
-                return current;
-            });
-        });
     }
 
     // Buttons
@@ -6186,7 +6178,7 @@ function showMultiResult() {
         if (GameState.multiMode === 'coop') {
             // Register coop score: remaining time x 10
             var coopScore = Math.floor(GameState.timeRemaining * 10);
-            database.ref('rankings').push({
+            saveRanking({
                 username: GameState.username,
                 score: coopScore,
                 gameMode: 'coop',
@@ -10518,7 +10510,7 @@ function onStageCleared() {
         });
 
         // Ranking registration for story mode
-        database.ref('rankings').push({
+        saveRanking({
             username: GameState.username,
             score: Math.floor(GameState.timeRemaining),
             gameMode: 'story',
@@ -10568,7 +10560,7 @@ function showScoreResult() {
 
     // Save to Firebase
     if (firebaseReady && GameState.username && !GameState.isGuest) {
-        database.ref('rankings').push({
+        saveRanking({
             username: GameState.username,
             score: Math.floor(GameState.score),
             gameMode: 'scoreAttack',
