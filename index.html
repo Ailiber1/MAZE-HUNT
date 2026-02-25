@@ -10963,12 +10963,22 @@ function drawMinimap() {
             if (x === cols - 1 && cell.right) { ctx.beginPath(); ctx.moveTo(cx + cellW, cy); ctx.lineTo(cx + cellW, cy + cellH); ctx.stroke(); }
             if (y === rows - 1 && cell.bottom) { ctx.beginPath(); ctx.moveTo(cx, cy + cellH); ctx.lineTo(cx + cellW, cy + cellH); ctx.stroke(); }
 
-            // Stair markers
+            // Stair markers — bright yellow square with arrow
             if (cell.isStairs) {
-                ctx.fillStyle = 'rgba(255, 204, 0, 0.7)';
-                ctx.font = Math.max(6, cellW * 0.6) + 'px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('\u25B2', cx + cellW / 2, cy + cellH * 0.8);
+                // Background highlight
+                ctx.fillStyle = 'rgba(255, 204, 0, 0.35)';
+                ctx.fillRect(cx + 1, cy + 1, cellW - 2, cellH - 2);
+                // Arrow triangle
+                var scx = cx + cellW / 2;
+                var scy = cy + cellH / 2;
+                var arrowSize = Math.max(3, cellW * 0.35);
+                ctx.fillStyle = 'rgba(255, 220, 0, 0.9)';
+                ctx.beginPath();
+                ctx.moveTo(scx, scy - arrowSize);
+                ctx.lineTo(scx - arrowSize, scy + arrowSize * 0.6);
+                ctx.lineTo(scx + arrowSize, scy + arrowSize * 0.6);
+                ctx.closePath();
+                ctx.fill();
             }
         }
     }
@@ -14027,6 +14037,7 @@ function startGame(stageId) {
     const mazeResult = generateMultiFloorMaze(cols, rows, numFloors, numStairs, stageId);
     GameState.mazeFloors = mazeResult.floors;
     GameState.stairsData = mazeResult.stairs;
+    console.log('[MAZE] numFloors=' + numFloors + ' numStairs=' + numStairs + ' stairsData=' + JSON.stringify(mazeResult.stairs));
     GameState.mazeGrid = mazeResult.floors[0]; // backward compat for other systems
     GameState.playerCurrentFloor = 0;
     GameState.onStairs = false;
