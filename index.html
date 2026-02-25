@@ -3648,10 +3648,10 @@ function buildStageList() {
    Ranking (Firebase)
    ============================================ */
 // Save ranking: per-player best score (1 record per player per mode)
-// Path: {gameMode}Stats/{deviceId} — overwrites only if new score is higher
+// Path: rankings/{mode}/{deviceId} — overwrites only if new score is higher
 function saveRanking(entry) {
     if (!firebaseReady || !GameState.deviceId) return;
-    var pathMap = { scoreAttack: 'scoreStats' };
+    var pathMap = { scoreAttack: 'rankings/scoreAttack' };
     var basePath = pathMap[entry.gameMode];
     if (!basePath) return;
     var ref = database.ref(basePath + '/' + GameState.deviceId);
@@ -3755,9 +3755,9 @@ function loadRankings(gameMode) {
 
     var RANKING_MAX = 10; // Show top 10 only
 
-    // FFA: load from ffaStats (wins only, per-player)
+    // FFA: load from rankings/multi (wins only, per-player)
     if (gameMode === 'freeForAll') {
-        database.ref('ffaStats')
+        database.ref('rankings/multi')
             .orderByChild('wins')
             .limitToLast(RANKING_MAX)
             .once('value')
@@ -3787,8 +3787,8 @@ function loadRankings(gameMode) {
         return;
     }
 
-    // Score Attack: load from scoreStats (survival time per player)
-    database.ref('scoreStats')
+    // Score Attack: load from rankings/scoreAttack (survival time per player)
+    database.ref('rankings/scoreAttack')
         .orderByChild('score')
         .limitToLast(RANKING_MAX)
         .once('value')
@@ -6146,7 +6146,7 @@ function showMultiStageResult() {
         if (GameState.ffaWinner >= 0) {
             var winnerPlayer = GameState.players[GameState.ffaWinner];
             if (winnerPlayer && winnerPlayer.deviceId) {
-                var winnerRef = database.ref('ffaStats/' + winnerPlayer.deviceId);
+                var winnerRef = database.ref('rankings/multi/' + winnerPlayer.deviceId);
                 winnerRef.transaction(function(current) {
                     if (!current) {
                         return { username: winnerPlayer.username, wins: 1, timestamp: Date.now() };

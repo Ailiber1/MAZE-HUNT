@@ -11,14 +11,6 @@
     "rankings": {
       ".read": true,
       ".write": true
-    },
-    "ffaStats": {
-      ".read": true,
-      ".write": true
-    },
-    "scoreStats": {
-      ".read": true,
-      ".write": true
     }
   }
 }
