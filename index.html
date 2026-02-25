@@ -3718,6 +3718,7 @@ function updateRuleContent() {
         '<p><b>【鬼の感知】</b></p>',
         '<p>&nbsp;&nbsp;歩く音 → 鬼が近くにいると気づかれる</p>',
         '<p>&nbsp;&nbsp;走る音 → より遠くから感知される</p>',
+        '<p>&nbsp;&nbsp;⚠ 5秒以上停止すると鬼に位置がバレる！</p>',
         '<p>&nbsp;&nbsp;鬼が近づくと警告（黄→赤）+ 心拍上昇</p><br>',
         '<p><b>【ストーリーモード】</b></p>',
         '<p>&nbsp;&nbsp;制限時間内に出口（EXIT）を見つけて脱出</p><br>',
@@ -3725,17 +3726,18 @@ function updateRuleContent() {
         '<p>&nbsp;&nbsp;出口なし。鬼から逃げ続けるサバイバル</p>',
         '<p>&nbsp;&nbsp;時間経過で鬼が追加</p>',
         '<p>&nbsp;&nbsp;移動するほどスコア加算（止まるとスコアは増えない）</p>',
-        '<p>&nbsp;&nbsp;⚠ 5秒以上停止すると鬼に位置がバレる！</p>',
         '<p>&nbsp;&nbsp;ランキング: サバイバルタイム順（上位10人）</p><br>',
         '<p><b>【マルチプレイ（最大4人）】</b></p>',
         '<p>&nbsp;&nbsp;<u>個人戦</u>: ランダムステージで生存競争</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;出口なし。最後の1人が生き残れば勝利</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;時間経過で鬼が追加</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;捕まったらランダムな生存者を観戦</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ 5秒以上停止すると鬼に感知される</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;ランキング: 勝利数順（上位10人）</p><br>',
         '<p>&nbsp;&nbsp;<u>協力プレイ</u>: 全ステージを協力クリア</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;誰か1人が脱出すればステージクリア</p>',
-        '<p>&nbsp;&nbsp;&nbsp;&nbsp;全員捕まったら終了</p><br>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;全員捕まったら終了</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ 5秒以上停止すると鬼に感知される</p><br>',
         '<p>&#9632; ランキングは登録ユーザーのみ対象</p>',
     ].join('') : [
         '<p>&#9632; A 3D horror tag game — escape from ONI in dark mazes</p><br>',
@@ -3746,6 +3748,7 @@ function updateRuleContent() {
         '<p><b>[ONI Detection]</b></p>',
         '<p>&nbsp;&nbsp;Walking sound → ONI notices if nearby</p>',
         '<p>&nbsp;&nbsp;Running sound → detected from farther away</p>',
+        '<p>&nbsp;&nbsp;⚠ Stop for 5+ seconds and ONI will detect you!</p>',
         '<p>&nbsp;&nbsp;Warning frame (yellow→red) + heartbeat when ONI is close</p><br>',
         '<p><b>[Story Mode]</b></p>',
         '<p>&nbsp;&nbsp;Find the EXIT before time runs out</p><br>',
@@ -3753,17 +3756,18 @@ function updateRuleContent() {
         '<p>&nbsp;&nbsp;No exit. Survive as long as you can</p>',
         '<p>&nbsp;&nbsp;More ONI spawn over time</p>',
         '<p>&nbsp;&nbsp;Move to earn score (standing still = no points)</p>',
-        '<p>&nbsp;&nbsp;⚠ Stop for 5+ seconds and ONI will detect you!</p>',
         '<p>&nbsp;&nbsp;Ranking: by survival time (top 10)</p><br>',
         '<p><b>[Multiplayer (up to 4)]</b></p>',
         '<p>&nbsp;&nbsp;<u>Free For All</u>: Random stage survival</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;No exit. Last player standing wins</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;More ONI spawn over time</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;Caught? Spectate a random survivor</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ Stop for 5+ seconds and ONI detects you</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;Ranking: by win count (top 10)</p><br>',
         '<p>&nbsp;&nbsp;<u>Co-op</u>: Clear all stages together</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;One player escapes = stage clear</p>',
-        '<p>&nbsp;&nbsp;&nbsp;&nbsp;All caught = game over</p><br>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;All caught = game over</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ Stop for 5+ seconds and ONI detects you</p><br>',
         '<p>&#9632; Rankings are for registered users only</p>',
     ].join('');
 }
@@ -13395,11 +13399,8 @@ function gameLoop() {
     // Phase 7: Dust particles
     updateDustParticles(delta);
 
-    // Score attack: movement-based scoring + idle penalty
-    if (GameState.gameMode === 'scoreAttack' && GameState.alive) {
-        GameState.totalTime += delta;
-
-        // Calculate movement distance this frame
+    // Idle penalty: standing still makes ONI detect you (all modes)
+    if (GameState.alive) {
         var px = camera.position.x, pz = camera.position.z;
         if (GameState._prevPosX === 0 && GameState._prevPosZ === 0) {
             GameState._prevPosX = px; GameState._prevPosZ = pz;
@@ -13409,17 +13410,13 @@ function gameLoop() {
         var moveDist = Math.sqrt(dx * dx + dz * dz);
         GameState._prevPosX = px; GameState._prevPosZ = pz;
 
-        // Score = accumulated movement distance (1 unit = 1 point)
         if (moveDist > 0.01) {
-            GameState.score += moveDist * 10; // 10 points per unit moved
             GameState._idleTime = 0;
             GameState.idlePenalty = false;
         } else {
-            // Player is stationary
             GameState._idleTime += delta;
         }
 
-        // Idle penalty: after 5 seconds stopped, emit sound (ONI can detect)
         var IDLE_PENALTY_THRESHOLD = 5.0;
         if (GameState._idleTime >= IDLE_PENALTY_THRESHOLD) {
             GameState.idlePenalty = true;
@@ -13442,7 +13439,17 @@ function gameLoop() {
             }
         }
 
-        // Phase 7: Score attack ambient layers
+        // Score attack: movement-based scoring
+        if (GameState.gameMode === 'scoreAttack') {
+            if (moveDist > 0.01) {
+                GameState.score += moveDist * 10; // 10 points per unit moved
+            }
+        }
+    }
+
+    // Score attack: time + ambient layers
+    if (GameState.gameMode === 'scoreAttack' && GameState.alive) {
+        GameState.totalTime += delta;
         AmbientSoundManager.addScoreAttackLayer(GameState.totalTime);
     }
     if (GameState.gameMode !== 'scoreAttack') {
