@@ -2527,11 +2527,11 @@ function initFirebase() {
    Stage Definitions
    ============================================ */
 const STAGES = [
-    { id: 1, name: 'STAGE 1', theme: '地下研究所', themeEn: 'Cyber Lab', size: '10x10', floors: 1, oni: 1, time: 90 },
-    { id: 2, name: 'STAGE 2', theme: '廃工場', themeEn: 'Abandoned Factory', size: '12x12', floors: 1, oni: 1, time: 120 },
-    { id: 3, name: 'STAGE 3', theme: '夜の西洋街路', themeEn: 'Night Streets', size: '16x16', floors: 2, oni: 2, time: 180 },
-    { id: 4, name: 'STAGE 4', theme: '江戸の夜村', themeEn: 'Edo Night Village', size: '20x20', floors: 2, oni: 3, time: 210 },
-    { id: 5, name: 'FINAL STAGE', theme: '崩壊データセンター', themeEn: 'Collapsed Data Center', size: '24x24', floors: 3, oni: 4, time: 270 },
+    { id: 1, name: 'STAGE 1', theme: '地下研究所', themeEn: 'Cyber Lab', size: '10x10', floors: 1, oni: 1, time: 90, oniMax: 1 },
+    { id: 2, name: 'STAGE 2', theme: '廃工場', themeEn: 'Abandoned Factory', size: '12x12', floors: 1, oni: 2, time: 120, oniMax: 2 },
+    { id: 3, name: 'STAGE 3', theme: '夜の西洋街路', themeEn: 'Night Streets', size: '16x16', floors: 2, oni: 3, time: 180, oniMax: 5 },
+    { id: 4, name: 'STAGE 4', theme: '江戸の夜村', themeEn: 'Edo Night Village', size: '20x20', floors: 2, oni: 3, time: 210, oniMax: 6 },
+    { id: 5, name: 'FINAL STAGE', theme: '崩壊データセンター', themeEn: 'Collapsed Data Center', size: '24x24', floors: 3, oni: 4, time: 270, oniMax: 8 },
 ];
 
 const HIDDEN_STAGE = { id: 'hidden', name: '???', theme: '廃寺・鳥居', themeEn: 'Cursed Temple', size: '28x28', floors: 3, oni: 5, time: 240 };
@@ -9630,6 +9630,42 @@ function spawnOnis(stageId) {
             detectionMul: detectionMul, // stage-based detection range multiplier
         });
     }
+
+    // Start timed oni spawning for stages 3+ (stage 1-2: no additions)
+    if (typeof stageId === 'number' && stageId >= 3) {
+        var stageDef = STAGES.find(function(s) { return s.id === stageId; });
+        var maxOni = stageDef ? stageDef.oniMax : oniCount;
+        startStoryOniSpawning(cols, rows, numFloors, speedMul, stageId, maxOni);
+    }
+}
+
+/* --- Story Mode: timed oni spawning (Stage 3+) --- */
+var storyOniSpawnInterval = null;
+
+function startStoryOniSpawning(cols, rows, numFloors, speedMul, stageId, maxOni) {
+    if (storyOniSpawnInterval) clearInterval(storyOniSpawnInterval);
+    var FIRST_SPAWN_DELAY = 40;  // First additional oni at 40 seconds
+    var SPAWN_INTERVAL = 35;     // Then every 35 seconds
+
+    storyOniSpawnInterval = setInterval(function() {
+        if (!GameState.gameActive || gamePaused) return;
+        if (GameState.onis.length >= maxOni) return;
+
+        var elapsed = GameState.totalTime || 0;
+        if (elapsed < FIRST_SPAWN_DELAY) return;
+
+        var timeSinceFirst = elapsed - FIRST_SPAWN_DELAY;
+        var expectedTotal = GameState.onis.length; // just check current vs max
+        // Only spawn if we haven't hit max
+        spawnAdditionalOni(cols, rows, numFloors, speedMul);
+        showNotification(
+            GameState.language === 'ja'
+                ? '鬼が追加された！ (計' + GameState.onis.length + '体)'
+                : 'ONI added! (Total: ' + GameState.onis.length + ')',
+            true
+        );
+        SoundManager.playSE('warning');
+    }, SPAWN_INTERVAL * 1000);
 }
 
 /* --- C5: Update ONI AI --- */
@@ -10581,14 +10617,18 @@ function drawMinimap() {
         ctx.beginPath(); ctx.arc(ex, ey, Math.max(3, cellW * 0.4), 0, Math.PI * 2); ctx.fill();
     }
 
-    // Oni positions (same floor only)
-    GameState.onis.forEach(function(oni) {
-        if (oni.currentFloor !== floor) return;
-        var ox = (oni.position.x / CL) * cellW;
-        var oy = (oni.position.z / CL) * cellH;
-        ctx.fillStyle = '#ff2020';
-        ctx.beginPath(); ctx.arc(ox, oy, Math.max(2, cellW * 0.3), 0, Math.PI * 2); ctx.fill();
-    });
+    // Oni positions (same floor only) — hidden on Stage 4-5 for horror effect
+    var stageForMap = GameState.currentStage || GameState.multiCurrentStage;
+    var hideOniOnMap = stageForMap >= 4;
+    if (!hideOniOnMap) {
+        GameState.onis.forEach(function(oni) {
+            if (oni.currentFloor !== floor) return;
+            var ox = (oni.position.x / CL) * cellW;
+            var oy = (oni.position.z / CL) * cellH;
+            ctx.fillStyle = '#ff2020';
+            ctx.beginPath(); ctx.arc(ox, oy, Math.max(2, cellW * 0.3), 0, Math.PI * 2); ctx.fill();
+        });
+    }
 
     // Remote players (minimap dots)
     var isMulti = GameState.gameMode && GameState.gameMode.startsWith('multi_');
@@ -11840,12 +11880,13 @@ function startFFAOniSpawning(cols, rows, numFloors, speedMul) {
 }
 
 function spawnAdditionalOni(cols, rows, numFloors, speedMul) {
+    var stageId = GameState.currentStage || GameState.multiCurrentStage;
     var model = createOniModel();
-    addOniLights(model, GameState.multiCurrentStage);
+    addOniLights(model, stageId);
     // Pick a random ONI character
-    var oniModelIds = getOniModelsForStage(GameState.multiCurrentStage);
+    var oniModelIds = getOniModelsForStage(stageId);
     var charId = oniModelIds[GameState.onis.length % oniModelIds.length];
-    loadOniGLB(model, charId, GameState.multiCurrentStage);
+    loadOniGLB(model, charId, stageId);
 
     // Spawn at a random far corner from players
     var floor = numFloors > 1 ? Math.floor(Math.random() * numFloors) : 0;
@@ -11869,9 +11910,9 @@ function spawnAdditionalOni(cols, rows, numFloors, speedMul) {
         alertTimer: 0,
         patrolTarget: null,
         patrolPauseTimer: 0,
-        detectionMul: 1.0,
+        detectionMul: ONI_DETECTION_MULS[stageId] || 1.0,
     });
-    console.log('[FFA-ONI] Spawned additional ONI #' + (GameState.onis.length - 1) +
+    console.log('[ONI] Spawned additional ONI #' + (GameState.onis.length - 1) +
         ' at (' + spawnX + ',' + spawnZ + ') floor=' + floor);
 }
 
@@ -13681,6 +13722,11 @@ function cleanupGame() {
     if (GameState.ffaOniSpawnInterval) {
         clearInterval(GameState.ffaOniSpawnInterval);
         GameState.ffaOniSpawnInterval = null;
+    }
+    // Story mode: clear timed ONI spawn interval
+    if (storyOniSpawnInterval) {
+        clearInterval(storyOniSpawnInterval);
+        storyOniSpawnInterval = null;
     }
     // FFA: clear caught times listener
     if (GameState.multiMode === 'freeForAll' && firebaseReady && GameState.roomId) {
