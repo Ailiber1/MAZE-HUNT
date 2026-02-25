@@ -2577,6 +2577,12 @@ const GameState = {
     timeRemaining: 0,
     timerInterval: null,
 
+    // FFA Survival mode
+    ffaSurvivalTime: 0,           // Survival timer (counting UP in seconds)
+    ffaPlayerCaughtTimes: {},     // { playerIndex: survivalTimeWhenCaught }
+    ffaOniSpawnInterval: null,    // setInterval for periodic ONI spawning
+    ffaWinner: -1,                // playerIndex of last surviving player (-1 = none)
+
     // Phase 4: Enemies
     onis: [],
     oniSpeedMultiplier: 1.0,
@@ -4992,7 +4998,12 @@ function enterSpectatorMode() {
         aliveTargets.push(pi);
     });
     if (aliveTargets.length > 0) {
-        GameState.spectateTarget = aliveTargets[0];
+        if (GameState.multiMode === 'freeForAll') {
+            // FFA: pick random alive player to spectate
+            GameState.spectateTarget = aliveTargets[Math.floor(Math.random() * aliveTargets.length)];
+        } else {
+            GameState.spectateTarget = aliveTargets[0];
+        }
     }
     updateSpectatorBadge();
 }
@@ -5197,15 +5208,16 @@ function handlePlayerDisconnect(playerIndex) {
    ============================================ */
 function getMultiStageConfig(mode, stageNum) {
     if (mode === 'freeForAll') {
+        // FFA Survival: random stage for maze/theme, always 1 starting ONI, no time limit
         var stage = STAGES[Math.min(stageNum - 1, STAGES.length - 1)];
         var parts = stage.size.split('x');
         return {
             cols: parseInt(parts[0]),
             rows: parseInt(parts[1]),
             floors: stage.floors,
-            oni: stage.oni,
-            time: stage.time,
-            speedMul: [1.0, 1.0, 1.2, 1.3, 1.5][stageNum - 1] || 1.0
+            oni: 1,              // Always start with 1 ONI (more spawn over time)
+            time: 0,             // No time limit (survival mode)
+            speedMul: 1.0
         };
     } else if (mode === 'teamBattle') {
         var ts = TEAM_STAGES[Math.min(stageNum - 1, TEAM_STAGES.length - 1)];
@@ -5373,6 +5385,11 @@ function startMultiplayerGame() {
     // Auto-assign characters for players who haven't selected one
     autoAssignCharacters();
 
+    // FFA Survival: pick a random stage each game
+    if (GameState.multiMode === 'freeForAll') {
+        GameState.multiCurrentStage = Math.floor(Math.random() * STAGES.length) + 1;
+    }
+
     var stageConfig = getMultiStageConfig(GameState.multiMode, GameState.multiCurrentStage);
 
     // FIX: Pre-generate ONI model IDs on host and store in GameState
@@ -5449,6 +5466,14 @@ function launchMultiGame(config) {
     GameState.isSpectating = false;
     GameState.spectateTarget = -1;
 
+    // FFA Survival: single stage, no progression
+    if (GameState.multiMode === 'freeForAll') {
+        GameState.multiMaxStages = 1;
+        GameState.ffaSurvivalTime = 0;
+        GameState.ffaPlayerCaughtTimes = {};
+        GameState.ffaWinner = -1;
+    }
+
     // Team battle: single stage only
     if (GameState.multiMode === 'teamBattle') {
         GameState.multiMaxStages = 1;
@@ -5488,9 +5513,15 @@ function launchMultiGame(config) {
     // HUD label
     var label = document.getElementById('hud-stage-label');
     if (label) {
-        var modeLabel = GameState.multiMode === 'freeForAll' ? 'FREE FOR ALL' :
-            GameState.multiMode === 'teamBattle' ? 'TEAM BATTLE' : 'CO-OP';
-        label.textContent = modeLabel + ' - STAGE ' + GameState.multiCurrentStage;
+        if (GameState.multiMode === 'freeForAll') {
+            // FFA Survival: no stage number, show mode + theme
+            var stageDef = STAGES[Math.min(GameState.multiCurrentStage - 1, STAGES.length - 1)];
+            var themeName = GameState.language === 'ja' ? stageDef.theme : stageDef.themeEn;
+            label.textContent = 'SURVIVAL - ' + themeName;
+        } else {
+            var modeLabel = GameState.multiMode === 'teamBattle' ? 'TEAM BATTLE' : 'CO-OP';
+            label.textContent = modeLabel + ' - STAGE ' + GameState.multiCurrentStage;
+        }
     }
 
     initThreeJS();
@@ -5555,8 +5586,8 @@ function launchMultiGame(config) {
     }
 
     // Place EXIT based on mode
-    if (GameState.multiMode === 'teamBattle') {
-        // No exit in team battle
+    if (GameState.multiMode === 'teamBattle' || GameState.multiMode === 'freeForAll') {
+        // No exit in team battle or freeForAll survival mode
         GameState.exitPosition = null;
         GameState.exitGroup = null;
     } else {
@@ -5645,7 +5676,41 @@ function launchMultiGame(config) {
             if (!data) return;
             Object.keys(data).forEach(function(idx) {
                 var oi = parseInt(idx);
-                if (oi >= GameState.onis.length) return;
+                // FFA: dynamically create ONI models for new indices (host spawned additional ONIs)
+                if (oi >= GameState.onis.length) {
+                    if (GameState.multiMode !== 'freeForAll') return;
+                    // Create new ONI model for this index
+                    var model = createOniModel();
+                    addOniLights(model, GameState.multiCurrentStage);
+                    var oniModelIds = getOniModelsForStage(GameState.multiCurrentStage);
+                    var charId = oniModelIds[oi % oniModelIds.length];
+                    loadOniGLB(model, charId, GameState.multiCurrentStage);
+                    model.position.set(data[idx].x, data[idx].y, data[idx].z);
+                    scene.add(model);
+                    GameState.onis.push({
+                        group: model,
+                        position: { x: data[idx].x, y: data[idx].y, z: data[idx].z },
+                        currentFloor: data[idx].floor || 0,
+                        cellX: 0, cellZ: 0,
+                        path: [], pathTimer: 0,
+                        speed: ONI_CONFIG.baseSpeed,
+                        onStairs: false,
+                        aiState: 'patrol',
+                        lastKnownPos: null,
+                        alertTimer: 0,
+                        patrolTarget: null,
+                        patrolPauseTimer: 0,
+                        detectionMul: 1.0,
+                    });
+                    console.log('[FFA-ONI-GUEST] Created ONI model #' + oi + ' from host sync');
+                    showNotification(
+                        GameState.language === 'ja'
+                            ? '鬼が追加された！ (計' + GameState.onis.length + '体)'
+                            : 'ONI added! (Total: ' + GameState.onis.length + ')',
+                        true
+                    );
+                    SoundManager.playSE('warning');
+                }
                 var oni = GameState.onis[oi];
                 // Store target position for smooth interpolation (like remote players)
                 if (!oni._targetPos) {
@@ -5666,6 +5731,20 @@ function launchMultiGame(config) {
         });
     }
 
+    // Guest FFA: listen for caught times from other players
+    if (GameState.multiMode === 'freeForAll') {
+        database.ref('rooms/' + GameState.roomId + '/caughtTimes').on('value', function(snap) {
+            var data = snap.val();
+            if (!data) return;
+            Object.keys(data).forEach(function(idx) {
+                var pi = parseInt(idx);
+                if (!GameState.ffaPlayerCaughtTimes.hasOwnProperty(pi)) {
+                    GameState.ffaPlayerCaughtTimes[pi] = data[idx];
+                }
+            });
+        });
+    }
+
     // Listen for player status changes (caught/escaped)
     SyncLayer.onPlayerStatusUpdate(function(snap) {
         var data = snap.val();
@@ -5682,6 +5761,10 @@ function launchMultiGame(config) {
             if (pdata.alive === false && rp.alive) {
                 rp.alive = false;
                 rp.model.visible = false;
+                // FFA: record caught time for remote player
+                if (GameState.multiMode === 'freeForAll' && !GameState.ffaPlayerCaughtTimes.hasOwnProperty(pi)) {
+                    GameState.ffaPlayerCaughtTimes[pi] = GameState.ffaSurvivalTime;
+                }
                 // Show capture notification to all players
                 showCaptureNotification(pi);
                 // Enable ONI diagnostic logging after catch event — FULL state reset
@@ -5740,8 +5823,21 @@ function launchMultiGame(config) {
         SyncLayer.listeners.push({ ref: disconnRef, event: 'child_removed', cb: disconnCb });
     }
 
-    // Timer
-    if (config.time > 0) {
+    // Timer: FFA uses survival timer (count UP), others use countdown
+    if (GameState.multiMode === 'freeForAll') {
+        startSurvivalTimer();
+        // FFA: Clear previous game's caught times and oni count
+        if (GameState.isHost && firebaseReady && GameState.roomId) {
+            database.ref('rooms/' + GameState.roomId).update({
+                caughtTimes: null,
+                oniCount: null
+            });
+        }
+        // FFA: Schedule periodic ONI spawning (host only)
+        if (GameState.isHost) {
+            startFFAOniSpawning(cols, rows, numFloors, config.speedMul);
+        }
+    } else if (config.time > 0) {
         startTimer(config.time);
     }
 
@@ -5792,19 +5888,34 @@ function checkMultiGameEnd(playersData) {
     var playerCount = Object.keys(playersData).length;
 
     if (GameState.multiMode === 'freeForAll') {
-        // Check if all escaped/caught/timeout
-        var allDone = true;
+        // FFA Survival: Last player standing wins
+        var aliveCount = 0;
+        var lastAliveIdx = -1;
         var _statusSummary = [];
         Object.keys(playersData).forEach(function(idx) {
             var p = playersData[idx];
-            _statusSummary.push('p' + idx + ':alive=' + p.alive + ',esc=' + p.escaped);
-            if (p.alive !== false && !p.escaped) allDone = false;
+            var pi = parseInt(idx);
+            _statusSummary.push('p' + idx + ':alive=' + p.alive);
+            if (p.alive !== false) {
+                aliveCount++;
+                lastAliveIdx = pi;
+            }
+            // Record caught time for each player
+            if (p.alive === false && !GameState.ffaPlayerCaughtTimes.hasOwnProperty(pi)) {
+                GameState.ffaPlayerCaughtTimes[pi] = GameState.ffaSurvivalTime;
+            }
         });
-        if (allDone) {
-            console.warn('[GAME-END] freeForAll allDone=true! ' + _statusSummary.join(' | ') +
-                ' → setting gameActive=false');
+        if (aliveCount <= 1) {
+            console.warn('[GAME-END] freeForAll lastManStanding! alive=' + aliveCount +
+                ' winner=' + lastAliveIdx + ' ' + _statusSummary.join(' | '));
             GameState.gameActive = false;
+            GameState.ffaWinner = lastAliveIdx;
+            // Record winner's survival time as current time
+            if (lastAliveIdx >= 0 && !GameState.ffaPlayerCaughtTimes.hasOwnProperty(lastAliveIdx)) {
+                GameState.ffaPlayerCaughtTimes[lastAliveIdx] = GameState.ffaSurvivalTime;
+            }
             if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+            if (GameState.ffaOniSpawnInterval) clearInterval(GameState.ffaOniSpawnInterval);
             setTimeout(function() { showMultiStageResult(); }, 1500);
         }
     } else if (GameState.multiMode === 'teamBattle') {
@@ -5857,26 +5968,35 @@ function showMultiStageResult() {
     var isLastStage = GameState.multiCurrentStage >= GameState.multiMaxStages;
 
     if (GameState.multiMode === 'freeForAll') {
-        titleEl.textContent = 'STAGE ' + GameState.multiCurrentStage + ' ' +
-            (GameState.language === 'ja' ? '結果' : 'RESULT');
-        titleEl.className = 'escaped';
+        // FFA Survival result — show survival times, highlight winner
+        var isWin = GameState.ffaWinner === GameState.playerIndex;
+        titleEl.textContent = isWin
+            ? (GameState.language === 'ja' ? '勝利！' : 'YOU WIN!')
+            : (GameState.language === 'ja' ? 'ゲームオーバー' : 'GAME OVER');
+        titleEl.className = isWin ? 'allclear' : 'gameover';
 
-        // Calculate stage points based on escape order
-        var pointMap = [10, 6, 3, 1];
-        var resultRows = '';
-        Object.keys(GameState.players).forEach(function(idx) {
+        // Build survival time rankings (sort by survival time descending — winner on top)
+        var rankings = Object.keys(GameState.players).map(function(idx) {
             var pi = parseInt(idx);
             var p = GameState.players[pi];
-            if (!p) return;
-            var status = p.escaped ? (GameState.language === 'ja' ? '脱出' : 'ESCAPED') :
-                (p.alive === false ? (GameState.language === 'ja' ? '捕獲' : 'CAUGHT') :
-                (GameState.language === 'ja' ? 'タイムアップ' : 'TIME UP'));
-            var pts = p.escaped ? (pointMap[GameState.multiStagePoints[pi]] || 0) : 0;
-            GameState.multiPoints[pi] = (GameState.multiPoints[pi] || 0) + pts;
-            resultRows += '<div class="multi-result-row">' +
-                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[pi] + '">' + p.username + '</span>' +
-                '<span class="multi-result-status">' + status + '</span>' +
-                '<span class="multi-result-pts">+' + pts + 'pt</span></div>';
+            var survTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(pi)
+                ? GameState.ffaPlayerCaughtTimes[pi] : GameState.ffaSurvivalTime;
+            return { index: pi, name: p ? p.username : 'P' + (pi + 1), survivalTime: survTime, isWinner: pi === GameState.ffaWinner };
+        }).sort(function(a, b) { return b.survivalTime - a.survivalTime; });
+
+        var resultRows = '';
+        rankings.forEach(function(r, i) {
+            var m = Math.floor(r.survivalTime / 60);
+            var s = r.survivalTime % 60;
+            var timeStr = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            var statusLabel = r.isWinner
+                ? (GameState.language === 'ja' ? '勝者' : 'WINNER')
+                : (GameState.language === 'ja' ? '捕獲' : 'CAUGHT');
+            resultRows += '<div class="multi-result-row' + (r.isWinner ? ' winner' : '') + '">' +
+                '<span class="multi-result-rank">#' + (i + 1) + '</span>' +
+                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[r.index] + '">' + r.name + '</span>' +
+                '<span class="multi-result-status">' + statusLabel + '</span>' +
+                '<span class="multi-result-pts">' + timeStr + '</span></div>';
         });
         infoEl.innerHTML = '<div id="multi-result-table">' + resultRows + '</div>';
     } else if (GameState.multiMode === 'teamBattle') {
@@ -5897,30 +6017,17 @@ function showMultiStageResult() {
         }
     }
 
-    // FIX: In freeForAll, check if ANY player escaped.
-    // If no one escaped (all caught), game over — no "次のステージ" button.
-    var anyEscaped = false;
-    if (GameState.multiMode === 'freeForAll') {
-        Object.keys(GameState.players).forEach(function(idx) {
-            var p = GameState.players[parseInt(idx)];
-            if (p && p.escaped) anyEscaped = true;
-        });
-    }
-
     // Buttons
-    if (isLastStage && !GameState.coopRetrying) {
+    if (GameState.multiMode === 'freeForAll') {
+        // FFA Survival: always show rematch + back to title (no stage progression)
+        btnsEl.innerHTML =
+            '<button class="btn btn-neon" onclick="rematchMulti()">' +
+            (GameState.language === 'ja' ? '再戦' : 'Rematch') + '</button>' +
+            '<button class="btn btn-thin" onclick="backToMultiTitle()">' + lang.backTitle + '</button>';
+    } else if (isLastStage && !GameState.coopRetrying) {
         btnsEl.innerHTML =
             '<button class="btn btn-neon" onclick="showMultiResult()">' +
             (GameState.language === 'ja' ? '最終結果' : 'Final Result') + '</button>';
-    } else if (GameState.multiMode === 'freeForAll' && !anyEscaped) {
-        // All runners caught — game over, show only final result / back to title
-        titleEl.textContent = 'STAGE ' + GameState.multiCurrentStage + ' ' +
-            (GameState.language === 'ja' ? '結果' : 'RESULT');
-        titleEl.className = 'gameover';
-        btnsEl.innerHTML =
-            '<button class="btn btn-neon" onclick="showMultiResult()">' +
-            (GameState.language === 'ja' ? '最終結果' : 'Final Result') + '</button>' +
-            '<button class="btn btn-thin" onclick="backToMultiTitle()">' + lang.backTitle + '</button>';
     } else {
         var nextLabel = GameState.coopRetrying ?
             (GameState.language === 'ja' ? 'リトライ' : 'Retry') :
@@ -5944,19 +6051,23 @@ function showMultiResult() {
         titleEl.textContent = 'FINAL RESULT';
         titleEl.className = 'allclear';
 
-        // Sort by total points
+        // Sort by survival time (descending — longest survivor on top)
         var rankings = Object.keys(GameState.players).map(function(idx) {
             var pi = parseInt(idx);
-            return { index: pi, points: GameState.multiPoints[pi] || 0, name: GameState.players[pi].username };
-        }).sort(function(a, b) { return b.points - a.points; });
+            var survTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(pi)
+                ? GameState.ffaPlayerCaughtTimes[pi] : GameState.ffaSurvivalTime;
+            return { index: pi, survivalTime: survTime, name: GameState.players[pi].username, isWinner: pi === GameState.ffaWinner };
+        }).sort(function(a, b) { return b.survivalTime - a.survivalTime; });
 
         var rows = '';
         rankings.forEach(function(r, i) {
-            var isWinner = i === 0;
-            rows += '<div class="multi-result-row' + (isWinner ? ' winner' : '') + '">' +
+            var m = Math.floor(r.survivalTime / 60);
+            var s = r.survivalTime % 60;
+            var timeStr = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            rows += '<div class="multi-result-row' + (r.isWinner ? ' winner' : '') + '">' +
                 '<span class="multi-result-rank">#' + (i + 1) + '</span>' +
                 '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[r.index] + '">' + r.name + '</span>' +
-                '<span class="multi-result-pts">' + r.points + 'pt</span></div>';
+                '<span class="multi-result-pts">' + timeStr + '</span></div>';
         });
         infoEl.innerHTML = '<div id="multi-result-table">' + rows + '</div>';
     } else if (GameState.multiMode === 'teamBattle') {
@@ -5982,17 +6093,12 @@ function showMultiResult() {
     // Ranking registration for multiplayer (guest excluded)
     if (firebaseReady && !GameState.isGuest && GameState.username) {
         if (GameState.multiMode === 'freeForAll') {
-            // Register FFA points: 1st=100, 2nd=70, 3rd=40, 4th=10
-            var ffaPointMap = [100, 70, 40, 10];
-            var sortedPlayers = Object.keys(GameState.players).map(function(idx) {
-                var pi = parseInt(idx);
-                return { index: pi, points: GameState.multiPoints[pi] || 0 };
-            }).sort(function(a, b) { return b.points - a.points; });
-            var myRank = sortedPlayers.findIndex(function(p) { return p.index === GameState.playerIndex; });
-            var rankScore = ffaPointMap[myRank] || 10;
+            // Register FFA survival time as score
+            var mySurvivalTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(GameState.playerIndex)
+                ? GameState.ffaPlayerCaughtTimes[GameState.playerIndex] : GameState.ffaSurvivalTime;
             database.ref('rankings').push({
                 username: GameState.username,
-                score: rankScore,
+                score: mySurvivalTime,
                 gameMode: 'freeForAll',
                 timestamp: firebase.database.ServerValue.TIMESTAMP,
             });
@@ -6049,16 +6155,25 @@ function rematchMulti() {
     GameState.captureInProgress = false;
     updateOniAI._fc = 0;  // Reset ONI AI diagnostic counter
     checkCatch._diagCount = 0;  // Reset catch diagnostic counter
-    // Team battle: reset to stage 1 default (host can re-select)
+    // Reset for all modes
     GameState.multiCurrentStage = 1;
     GameState.multiPoints = [0, 0, 0, 0];
     GameState.teamScores = { oni: 0, runner: 0 };
     GameState.teamRound = 1;
+    // FFA: reset survival state
+    GameState.ffaSurvivalTime = 0;
+    GameState.ffaPlayerCaughtTimes = {};
+    GameState.ffaWinner = -1;
 
     if (GameState.isHost && firebaseReady && GameState.roomId) {
         var updateData = { status: 'waiting', currentStage: 1 };
         if (GameState.multiMode === 'teamBattle') {
             updateData.selectedStage = 1;
+        }
+        // FFA: clean up caught times from previous game
+        if (GameState.multiMode === 'freeForAll') {
+            updateData.caughtTimes = null;
+            updateData.oniCount = null;
         }
         database.ref('rooms/' + GameState.roomId).update(updateData);
     }
@@ -11374,6 +11489,107 @@ function updateTimerDisplay() {
 }
 
 /* ============================================
+   FFA Survival Timer & ONI Spawning
+   ============================================ */
+
+function startSurvivalTimer() {
+    GameState.ffaSurvivalTime = 0;
+    updateSurvivalTimerDisplay();
+    if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+    GameState.timerInterval = setInterval(function() {
+        if (!GameState.gameActive || gamePaused) return;
+        GameState.ffaSurvivalTime++;
+        updateSurvivalTimerDisplay();
+    }, 1000);
+}
+
+function updateSurvivalTimerDisplay() {
+    var el = document.getElementById('hud-timer');
+    if (!el) return;
+    var m = Math.floor(GameState.ffaSurvivalTime / 60);
+    var s = GameState.ffaSurvivalTime % 60;
+    el.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    // Always green for survival timer (time is your friend)
+    el.style.color = 'var(--neon-green)';
+    el.style.textShadow = '0 0 10px var(--neon-green-glow)';
+}
+
+function startFFAOniSpawning(cols, rows, numFloors, speedMul) {
+    if (GameState.ffaOniSpawnInterval) clearInterval(GameState.ffaOniSpawnInterval);
+    var spawnCount = 0;
+    var FFA_ONI_MAX = 8;
+    var FFA_FIRST_SPAWN_DELAY = 45; // First additional ONI at 45 seconds
+    var FFA_SPAWN_INTERVAL = 30;    // Then every 30 seconds
+
+    GameState.ffaOniSpawnInterval = setInterval(function() {
+        if (!GameState.gameActive || gamePaused) return;
+        if (GameState.ffaSurvivalTime < FFA_FIRST_SPAWN_DELAY) return;
+        // Check if enough time has passed for next spawn
+        var timeSinceFirst = GameState.ffaSurvivalTime - FFA_FIRST_SPAWN_DELAY;
+        var expectedSpawns = 1 + Math.floor(timeSinceFirst / FFA_SPAWN_INTERVAL);
+        if (spawnCount >= expectedSpawns) return;
+        if (GameState.onis.length >= FFA_ONI_MAX) return;
+
+        spawnCount++;
+        spawnAdditionalOni(cols, rows, numFloors, speedMul);
+        // Notify all players
+        showNotification(
+            GameState.language === 'ja'
+                ? '鬼が追加された！ (計' + GameState.onis.length + '体)'
+                : 'ONI added! (Total: ' + GameState.onis.length + ')',
+            true
+        );
+        SoundManager.playSE('warning');
+        // Sync new ONI count via Firebase
+        if (GameState.isHost) {
+            SyncLayer.updateOniPositions(GameState.onis);
+            // Also broadcast the oni count so guests know to create models
+            if (firebaseReady && GameState.roomId) {
+                database.ref('rooms/' + GameState.roomId).update({
+                    oniCount: GameState.onis.length
+                });
+            }
+        }
+    }, 5000); // Check every 5 seconds
+}
+
+function spawnAdditionalOni(cols, rows, numFloors, speedMul) {
+    var model = createOniModel();
+    addOniLights(model, GameState.multiCurrentStage);
+    // Pick a random ONI character
+    var oniModelIds = getOniModelsForStage(GameState.multiCurrentStage);
+    var charId = oniModelIds[GameState.onis.length % oniModelIds.length];
+    loadOniGLB(model, charId, GameState.multiCurrentStage);
+
+    // Spawn at a random far corner from players
+    var floor = numFloors > 1 ? Math.floor(Math.random() * numFloors) : 0;
+    var spawnX = Math.max(1, cols - 2 - Math.floor(Math.random() * 3));
+    var spawnZ = Math.max(1, rows - 2 - Math.floor(Math.random() * 3));
+    var worldX = spawnX * CL + CL / 2;
+    var worldZ = spawnZ * CL + CL / 2;
+    model.position.set(worldX, floor * FLOOR_H, worldZ);
+    scene.add(model);
+
+    GameState.onis.push({
+        group: model,
+        position: { x: worldX, y: floor * FLOOR_H, z: worldZ },
+        currentFloor: floor,
+        cellX: spawnX, cellZ: spawnZ,
+        path: [], pathTimer: 0,
+        speed: ONI_CONFIG.baseSpeed * (speedMul || 1.0),
+        onStairs: false,
+        aiState: 'patrol',
+        lastKnownPos: null,
+        alertTimer: 0,
+        patrolTarget: null,
+        patrolPauseTimer: 0,
+        detectionMul: 1.0,
+    });
+    console.log('[FFA-ONI] Spawned additional ONI #' + (GameState.onis.length - 1) +
+        ' at (' + spawnX + ',' + spawnZ + ') floor=' + floor);
+}
+
+/* ============================================
    Phase 7: Sound & Effects System
    ============================================ */
 
@@ -12874,6 +13090,15 @@ function checkTeamBattleCatch() {
 
 function onMultiPlayerCaught() {
     GameState.alive = false;
+    // FFA: record own survival time at moment of capture
+    if (GameState.multiMode === 'freeForAll') {
+        GameState.ffaPlayerCaughtTimes[GameState.playerIndex] = GameState.ffaSurvivalTime;
+        // Sync caught time to Firebase for host to use
+        if (firebaseReady && GameState.roomId) {
+            database.ref('rooms/' + GameState.roomId + '/caughtTimes/' + GameState.playerIndex)
+                .set(GameState.ffaSurvivalTime);
+        }
+    }
     SyncLayer.reportCaught(GameState.playerIndex);
     // Show capture notification for self (visible to this player)
     showCaptureNotification(GameState.playerIndex);
@@ -13118,6 +13343,15 @@ function cleanupGame() {
     if (GameState.timerInterval) {
         clearInterval(GameState.timerInterval);
         GameState.timerInterval = null;
+    }
+    // FFA: clear ONI spawn interval
+    if (GameState.ffaOniSpawnInterval) {
+        clearInterval(GameState.ffaOniSpawnInterval);
+        GameState.ffaOniSpawnInterval = null;
+    }
+    // FFA: clear caught times listener
+    if (GameState.multiMode === 'freeForAll' && firebaseReady && GameState.roomId) {
+        database.ref('rooms/' + GameState.roomId + '/caughtTimes').off();
     }
     if (document.pointerLockElement) {
         document.exitPointerLock();
