@@ -3693,10 +3693,22 @@ function loadRankings(gameMode) {
                     var m = Math.floor(e.survivalTime / 60);
                     var s = e.survivalTime % 60;
                     detail = ' <span style="color:var(--text-dim);font-size:11px;">' + m + ':' + (s < 10 ? '0' : '') + s + '</span>';
-                } else if (e.gameMode === 'freeForAll' || e.gameMode === 'coop') {
+                } else if (e.gameMode === 'freeForAll') {
+                    var ft = e.survivalTime || e.score;
+                    var fm = Math.floor(ft / 60);
+                    var fs = ft % 60;
+                    detail = ' <span style="color:var(--text-dim);font-size:11px;">' + fm + ':' + (fs < 10 ? '0' : '') + fs + '</span>';
+                } else if (e.gameMode === 'coop') {
                     detail = ' <span style="color:var(--text-dim);font-size:11px;">' + e.score + 'pt</span>';
                 }
-                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${e.score}${detail}</span></div>`;
+                var displayScore = e.score;
+                if (e.gameMode === 'freeForAll') {
+                    var wt = e.survivalTime || e.score;
+                    var wm = Math.floor(wt / 60);
+                    var ws = wt % 60;
+                    displayScore = wm + ':' + (ws < 10 ? '0' : '') + ws;
+                }
+                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${displayScore}${detail}</span></div>`;
             }).join('');
         })
         .catch(() => {
@@ -6017,6 +6029,26 @@ function showMultiStageResult() {
         }
     }
 
+    // FFA: Save ranking (winner name + survival time)
+    if (GameState.multiMode === 'freeForAll' && firebaseReady && GameState.ffaWinner >= 0) {
+        // Save winner's record
+        var winnerPlayer = GameState.players[GameState.ffaWinner];
+        var winnerName = winnerPlayer ? winnerPlayer.username : 'P' + (GameState.ffaWinner + 1);
+        var winnerTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(GameState.ffaWinner)
+            ? GameState.ffaPlayerCaughtTimes[GameState.ffaWinner] : GameState.ffaSurvivalTime;
+        // Only the host saves the winner's ranking to avoid duplicates
+        if (GameState.isHost) {
+            database.ref('rankings').push({
+                username: winnerName,
+                score: winnerTime,
+                survivalTime: winnerTime,
+                wins: 1,
+                gameMode: 'freeForAll',
+                timestamp: firebase.database.ServerValue.TIMESTAMP,
+            });
+        }
+    }
+
     // Buttons
     if (GameState.multiMode === 'freeForAll') {
         // FFA Survival: always show rematch + back to title (no stage progression)
@@ -6091,18 +6123,9 @@ function showMultiResult() {
     }
 
     // Ranking registration for multiplayer (guest excluded)
+    // Note: FFA ranking is saved in showMultiStageResult() (host saves winner only)
     if (firebaseReady && !GameState.isGuest && GameState.username) {
-        if (GameState.multiMode === 'freeForAll') {
-            // Register FFA survival time as score
-            var mySurvivalTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(GameState.playerIndex)
-                ? GameState.ffaPlayerCaughtTimes[GameState.playerIndex] : GameState.ffaSurvivalTime;
-            database.ref('rankings').push({
-                username: GameState.username,
-                score: mySurvivalTime,
-                gameMode: 'freeForAll',
-                timestamp: firebase.database.ServerValue.TIMESTAMP,
-            });
-        } else if (GameState.multiMode === 'coop') {
+        if (GameState.multiMode === 'coop') {
             // Register coop score: remaining time x 10
             var coopScore = Math.floor(GameState.timeRemaining * 10);
             database.ref('rankings').push({
