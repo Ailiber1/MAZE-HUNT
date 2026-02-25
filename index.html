@@ -5613,6 +5613,8 @@ function startMultiplayerGame() {
     // Write game config and status to Firebase
     if (firebaseReady && GameState.roomId) {
         var roomRef = database.ref('rooms/' + GameState.roomId);
+        // Clear co-op ready data before starting new game
+        roomRef.child('coopReady').remove();
         roomRef.update({
             status: 'playing',
             currentStage: GameState.multiCurrentStage,
@@ -6332,28 +6334,176 @@ function showMultiResult() {
 }
 
 function nextMultiStage() {
-    if (!GameState.coopRetrying) {
-        GameState.multiCurrentStage++;
-        // Team battle round swap
-        if (GameState.multiMode === 'teamBattle') {
-            GameState.teamRound++;
-            if (GameState.teamRound > 2) {
-                GameState.teamRound = 1;
-                // Swap teams
-                Object.keys(GameState.teamAssignment).forEach(function(idx) {
-                    GameState.teamAssignment[idx] = GameState.teamAssignment[idx] === 'oni' ? 'runner' : 'oni';
-                });
-            }
+    // --- Co-op / Team Battle: wait for ALL players to press "Next Stage" ---
+    if (GameState.multiMode === 'coop' || GameState.multiMode === 'teamBattle') {
+        // Write own ready flag to Firebase
+        if (firebaseReady && GameState.roomId && GameState.playerIndex !== null) {
+            var roomRef = database.ref('rooms/' + GameState.roomId);
+            roomRef.child('coopReady/' + GameState.playerIndex).set(true);
+            // Also set onDisconnect to remove ready flag if player leaves
+            roomRef.child('coopReady/' + GameState.playerIndex).onDisconnect().remove();
         }
+        // Disable button and show waiting message
+        var btnsEl = document.getElementById('result-buttons');
+        if (btnsEl) {
+            var waitMsg = GameState.language === 'ja'
+                ? '他のプレイヤーを待っています...'
+                : 'Waiting for other players...';
+            btnsEl.innerHTML =
+                '<div id="coop-ready-status" style="color:var(--neon-green);font-size:16px;margin-bottom:12px;">' + waitMsg + '</div>' +
+                '<div id="coop-ready-list" style="font-size:14px;color:var(--text-dim);margin-bottom:12px;"></div>' +
+                '<button class="btn btn-thin" onclick="cancelCoopReady()">' +
+                (GameState.language === 'ja' ? 'タイトルへ' : 'Back to Title') + '</button>';
+        }
+        // Start listening for all players' ready status (both host and guest)
+        _startCoopReadyListener();
+        return;
     }
-    GameState.coopRetrying = false;
-    // Clear synced ONI model IDs so new stage gets fresh models
-    GameState.syncedOniModelIds = null;
 
+    // --- FFA (non-coop) fallback: original behavior ---
+    GameState.coopRetrying = false;
+    GameState.syncedOniModelIds = null;
     if (GameState.isHost) {
         startMultiplayerGame();
     }
-    // Guests will receive the game start via onStatusChange listener
+}
+
+/* --- Co-op ready sync: wait for all players before starting next stage --- */
+var _coopReadyListenerRef = null;
+
+function _startCoopReadyListener() {
+    if (!firebaseReady || !GameState.roomId) return;
+    var roomRef = database.ref('rooms/' + GameState.roomId);
+
+    // Clean up previous listener if any
+    if (_coopReadyListenerRef) {
+        _coopReadyListenerRef.off();
+        _coopReadyListenerRef = null;
+    }
+
+    _coopReadyListenerRef = roomRef.child('coopReady');
+    _coopReadyListenerRef.on('value', function(snap) {
+        var readyData = snap.val() || {};
+        var readyIndices = Object.keys(readyData).map(Number);
+
+        // Get current alive player list (players still in the room)
+        var activePlayers = Object.keys(GameState.players).filter(function(idx) {
+            return GameState.players[idx];
+        }).map(Number);
+
+        // Update ready list display
+        _updateCoopReadyDisplay(readyIndices, activePlayers);
+
+        // Check if all active players are ready
+        var allReady = activePlayers.length > 0 && activePlayers.every(function(idx) {
+            return readyIndices.indexOf(idx) >= 0;
+        });
+
+        if (allReady) {
+            // Clean up listener and coopReady data
+            _coopReadyListenerRef.off();
+            _coopReadyListenerRef = null;
+            roomRef.child('coopReady').remove();
+
+            // Advance stage
+            if (!GameState.coopRetrying) {
+                GameState.multiCurrentStage++;
+                if (GameState.multiMode === 'teamBattle') {
+                    GameState.teamRound++;
+                    if (GameState.teamRound > 2) {
+                        GameState.teamRound = 1;
+                        Object.keys(GameState.teamAssignment).forEach(function(idx) {
+                            GameState.teamAssignment[idx] = GameState.teamAssignment[idx] === 'oni' ? 'runner' : 'oni';
+                        });
+                    }
+                }
+            }
+            GameState.coopRetrying = false;
+            GameState.syncedOniModelIds = null;
+
+            // Only host triggers startMultiplayerGame; guests auto-start via status listener
+            if (GameState.isHost) {
+                startMultiplayerGame();
+            }
+        }
+    });
+
+    // Also listen for player disconnections during ready-wait
+    roomRef.child('players').on('value', function(pSnap) {
+        var playersData = pSnap.val();
+        if (!playersData) return;
+
+        // Update GameState.players to reflect disconnections
+        var remainingCount = 0;
+        Object.keys(GameState.players).forEach(function(idx) {
+            if (!playersData[idx]) {
+                // Player left — show notification
+                var leftName = GameState.players[idx] ? GameState.players[idx].username : 'P' + (parseInt(idx) + 1);
+                showNotification(
+                    GameState.language === 'ja'
+                        ? leftName + 'さんが退席しました'
+                        : leftName + ' has left',
+                    true
+                );
+                delete GameState.players[idx];
+            } else {
+                remainingCount++;
+            }
+        });
+
+        // If only 1 player remains, end the session
+        if (remainingCount <= 1) {
+            if (_coopReadyListenerRef) {
+                _coopReadyListenerRef.off();
+                _coopReadyListenerRef = null;
+            }
+            roomRef.child('coopReady').remove();
+            showNotification(
+                GameState.language === 'ja'
+                    ? '他のプレイヤーが全員退席しました'
+                    : 'All other players have left',
+                true
+            );
+            setTimeout(function() {
+                backToMultiTitle();
+            }, 2000);
+        }
+    });
+}
+
+function _updateCoopReadyDisplay(readyIndices, activePlayers) {
+    var listEl = document.getElementById('coop-ready-list');
+    if (!listEl) return;
+    var html = '';
+    activePlayers.forEach(function(idx) {
+        var p = GameState.players[idx];
+        var name = p ? p.username : 'P' + (idx + 1);
+        var isReady = readyIndices.indexOf(idx) >= 0;
+        var color = isReady ? 'var(--neon-green)' : 'var(--text-dim)';
+        var icon = isReady ? '✓' : '…';
+        html += '<div style="color:' + color + '">' + icon + ' ' + name + '</div>';
+    });
+    listEl.innerHTML = html;
+    // Update status message with count
+    var statusEl = document.getElementById('coop-ready-status');
+    if (statusEl) {
+        var readyCount = activePlayers.filter(function(idx) { return readyIndices.indexOf(idx) >= 0; }).length;
+        statusEl.textContent = (GameState.language === 'ja'
+            ? '準備完了: ' + readyCount + '/' + activePlayers.length
+            : 'Ready: ' + readyCount + '/' + activePlayers.length);
+    }
+}
+
+function cancelCoopReady() {
+    // Remove own ready flag and go back to title
+    if (firebaseReady && GameState.roomId && GameState.playerIndex !== null) {
+        database.ref('rooms/' + GameState.roomId + '/coopReady/' + GameState.playerIndex).remove();
+    }
+    if (_coopReadyListenerRef) {
+        _coopReadyListenerRef.off();
+        _coopReadyListenerRef = null;
+    }
+    backToMultiTitle();
 }
 
 function rematchMulti() {
@@ -6393,6 +6543,14 @@ function rematchMulti() {
 }
 
 function backToMultiTitle() {
+    // Clean up co-op ready state
+    if (_coopReadyListenerRef) {
+        _coopReadyListenerRef.off();
+        _coopReadyListenerRef = null;
+    }
+    if (firebaseReady && GameState.roomId && GameState.playerIndex !== null) {
+        database.ref('rooms/' + GameState.roomId + '/coopReady/' + GameState.playerIndex).remove();
+    }
     SyncLayer.disconnect();
     leaveLobby();
     backToTitle();
@@ -13814,6 +13972,11 @@ function cleanupGame() {
     var idleWarn = document.getElementById('hud-idle-warning');
     if (idleWarn) idleWarn.style.display = 'none';
     GameState.syncedOniModelIds = null; // Clear synced ONI model IDs for next game
+    // Clear co-op ready listener if active
+    if (_coopReadyListenerRef) {
+        _coopReadyListenerRef.off();
+        _coopReadyListenerRef = null;
+    }
     // Clear background loop if running (multiplayer host tab hidden)
     if (_bgLoopInterval) {
         clearInterval(_bgLoopInterval);
