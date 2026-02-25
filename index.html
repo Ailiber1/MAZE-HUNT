@@ -9729,13 +9729,14 @@ function updateOniAI(delta) {
     var oniTargets = [];
     if (GameState.alive) {
         var playerMoving = GameState.moveForward || GameState.moveBackward;
-        // Idle penalty: stopped player emits sound as if walking (ONI can detect)
+        // Idle penalty: stopped player emits sound — ONI actively chases
         var idleSound = GameState.idlePenalty && !playerMoving;
         oniTargets.push({
             x: camera.position.x,
             z: camera.position.z,
             floor: GameState.playerCurrentFloor,
             isMoving: playerMoving || idleSound,
+            isIdle: idleSound,
             isSprinting: GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0 && playerMoving
         });
     }
@@ -9806,14 +9807,24 @@ function updateOniAI(delta) {
                 closestTargetFloor = tgt.floor;
             }
 
-            // Sound detection (moving players only)
+            // Sound detection (moving players or idle-penalty players)
             if (tSameFloor && tgt.isMoving) {
-                var soundRange = tgt.isSprinting
-                    ? ONI_CONFIG.sprintSoundRange * detMul
-                    : ONI_CONFIG.walkSoundRange * detMul;
+                // Idle penalty: player emits continuous noise — wider range, exact position
+                var soundRange;
+                if (tgt.isIdle) {
+                    soundRange = ONI_CONFIG.sightRange * detMul; // same as visual range
+                } else {
+                    soundRange = tgt.isSprinting
+                        ? ONI_CONFIG.sprintSoundRange * detMul
+                        : ONI_CONFIG.walkSoundRange * detMul;
+                }
                 if (tDist < soundRange) {
                     canDetect = true;
-                    if (!inSight) {
+                    if (tgt.isIdle) {
+                        // Idle: ONI knows exact position (continuous noise source)
+                        inSight = true;
+                        detectionPos = { x: tgt.x, z: tgt.z };
+                    } else if (!inSight) {
                         var inaccuracy = tgt.isSprinting ? 0.5 : CL * 1.5;
                         detectionPos = {
                             x: tgt.x + (Math.random() - 0.5) * inaccuracy,
