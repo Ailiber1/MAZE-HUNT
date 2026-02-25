@@ -3778,7 +3778,8 @@ function updateRuleContent() {
         '<p>&nbsp;&nbsp;<u>協力プレイ</u>: 全ステージを協力クリア</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;誰か1人が脱出すればステージクリア</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;全員捕まったら終了</p>',
-        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ 5秒以上停止すると鬼に感知される</p><br>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ 5秒以上停止すると鬼に感知される</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ 生存者3人以上で鬼が全員の位置を自動検知！</p><br>',
         '<p>&#9632; ランキングは登録ユーザーのみ対象</p>',
     ].join('') : [
         '<p>&#9632; A 3D horror tag game — escape from ONI in dark mazes</p><br>',
@@ -3810,7 +3811,8 @@ function updateRuleContent() {
         '<p>&nbsp;&nbsp;<u>Co-op</u>: Clear all stages together</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;One player escapes = stage clear</p>',
         '<p>&nbsp;&nbsp;&nbsp;&nbsp;All caught = game over</p>',
-        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ Stop for 5+ seconds and ONI detects you</p><br>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ Stop for 5+ seconds and ONI detects you</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;⚠ 3+ survivors: ONI auto-detects all players!</p><br>',
         '<p>&#9632; Rankings are for registered users only</p>',
     ].join('');
 }
@@ -10042,6 +10044,12 @@ function updateOniAI(delta) {
         // Score Attack 1000+ : oni always knows player position (cross-floor)
         var scoreTrack = (GameState.gameMode === 'scoreAttack' && GameState.score >= 1000);
 
+        // Co-op / Team Battle: more players → oni auto-detects everyone (3+ alive targets)
+        var coopTrack = false;
+        if (GameState.multiMode === 'coop' || GameState.multiMode === 'teamBattle') {
+            coopTrack = (oniTargets.length >= 3);
+        }
+
         for (var ti = 0; ti < oniTargets.length; ti++) {
             var tgt = oniTargets[ti];
             var tdx = tgt.x - oni.position.x;
@@ -10049,16 +10057,19 @@ function updateOniAI(delta) {
             var tDist = Math.sqrt(tdx * tdx + tdz * tdz);
             var tSameFloor = oni.currentFloor === tgt.floor;
 
-            // Track closest target (cross-floor allowed when scoreTrack active)
-            if (tDist < closestTargetDist && (tSameFloor || scoreTrack)) {
+            // Auto-tracking: score attack 1000+ or co-op 3+ players
+            var autoTrack = scoreTrack || coopTrack;
+
+            // Track closest target (cross-floor allowed when autoTrack active)
+            if (tDist < closestTargetDist && (tSameFloor || autoTrack)) {
                 closestTargetDist = tDist;
                 closestTargetX = tgt.x;
                 closestTargetZ = tgt.z;
                 closestTargetFloor = tgt.floor;
             }
 
-            // Score Attack 1000+: oni detects player position regardless of floor/range
-            if (scoreTrack && tDist < closestTargetDist + 1) {
+            // Auto-tracking: oni detects player position regardless of floor/range
+            if (autoTrack && tDist < closestTargetDist + 1) {
                 canDetect = true;
                 inSight = true;
                 detectionPos = { x: tgt.x, z: tgt.z };
