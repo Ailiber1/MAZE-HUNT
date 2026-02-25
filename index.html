@@ -2416,20 +2416,7 @@ body {
     <div class="modal-box">
         <button class="modal-close" onclick="hideModal('rule-modal')">&times;</button>
         <div class="modal-title">RULE</div>
-        <div class="modal-body">
-            <p>&#9632; 暗い迷路の中、鬼（CPU）から逃げ延びる3Dホラー鬼ごっこ</p><br>
-            <p>&#9632; 一人称視点で移動、矢印キー or WASD で操作</p>
-            <p>&nbsp;&nbsp;&#8593;/W: 前進 &nbsp; &#8595;/S: 後退 &nbsp; &#8592;/A: 左回転 &nbsp; &#8594;/D: 右回転</p>
-            <p>&nbsp;&nbsp;Shift: スプリント（スタミナ消費）</p><br>
-            <p>&#9632; 鬼が近づくと警告フレーム表示</p>
-            <p>&nbsp;&nbsp;黄色（12m以内）→ 赤（6m以内）+ 心拍上昇</p><br>
-            <p>&#9632; ストーリーモード: 5ステージクリア制</p>
-            <p>&nbsp;&nbsp;制限時間内に出口（EXIT）を見つけて脱出</p><br>
-            <p>&#9632; スコアアタック: 逃げ続けるほどスコア加算</p><br>
-            <p>&#9632; マルチプレイ: 最大4人</p>
-            <p>&nbsp;&nbsp;個人戦 / チーム戦 / 協力プレイ</p><br>
-            <p>&#9632; ランキングは登録ユーザーのみ対象</p>
-        </div>
+        <div class="modal-body" id="rule-body"></div>
     </div>
 </div>
 
@@ -3688,6 +3675,69 @@ function saveRanking(entry) {
         current.timestamp = Date.now();
         return current;
     });
+}
+
+function updateRuleContent() {
+    var el = document.getElementById('rule-body');
+    if (!el) return;
+    var ja = GameState.language === 'ja';
+    el.innerHTML = ja ? [
+        '<p>&#9632; 暗い迷路の中、鬼（CPU）から逃げ延びる3Dホラー鬼ごっこ</p><br>',
+        '<p><b>【操作方法】</b></p>',
+        '<p>&nbsp;&nbsp;&#8593;/W: 前進 &nbsp; &#8595;/S: 後退 &nbsp; &#8592;/A: 左回転 &nbsp; &#8594;/D: 右回転</p>',
+        '<p>&nbsp;&nbsp;Shift: スプリント（スタミナ消費）</p>',
+        '<p>&nbsp;&nbsp;スマホ: 画面下の操作ボタンで移動</p><br>',
+        '<p><b>【鬼の感知】</b></p>',
+        '<p>&nbsp;&nbsp;歩く音 → 鬼が近くにいると気づかれる</p>',
+        '<p>&nbsp;&nbsp;走る音 → より遠くから感知される</p>',
+        '<p>&nbsp;&nbsp;鬼が近づくと警告（黄→赤）+ 心拍上昇</p><br>',
+        '<p><b>【ストーリーモード】</b></p>',
+        '<p>&nbsp;&nbsp;全5ステージ。制限時間内に出口（EXIT）を見つけて脱出</p><br>',
+        '<p><b>【スコアアタック】</b></p>',
+        '<p>&nbsp;&nbsp;出口なし。鬼から逃げ続けるサバイバル</p>',
+        '<p>&nbsp;&nbsp;時間経過で鬼が追加（最大8体）</p>',
+        '<p>&nbsp;&nbsp;移動するほどスコア加算（止まるとスコアは増えない）</p>',
+        '<p>&nbsp;&nbsp;⚠ 5秒以上停止すると鬼に位置がバレる！</p>',
+        '<p>&nbsp;&nbsp;ランキング: サバイバルタイム順（上位10人）</p><br>',
+        '<p><b>【マルチプレイ（最大4人）】</b></p>',
+        '<p>&nbsp;&nbsp;<u>個人戦</u>: ランダムステージで生存競争</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;出口なし。最後の1人が生き残れば勝利</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;時間経過で鬼が追加</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;捕まったらランダムな生存者を観戦</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;ランキング: 勝利数順（上位10人）</p><br>',
+        '<p>&nbsp;&nbsp;<u>協力プレイ</u>: 全5ステージを協力クリア</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;誰か1人が脱出すればステージクリア</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;全員捕まったらリトライ</p><br>',
+        '<p>&#9632; ランキングは登録ユーザーのみ対象</p>',
+    ].join('') : [
+        '<p>&#9632; A 3D horror tag game — escape from ONI in dark mazes</p><br>',
+        '<p><b>[Controls]</b></p>',
+        '<p>&nbsp;&nbsp;&#8593;/W: Forward &nbsp; &#8595;/S: Back &nbsp; &#8592;/A: Turn Left &nbsp; &#8594;/D: Turn Right</p>',
+        '<p>&nbsp;&nbsp;Shift: Sprint (uses stamina)</p>',
+        '<p>&nbsp;&nbsp;Mobile: On-screen buttons</p><br>',
+        '<p><b>[ONI Detection]</b></p>',
+        '<p>&nbsp;&nbsp;Walking sound → ONI notices if nearby</p>',
+        '<p>&nbsp;&nbsp;Running sound → detected from farther away</p>',
+        '<p>&nbsp;&nbsp;Warning frame (yellow→red) + heartbeat when ONI is close</p><br>',
+        '<p><b>[Story Mode]</b></p>',
+        '<p>&nbsp;&nbsp;5 stages. Find the EXIT before time runs out</p><br>',
+        '<p><b>[Score Attack]</b></p>',
+        '<p>&nbsp;&nbsp;No exit. Survive as long as you can</p>',
+        '<p>&nbsp;&nbsp;More ONI spawn over time (up to 8)</p>',
+        '<p>&nbsp;&nbsp;Move to earn score (standing still = no points)</p>',
+        '<p>&nbsp;&nbsp;⚠ Stop for 5+ seconds and ONI will detect you!</p>',
+        '<p>&nbsp;&nbsp;Ranking: by survival time (top 10)</p><br>',
+        '<p><b>[Multiplayer (up to 4)]</b></p>',
+        '<p>&nbsp;&nbsp;<u>Free For All</u>: Random stage survival</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;No exit. Last player standing wins</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;More ONI spawn over time</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;Caught? Spectate a random survivor</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;Ranking: by win count (top 10)</p><br>',
+        '<p>&nbsp;&nbsp;<u>Co-op</u>: Clear all 5 stages together</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;One player escapes = stage clear</p>',
+        '<p>&nbsp;&nbsp;&nbsp;&nbsp;All caught = retry</p><br>',
+        '<p>&#9632; Rankings are for registered users only</p>',
+    ].join('');
 }
 
 function loadRankings(gameMode) {
@@ -6490,6 +6540,7 @@ function initButtons() {
 
     // Rules
     document.getElementById('btn-rules').addEventListener('click', () => {
+        updateRuleContent();
         showModal('rule-modal');
     });
 
@@ -6676,10 +6727,8 @@ const i18n = {
         catchcopy: 'アシオトヲ、タテルナ',
         ruleTitle: 'RULE',
         rankingTitle: 'RANKING',
-        tabStory: 'ストーリー',
         tabScore: 'スコアアタック',
         tabMulti: 'マルチ個人戦',
-        tabCoop: '協力',
         noData: 'データなし',
         backToTitle: 'タイトルに戻る',
         storyMode: 'STORY MODE',
@@ -6709,10 +6758,8 @@ const i18n = {
         catchcopy: "Don't Make A Sound",
         ruleTitle: 'RULE',
         rankingTitle: 'RANKING',
-        tabStory: 'Story',
         tabScore: 'Score Attack',
         tabMulti: 'FFA',
-        tabCoop: 'Co-op',
         noData: 'No data',
         backToTitle: 'Back to Title',
         storyMode: 'STORY MODE',
@@ -6817,10 +6864,8 @@ function updateLanguage() {
 
     // Ranking tabs
     const tabs = document.querySelectorAll('.ranking-tab');
-    if (tabs[0]) tabs[0].textContent = lang.tabStory;
-    if (tabs[1]) tabs[1].textContent = lang.tabScore;
-    if (tabs[2]) tabs[2].textContent = lang.tabMulti;
-    if (tabs[3]) tabs[3].textContent = lang.tabCoop;
+    if (tabs[0]) tabs[0].textContent = lang.tabScore;
+    if (tabs[1]) tabs[1].textContent = lang.tabMulti;
 
     // Stage select
     const storyTitle = document.querySelector('.stage-select-title');
@@ -6865,6 +6910,8 @@ function updateLanguage() {
     if (GameState.currentScreen === 'story') buildStageList();
     // Update lobby display if on lobby screen
     if (GameState.currentScreen === 'lobby') { updateLobbyDisplay(); updateLobbyPlayerList(); }
+    // Update rule content language
+    updateRuleContent();
 }
 
 /* ============================================
