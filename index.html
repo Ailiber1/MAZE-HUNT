@@ -5758,7 +5758,17 @@ function launchMultiGame(config) {
                 addOniLights(model, stageId);
                 var coopCharId = coopOniModelIds[oi % coopOniModelIds.length];
                 loadOniGLB(model, coopCharId, stageId);
-                var floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor(oi / 2)) : 0;
+                // Guarantee at least 1 oni per floor on multi-floor stages
+                var floor;
+                if (numFloors <= 1) {
+                    floor = 0;
+                } else if (oi < numFloors) {
+                    // First N onis: one per floor
+                    floor = oi;
+                } else {
+                    // Remaining onis: distribute across floors
+                    floor = Math.min(numFloors - 1, Math.floor(oi / 2));
+                }
                 var spawnX = Math.max(1, cols - 2 - (oi % 3));
                 var spawnZ = Math.max(1, rows - 2 - Math.floor(oi / 3));
                 var worldX = spawnX * CL + CL / 2;
@@ -9577,8 +9587,17 @@ function spawnOnis(stageId) {
         const charId = oniModelIds[i % oniModelIds.length];
         loadOniGLB(model, charId, stageId);
 
-        // Distribute across floors (highest floors first for horror effect)
-        const floor = numFloors > 1 ? Math.min(numFloors - 1, Math.floor((numFloors - 1) * (i / Math.max(1, oniCount - 1)) + 0.5)) : 0;
+        // Distribute across floors — guarantee at least 1 oni per floor on multi-floor stages
+        let floor;
+        if (numFloors <= 1) {
+            floor = 0;
+        } else if (i < numFloors) {
+            // First N onis: one per floor (ensures every floor has at least 1)
+            floor = i;
+        } else {
+            // Remaining onis: distribute evenly across floors
+            floor = Math.min(numFloors - 1, Math.floor((numFloors - 1) * (i / Math.max(1, oniCount - 1)) + 0.5));
+        }
         // Alternate corner positions for variety
         let spawnX, spawnZ;
         if (oniCount === 1) {
@@ -11906,8 +11925,23 @@ function spawnAdditionalOni(cols, rows, numFloors, speedMul) {
     var charId = oniModelIds[GameState.onis.length % oniModelIds.length];
     loadOniGLB(model, charId, stageId);
 
-    // Spawn at a random far corner from players
-    var floor = numFloors > 1 ? Math.floor(Math.random() * numFloors) : 0;
+    // Spawn on the floor with the fewest onis (guarantee coverage on multi-floor stages)
+    var floor = 0;
+    if (numFloors > 1) {
+        var floorCounts = new Array(numFloors).fill(0);
+        for (var fi = 0; fi < GameState.onis.length; fi++) {
+            var cf = GameState.onis[fi].currentFloor;
+            if (cf >= 0 && cf < numFloors) floorCounts[cf]++;
+        }
+        var minCount = floorCounts[0];
+        floor = 0;
+        for (var fi2 = 1; fi2 < numFloors; fi2++) {
+            if (floorCounts[fi2] < minCount) {
+                minCount = floorCounts[fi2];
+                floor = fi2;
+            }
+        }
+    }
     var spawnX = Math.max(1, cols - 2 - Math.floor(Math.random() * 3));
     var spawnZ = Math.max(1, rows - 2 - Math.floor(Math.random() * 3));
     var worldX = spawnX * CL + CL / 2;
