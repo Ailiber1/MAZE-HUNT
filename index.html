@@ -10190,15 +10190,27 @@ function placeExit(cols, rows, stageId, numFloors) {
     if (stageId === 4) exitFloor = 1;
     else if (stageId === 5) exitFloor = numFloors - 1;
     else if (stageId === 'hidden') exitFloor = numFloors - 1;
+    else if (stageId === 3) exitFloor = Math.max(0, numFloors - 1); // Stage 3: top floor
     else exitFloor = 0;
 
-    // Random exit for ALL stages. Minimum Manhattan distance from
-    // player start (cell 1,1) ensures the exit is never too close.
+    // Place exit far from player start (cell 1,1).
+    // Stage-specific minimum Manhattan distance to ensure difficulty.
     let exitX, exitZ;
-    var minDist = Math.max(Math.floor(cols * 0.5), 4);
+    var distRatio;
+    if (stageId === 1) distRatio = 0.5;        // Stage 1: easy (50%)
+    else if (stageId === 2) distRatio = 0.6;    // Stage 2: moderate (60%)
+    else distRatio = 0.75;                       // Stage 3+: far (75%)
+    var minDist = Math.max(Math.floor((cols + rows) / 2 * distRatio), 4);
+    var attempts = 0;
     do {
         exitX = Math.floor(Math.random() * (cols - 2)) + 1;
         exitZ = Math.floor(Math.random() * (rows - 2)) + 1;
+        attempts++;
+        if (attempts > 200) { // Fallback: opposite corner
+            exitX = cols - 2;
+            exitZ = rows - 2;
+            break;
+        }
     } while (Math.abs(exitX - 1) + Math.abs(exitZ - 1) < minDist);
     return { x: exitX, z: exitZ, floor: exitFloor };
 }
