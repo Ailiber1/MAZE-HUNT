@@ -10529,8 +10529,9 @@ function drawMinimap() {
         }
     }
 
-    // EXIT marker
-    if (GameState.exitPosition && GameState.exitFloor === floor) {
+    // EXIT marker (hidden on Stage 5 — player must find it on their own)
+    var hideExit = GameState.currentStage === 5 || GameState.multiCurrentStage === 5;
+    if (!hideExit && GameState.exitPosition && GameState.exitFloor === floor) {
         var ex = GameState.exitPosition.x * cellW + cellW / 2;
         var ey = GameState.exitPosition.z * cellH + cellH / 2;
         ctx.fillStyle = Math.sin(Date.now() * 0.005) > 0 ? '#00ff41' : '#005518';
@@ -12762,6 +12763,9 @@ function checkOniDirectionWarning(playerPos, playerRotY, playerFloor, oniList) {
 
 function checkExitHintNav(playerPos, playerRotY, playerFloor, exitPos, exitFloor) {
     if (!exitPos) return;
+    // Stage 5: no exit hints — player must find it on their own
+    var stage5 = GameState.currentStage === 5 || GameState.multiCurrentStage === 5;
+    if (stage5) return;
     const now = performance.now();
     if (now - Navigator.lastExitHintTime < Navigator.hintInterval) return;
 
