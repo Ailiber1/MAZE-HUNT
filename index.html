@@ -14037,7 +14037,6 @@ function startGame(stageId) {
     const mazeResult = generateMultiFloorMaze(cols, rows, numFloors, numStairs, stageId);
     GameState.mazeFloors = mazeResult.floors;
     GameState.stairsData = mazeResult.stairs;
-    console.log('[MAZE] numFloors=' + numFloors + ' numStairs=' + numStairs + ' stairsData=' + JSON.stringify(mazeResult.stairs));
     GameState.mazeGrid = mazeResult.floors[0]; // backward compat for other systems
     GameState.playerCurrentFloor = 0;
     GameState.onStairs = false;
