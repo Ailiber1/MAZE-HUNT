@@ -12288,7 +12288,7 @@ function spawnAdditionalOni(cols, rows, numFloors, speedMul) {
     var charId = oniModelIds[GameState.onis.length % oniModelIds.length];
     loadOniGLB(model, charId, stageId);
 
-    // Spawn on the floor with the fewest onis (guarantee coverage on multi-floor stages)
+    // Spawn on optimal floor: prioritize floors with no oni, then player's floor
     var floor = 0;
     if (numFloors > 1) {
         var floorCounts = new Array(numFloors).fill(0);
@@ -12296,12 +12296,35 @@ function spawnAdditionalOni(cols, rows, numFloors, speedMul) {
             var cf = GameState.onis[fi].currentFloor;
             if (cf >= 0 && cf < numFloors) floorCounts[cf]++;
         }
-        var minCount = floorCounts[0];
-        floor = 0;
-        for (var fi2 = 1; fi2 < numFloors; fi2++) {
-            if (floorCounts[fi2] < minCount) {
-                minCount = floorCounts[fi2];
-                floor = fi2;
+
+        // Priority 1: floors with ZERO onis (guarantee every floor has coverage)
+        var emptyFloors = [];
+        for (var fi2 = 0; fi2 < numFloors; fi2++) {
+            if (floorCounts[fi2] === 0) emptyFloors.push(fi2);
+        }
+        if (emptyFloors.length > 0) {
+            // Among empty floors, prefer the player's floor
+            var playerFloor = GameState.playerCurrentFloor || 0;
+            if (emptyFloors.indexOf(playerFloor) >= 0) {
+                floor = playerFloor;
+            } else {
+                floor = emptyFloors[Math.floor(Math.random() * emptyFloors.length)];
+            }
+        } else {
+            // Priority 2: player's floor (50% chance) to ensure pressure
+            var playerFloor = GameState.playerCurrentFloor || 0;
+            if (Math.random() < 0.5 && playerFloor >= 0 && playerFloor < numFloors) {
+                floor = playerFloor;
+            } else {
+                // Priority 3: floor with fewest onis
+                var minCount = floorCounts[0];
+                floor = 0;
+                for (var fi3 = 1; fi3 < numFloors; fi3++) {
+                    if (floorCounts[fi3] < minCount) {
+                        minCount = floorCounts[fi3];
+                        floor = fi3;
+                    }
+                }
             }
         }
     }
