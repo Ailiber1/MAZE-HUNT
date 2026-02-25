@@ -1779,8 +1779,8 @@ body {
     border-radius: 50%;
     background: rgba(0, 255, 65, 0.5);
     border: 1px solid rgba(0, 255, 65, 0.8);
-    left: 60px;
-    top: 60px;
+    left: 50%;
+    top: 50%;
     transform: translate(-50%, -50%);
 }
 #look-zone {
@@ -1869,8 +1869,8 @@ body {
     #hud-stage-label { font-size: 12px; top: 12px; left: 12px; }
     #hud-floor-label { font-size: 14px; top: 28px; left: 12px; }
     #hud-stamina { width: 150px; bottom: 14px; }
-    #minimap-container { width: 120px; height: 120px; bottom: 140px; left: 12px; }
-    #minimap-canvas { width: 120px; height: 120px; }
+    #minimap-container { width: 100px; height: 100px; bottom: auto; top: 80px; left: 12px; }
+    #minimap-canvas { width: 100px; height: 100px; }
     #navigator-bar { font-size: 11px; bottom: 160px; padding: 6px 12px; }
     #hud-status { font-size: 10px; top: 44px; left: 12px; }
     #hud-objective { font-size: 10px; top: 58px; left: 12px; }
@@ -1907,7 +1907,7 @@ body {
 @media (max-width: 480px) {
     #sprint-btn { width: 60px; height: 60px; right: 12px; bottom: 20px; font-size: 9px; }
     .mobile-action-btn { width: 40px; height: 40px; font-size: 8px; }
-    #minimap-container { width: 80px; height: 80px; bottom: 130px; }
+    #minimap-container { width: 80px; height: 80px; bottom: auto; top: 75px; }
     #lobby-screen .char-preview { height: 90px; }
     .lobby-bottom-btns { flex-direction: column; gap: 6px; }
     .lobby-bottom-btns .btn-thin { min-width: auto; }
@@ -1918,6 +1918,22 @@ body {
 }
 @media (max-width: 360px) {
     #hud-timer { font-size: 16px; }
+}
+/* Landscape mobile: compact layout */
+@media (max-height: 500px) and (orientation: landscape) {
+    #minimap-container { width: 70px; height: 70px; bottom: auto; top: 50px; left: 8px; }
+    #minimap-canvas { width: 70px; height: 70px; }
+    #joystick-base { width: 90px; height: 90px; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+    #joystick-base #joystick-stick { width: 40px; height: 40px; left: 45px; top: 45px; }
+    #sprint-btn { width: 55px; height: 55px; right: 10px; bottom: 15px; font-size: 9px; }
+    #hud-stage-label { font-size: 11px; top: 8px; left: 8px; }
+    #hud-floor-label { font-size: 12px; top: 22px; left: 8px; }
+    #hud-status { font-size: 9px; top: 36px; left: 8px; }
+    #hud-objective { font-size: 9px; top: 48px; left: 8px; }
+    #hud-timer { font-size: 16px; top: 8px; right: 8px; }
+    #hud-enemy-dist { font-size: 10px; top: 8px; right: 8px; }
+    #hud-bpm { font-size: 9px; top: 24px; right: 8px; }
+    #navigator-bar { font-size: 10px; bottom: auto; top: 130px; left: 8px; }
 }
 /* ============================================
    Character Selection Grid
@@ -11124,10 +11140,12 @@ const VirtualJoystick = {
             const touch = e.changedTouches[0];
             this.touchId = touch.identifier;
             this.active = true;
-            // Use fixed joystick center position
+            // Use fixed joystick center position (dynamic based on CSS size)
             const rect = this.baseEl.getBoundingClientRect();
-            this.centerX = rect.left + 60;
-            this.centerY = rect.top + 60;
+            const half = rect.width / 2;
+            this.centerX = rect.left + half;
+            this.centerY = rect.top + half;
+            this._half = half;
             this.baseEl.classList.add('active');
             // Set stick to touch position relative to center
             let dx = touch.clientX - this.centerX;
@@ -11137,8 +11155,8 @@ const VirtualJoystick = {
                 dx = dx / dist * this.maxRadius;
                 dy = dy / dist * this.maxRadius;
             }
-            this.stickEl.style.left = (60 + dx) + 'px';
-            this.stickEl.style.top = (60 + dy) + 'px';
+            this.stickEl.style.left = (this._half + dx) + 'px';
+            this.stickEl.style.top = (this._half + dy) + 'px';
             this.dx = dx / this.maxRadius;
             this.dy = -dy / this.maxRadius;
         }, { passive: false });
@@ -11154,6 +11172,7 @@ const VirtualJoystick = {
                 }
             }
             if (!touch) return;
+            const half = this._half || 60;
             let dx = touch.clientX - this.centerX;
             let dy = touch.clientY - this.centerY;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -11161,8 +11180,8 @@ const VirtualJoystick = {
                 dx = dx / dist * this.maxRadius;
                 dy = dy / dist * this.maxRadius;
             }
-            this.stickEl.style.left = (60 + dx) + 'px';
-            this.stickEl.style.top = (60 + dy) + 'px';
+            this.stickEl.style.left = (half + dx) + 'px';
+            this.stickEl.style.top = (half + dy) + 'px';
             this.dx = dx / this.maxRadius;
             this.dy = -dy / this.maxRadius;
         }, { passive: false });
@@ -11182,8 +11201,9 @@ const VirtualJoystick = {
             this.dx = 0;
             this.dy = 0;
             this.baseEl.classList.remove('active');
-            this.stickEl.style.left = '60px';
-            this.stickEl.style.top = '60px';
+            const half = this._half || 60;
+            this.stickEl.style.left = half + 'px';
+            this.stickEl.style.top = half + 'px';
         }, { passive: false });
 
         zone.addEventListener('touchcancel', (e) => {
@@ -11192,6 +11212,9 @@ const VirtualJoystick = {
             this.dx = 0;
             this.dy = 0;
             this.baseEl.classList.remove('active');
+            const half = this._half || 60;
+            this.stickEl.style.left = half + 'px';
+            this.stickEl.style.top = half + 'px';
         }, { passive: false });
     },
 
