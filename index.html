@@ -5324,6 +5324,12 @@ function showDisconnectNotification(username) {
 }
 
 function handlePlayerDisconnect(playerIndex) {
+    // Get disconnected player name for notification
+    var disconnectedName = '';
+    if (GameState.players[playerIndex]) {
+        disconnectedName = GameState.players[playerIndex].username || ('P' + (playerIndex + 1));
+    }
+
     // Remove 3D model
     var rp = GameState.remotePlayers[playerIndex];
     if (rp && rp.model) {
@@ -5340,15 +5346,52 @@ function handlePlayerDisconnect(playerIndex) {
 
     // Check remaining players
     var remainingCount = Object.keys(GameState.remotePlayers).length + 1;
-    if (remainingCount <= 1 && GameState.gameActive) {
-        // Auto-win
+
+    if (GameState.multiMode === 'coop' && GameState.gameActive) {
+        // Coop: if only 1 player left, game over (can't play coop alone)
+        if (remainingCount <= 1) {
+            GameState.gameActive = false;
+            if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+            showNotification(GameState.language === 'ja'
+                ? disconnectedName + 'が離脱しました。ゲームオーバー'
+                : disconnectedName + ' left. Game Over');
+            setTimeout(function() {
+                showCoopDisconnectResult();
+            }, 2000);
+        } else {
+            // 2+ players remain: show disconnect notification, continue game
+            showNotification(GameState.language === 'ja'
+                ? disconnectedName + 'が離脱しました'
+                : disconnectedName + ' has left the game');
+        }
+    } else if (remainingCount <= 1 && GameState.gameActive) {
+        // FFA / Team Battle: auto-win
         GameState.gameActive = false;
         if (GameState.timerInterval) clearInterval(GameState.timerInterval);
         showNotification(GameState.language === 'ja' ? '自動勝利!' : 'Auto Win!');
         setTimeout(function() {
-            showMultiResult();
+            showMultiStageResult();
         }, 1500);
     }
+}
+
+function showCoopDisconnectResult() {
+    cleanupGame();
+    var lang = HUD_TEXT[GameState.language];
+    var titleEl = document.getElementById('result-title');
+    var infoEl = document.getElementById('result-info');
+    var btnsEl = document.getElementById('result-buttons');
+
+    titleEl.textContent = GameState.language === 'ja' ? 'ゲームオーバー' : 'GAME OVER';
+    titleEl.className = 'gameover';
+    infoEl.textContent = GameState.language === 'ja'
+        ? '仲間が離脱したため終了しました'
+        : 'A teammate has disconnected';
+
+    btnsEl.innerHTML =
+        '<button class="btn btn-thin" onclick="backToMultiTitle()">' + lang.backTitle + '</button>';
+
+    showScreen('result-screen');
 }
 
 /* ============================================
