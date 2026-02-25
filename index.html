@@ -13453,7 +13453,7 @@ function gameLoop() {
         // Score attack: movement-based scoring
         if (GameState.gameMode === 'scoreAttack') {
             if (moveDist > 0.01) {
-                GameState.score += moveDist * 10; // 10 points per unit moved
+                GameState.score += moveDist * 2; // 2 points per unit moved
             }
         }
     }
