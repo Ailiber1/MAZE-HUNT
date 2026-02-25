@@ -9608,6 +9608,7 @@ function updateOniAI(delta) {
         let closestTargetDist = Infinity;
         let closestTargetX = 0, closestTargetZ = 0;
         let closestTargetFloor = 0;
+        let closestVisibleDist = Infinity;
 
         for (var ti = 0; ti < oniTargets.length; ti++) {
             var tgt = oniTargets[ti];
@@ -9616,7 +9617,7 @@ function updateOniAI(delta) {
             var tDist = Math.sqrt(tdx * tdx + tdz * tdz);
             var tSameFloor = oni.currentFloor === tgt.floor;
 
-            // Track closest target for pathfinding
+            // Track closest target on same floor for pathfinding fallback
             if (tDist < closestTargetDist && tSameFloor) {
                 closestTargetDist = tDist;
                 closestTargetX = tgt.x;
@@ -9624,32 +9625,38 @@ function updateOniAI(delta) {
                 closestTargetFloor = tgt.floor;
             }
 
-            // Sound detection
+            // Sound detection (moving players only)
             if (tSameFloor && tgt.isMoving) {
                 var soundRange = tgt.isSprinting
                     ? ONI_CONFIG.sprintSoundRange * detMul
                     : ONI_CONFIG.walkSoundRange * detMul;
                 if (tDist < soundRange) {
                     canDetect = true;
-                    var inaccuracy = tgt.isSprinting ? 0.5 : CL * 1.5;
-                    detectionPos = {
-                        x: tgt.x + (Math.random() - 0.5) * inaccuracy,
-                        z: tgt.z + (Math.random() - 0.5) * inaccuracy
-                    };
+                    if (!inSight) {
+                        var inaccuracy = tgt.isSprinting ? 0.5 : CL * 1.5;
+                        detectionPos = {
+                            x: tgt.x + (Math.random() - 0.5) * inaccuracy,
+                            z: tgt.z + (Math.random() - 0.5) * inaccuracy
+                        };
+                    }
                 }
             }
 
-            // Sight detection
+            // Sight detection (any player, moving or not)
             if (tSameFloor && tDist < ONI_CONFIG.sightRange * detMul) {
                 var grid = floors[oni.currentFloor];
                 if (grid && hasLineOfSight(grid, oni.position.x, oni.position.z, tgt.x, tgt.z)) {
                     canDetect = true;
                     inSight = true;
-                    detectionPos = { x: tgt.x, z: tgt.z };
-                    closestTargetDist = tDist;
-                    closestTargetX = tgt.x;
-                    closestTargetZ = tgt.z;
-                    closestTargetFloor = tgt.floor;
+                    // Always chase the closest visible target
+                    if (tDist < closestVisibleDist) {
+                        closestVisibleDist = tDist;
+                        detectionPos = { x: tgt.x, z: tgt.z };
+                        closestTargetDist = tDist;
+                        closestTargetX = tgt.x;
+                        closestTargetZ = tgt.z;
+                        closestTargetFloor = tgt.floor;
+                    }
                 }
             }
         }
