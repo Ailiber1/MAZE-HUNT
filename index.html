@@ -3656,28 +3656,34 @@ function buildStageList() {
 /* ============================================
    Ranking (Firebase)
    ============================================ */
-// Save a ranking entry and keep only top 10 per gameMode
+// Save ranking: per-player best score (1 record per player per mode)
+// Path: {gameMode}Stats/{deviceId} — overwrites only if new score is higher
 function saveRanking(entry) {
-    if (!firebaseReady) return;
-    var KEEP_MAX = 10;
-    database.ref('rankings').push(entry).then(function() {
-        // Cleanup: keep only top KEEP_MAX entries for this gameMode
-        database.ref('rankings').orderByChild('score').once('value').then(function(snap) {
-            var modeEntries = [];
-            snap.forEach(function(child) {
-                var d = child.val();
-                if (d.gameMode === entry.gameMode) {
-                    modeEntries.push({ key: child.key, score: d.score });
-                }
-            });
-            if (modeEntries.length <= KEEP_MAX) return;
-            // Sort descending by score, delete entries beyond top 10
-            modeEntries.sort(function(a, b) { return b.score - a.score; });
-            var toDelete = modeEntries.slice(KEEP_MAX);
-            toDelete.forEach(function(e) {
-                database.ref('rankings/' + e.key).remove();
-            });
-        });
+    if (!firebaseReady || !GameState.deviceId) return;
+    var pathMap = { story: 'storyStats', scoreAttack: 'scoreStats', coop: 'coopStats' };
+    var basePath = pathMap[entry.gameMode];
+    if (!basePath) return;
+    var ref = database.ref(basePath + '/' + GameState.deviceId);
+    ref.transaction(function(current) {
+        if (!current) {
+            return {
+                username: entry.username,
+                score: entry.score,
+                stage: entry.stage || null,
+                survivalTime: entry.survivalTime || null,
+                timestamp: Date.now()
+            };
+        }
+        // Update username in case it changed
+        current.username = entry.username;
+        // Only update if new score is higher
+        if (entry.score > (current.score || 0)) {
+            current.score = entry.score;
+            if (entry.stage) current.stage = entry.stage;
+            if (entry.survivalTime) current.survivalTime = entry.survivalTime;
+        }
+        current.timestamp = Date.now();
+        return current;
     });
 }
 
@@ -3727,16 +3733,27 @@ function loadRankings(gameMode) {
         return;
     }
 
-    // Other modes: load from rankings (individual entries), top 10 only
-    database.ref('rankings')
+    // Other modes: load from per-player stats (best score per player)
+    var pathMap = { story: 'storyStats', scoreAttack: 'scoreStats', coop: 'coopStats' };
+    var basePath = pathMap[gameMode];
+    if (!basePath) {
+        // Fallback: try old rankings path
+        basePath = 'rankings';
+    }
+
+    database.ref(basePath)
         .orderByChild('score')
-        .limitToLast(50)
+        .limitToLast(RANKING_MAX)
         .once('value')
         .then(snap => {
             const entries = [];
             snap.forEach(child => {
                 const d = child.val();
-                if (d.gameMode === gameMode) entries.push(d);
+                if (d && d.username && (d.score || 0) > 0) {
+                    // Old rankings path has gameMode field; new stats path doesn't need it
+                    if (d.gameMode && d.gameMode !== gameMode) return;
+                    entries.push(d);
+                }
             });
             entries.sort((a, b) => b.score - a.score);
             entries.splice(RANKING_MAX);
@@ -3748,13 +3765,13 @@ function loadRankings(gameMode) {
 
             listEl.innerHTML = entries.map((e, i) => {
                 var detail = '';
-                if (e.gameMode === 'story' && e.stage) {
+                if (gameMode === 'story' && e.stage) {
                     detail = ' <span style="color:var(--text-dim);font-size:11px;">Stage ' + e.stage + '</span>';
-                } else if (e.gameMode === 'scoreAttack' && e.survivalTime) {
+                } else if (gameMode === 'scoreAttack' && e.survivalTime) {
                     var m = Math.floor(e.survivalTime / 60);
                     var s = e.survivalTime % 60;
                     detail = ' <span style="color:var(--text-dim);font-size:11px;">' + m + ':' + (s < 10 ? '0' : '') + s + '</span>';
-                } else if (e.gameMode === 'coop') {
+                } else if (gameMode === 'coop') {
                     detail = ' <span style="color:var(--text-dim);font-size:11px;">' + e.score + 'pt</span>';
                 }
                 return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${e.score}${detail}</span></div>`;

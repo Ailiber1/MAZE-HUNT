@@ -15,6 +15,18 @@
     "ffaStats": {
       ".read": true,
       ".write": true
+    },
+    "storyStats": {
+      ".read": true,
+      ".write": true
+    },
+    "scoreStats": {
+      ".read": true,
+      ".write": true
+    },
+    "coopStats": {
+      ".read": true,
+      ".write": true
     }
   }
 }
