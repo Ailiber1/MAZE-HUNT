@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "maze-hunt-21e11"
-  }
+  },
+  "targets": {
+    "maze-hunt-21e11": {
+      "hosting": {
+        "maze-hunt-21e11": [
+          "maze-hunt-21e11"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
