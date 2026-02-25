@@ -1765,10 +1765,11 @@ body {
     border-radius: 50%;
     border: 2px solid rgba(0, 255, 65, 0.3);
     background: rgba(0, 20, 10, 0.3);
-    display: none;
+    display: block;
+    left: 30px;
+    bottom: calc(30px + env(safe-area-inset-bottom, 0px));
 }
 #joystick-base.active {
-    display: block;
     border-color: rgba(0, 255, 65, 0.6);
     background: rgba(0, 20, 10, 0.5);
 }
@@ -1778,6 +1779,8 @@ body {
     border-radius: 50%;
     background: rgba(0, 255, 65, 0.5);
     border: 1px solid rgba(0, 255, 65, 0.8);
+    left: 60px;
+    top: 60px;
     transform: translate(-50%, -50%);
 }
 #look-zone {
@@ -11121,13 +11124,23 @@ const VirtualJoystick = {
             const touch = e.changedTouches[0];
             this.touchId = touch.identifier;
             this.active = true;
-            this.centerX = touch.clientX;
-            this.centerY = touch.clientY;
-            this.baseEl.style.left = (touch.clientX - 60) + 'px';
-            this.baseEl.style.top = (touch.clientY - 60) + 'px';
+            // Use fixed joystick center position
+            const rect = this.baseEl.getBoundingClientRect();
+            this.centerX = rect.left + 60;
+            this.centerY = rect.top + 60;
             this.baseEl.classList.add('active');
-            this.stickEl.style.left = '60px';
-            this.stickEl.style.top = '60px';
+            // Set stick to touch position relative to center
+            let dx = touch.clientX - this.centerX;
+            let dy = touch.clientY - this.centerY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > this.maxRadius) {
+                dx = dx / dist * this.maxRadius;
+                dy = dy / dist * this.maxRadius;
+            }
+            this.stickEl.style.left = (60 + dx) + 'px';
+            this.stickEl.style.top = (60 + dy) + 'px';
+            this.dx = dx / this.maxRadius;
+            this.dy = -dy / this.maxRadius;
         }, { passive: false });
 
         zone.addEventListener('touchmove', (e) => {
@@ -11169,6 +11182,8 @@ const VirtualJoystick = {
             this.dx = 0;
             this.dy = 0;
             this.baseEl.classList.remove('active');
+            this.stickEl.style.left = '60px';
+            this.stickEl.style.top = '60px';
         }, { passive: false });
 
         zone.addEventListener('touchcancel', (e) => {
