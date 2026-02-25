@@ -1247,6 +1247,33 @@ body {
     box-shadow: 0 0 16px var(--matrix-red-glow);
 }
 
+/* --- ONI Spawn Center Alert --- */
+#oni-spawn-alert {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.5);
+    z-index: 350;
+    background: rgba(0, 0, 0, 0.85);
+    border: 2px solid var(--matrix-red);
+    box-shadow: 0 0 30px var(--matrix-red-glow), inset 0 0 20px rgba(255, 0, 0, 0.1);
+    padding: 20px 40px;
+    font-size: 22px;
+    font-weight: bold;
+    letter-spacing: 3px;
+    color: var(--matrix-red);
+    text-shadow: 0 0 12px var(--matrix-red-glow);
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    border-radius: 8px;
+}
+#oni-spawn-alert.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+
 /* ============================================
    Hidden Stage Unlock Flash
    ============================================ */
@@ -2375,6 +2402,7 @@ body {
 
 <!-- Notification Toast -->
 <div id="notification"></div>
+<div id="oni-spawn-alert"></div>
 
 <!-- Hidden Stage Unlock Flash -->
 <div id="unlock-flash"></div>
@@ -3174,6 +3202,17 @@ function showNotification(msg, isError) {
     el.classList.add('show');
     clearTimeout(notifTimer);
     notifTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+var _oniAlertTimer = null;
+function showOniSpawnAlert(msg) {
+    var el = document.getElementById('oni-spawn-alert');
+    if (!el) return;
+    el.textContent = msg;
+    void el.offsetWidth;
+    el.classList.add('show');
+    clearTimeout(_oniAlertTimer);
+    _oniAlertTimer = setTimeout(function() { el.classList.remove('show'); }, 3000);
 }
 
 /* ============================================
@@ -5920,11 +5959,10 @@ function launchMultiGame(config) {
                         detectionMul: 1.0,
                     });
                     console.log('[FFA-ONI-GUEST] Created ONI model #' + oi + ' from host sync');
-                    showNotification(
+                    showOniSpawnAlert(
                         GameState.language === 'ja'
-                            ? '鬼が追加された！ (計' + GameState.onis.length + '体)'
-                            : 'ONI added! (Total: ' + GameState.onis.length + ')',
-                        true
+                            ? '⚠ 鬼が追加された！ (計' + GameState.onis.length + '体)'
+                            : '⚠ ONI added! (Total: ' + GameState.onis.length + ')'
                     );
                     SoundManager.playSE('warning');
                 }
@@ -9891,11 +9929,10 @@ function startStoryOniSpawning(cols, rows, numFloors, speedMul, stageId, maxOni)
         var expectedTotal = GameState.onis.length; // just check current vs max
         // Only spawn if we haven't hit max
         spawnAdditionalOni(cols, rows, numFloors, speedMul);
-        showNotification(
+        showOniSpawnAlert(
             GameState.language === 'ja'
-                ? '鬼が追加された！ (計' + GameState.onis.length + '体)'
-                : 'ONI added! (Total: ' + GameState.onis.length + ')',
-            true
+                ? '⚠ 鬼が追加された！ (計' + GameState.onis.length + '体)'
+                : '⚠ ONI added! (Total: ' + GameState.onis.length + ')'
         );
         SoundManager.playSE('warning');
     }, SPAWN_INTERVAL * 1000);
@@ -12166,11 +12203,10 @@ function startFFAOniSpawning(cols, rows, numFloors, speedMul) {
         spawnCount++;
         spawnAdditionalOni(cols, rows, numFloors, speedMul);
         // Notify all players
-        showNotification(
+        showOniSpawnAlert(
             GameState.language === 'ja'
-                ? '鬼が追加された！ (計' + GameState.onis.length + '体)'
-                : 'ONI added! (Total: ' + GameState.onis.length + ')',
-            true
+                ? '⚠ 鬼が追加された！ (計' + GameState.onis.length + '体)'
+                : '⚠ ONI added! (Total: ' + GameState.onis.length + ')'
         );
         SoundManager.playSE('warning');
         // Sync new ONI count via Firebase
