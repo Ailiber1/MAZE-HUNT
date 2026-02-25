@@ -12763,9 +12763,6 @@ function checkOniDirectionWarning(playerPos, playerRotY, playerFloor, oniList) {
 
 function checkExitHintNav(playerPos, playerRotY, playerFloor, exitPos, exitFloor) {
     if (!exitPos) return;
-    // Stage 5: no exit hints — player must find it on their own
-    var stage5 = GameState.currentStage === 5 || GameState.multiCurrentStage === 5;
-    if (stage5) return;
     const now = performance.now();
     if (now - Navigator.lastExitHintTime < Navigator.hintInterval) return;
 
