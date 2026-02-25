@@ -10199,7 +10199,8 @@ function placeExit(cols, rows, stageId, numFloors) {
     var distRatio;
     if (stageId === 1) distRatio = 0.5;        // Stage 1: easy (50%)
     else if (stageId === 2) distRatio = 0.6;    // Stage 2: moderate (60%)
-    else distRatio = 0.75;                       // Stage 3+: far (75%)
+    else if (stageId === 5) distRatio = 0.9;    // Stage 5: very far (90%)
+    else distRatio = 0.75;                       // Stage 3-4: far (75%)
     var minDist = Math.max(Math.floor((cols + rows) / 2 * distRatio), 4);
     var attempts = 0;
     do {
