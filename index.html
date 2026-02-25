@@ -7519,9 +7519,17 @@ function updatePlayerY() {
             if (currentFloor === lowerFloor && clampedProgress >= 0.95) {
                 GameState.playerCurrentFloor = upperFloor;
                 updateFloorLabel();
+                // Re-validate position against new floor's walls
+                var floorCheck = checkWallCollision(camera.position.x, camera.position.z, null);
+                camera.position.x = floorCheck.x;
+                camera.position.z = floorCheck.z;
             } else if (currentFloor === upperFloor && clampedProgress <= 0.05) {
                 GameState.playerCurrentFloor = lowerFloor;
                 updateFloorLabel();
+                // Re-validate position against new floor's walls
+                var floorCheck2 = checkWallCollision(camera.position.x, camera.position.z, null);
+                camera.position.x = floorCheck2.x;
+                camera.position.z = floorCheck2.z;
             }
 
             GameState.onStairs = true;
@@ -7590,6 +7598,10 @@ function updatePlayerY() {
                 if (newFloor !== currentFloor) {
                     GameState.playerCurrentFloor = newFloor;
                     updateFloorLabel();
+                    // Re-validate position against new floor's walls
+                    var floorCheck3 = checkWallCollision(camera.position.x, camera.position.z, null);
+                    camera.position.x = floorCheck3.x;
+                    camera.position.z = floorCheck3.z;
                 }
                 _lastStairInfo = null;
             }
