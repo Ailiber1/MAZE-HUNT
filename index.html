@@ -4102,7 +4102,7 @@ function proceedJoinRoom(roomId) {
         // Listen for game start (non-host players)
         roomRef.child('status').on('value', function(sSnap) {
             var status = sSnap.val();
-            if (status === 'playing' && !GameState.isHost && !GameState.gameActive) {
+            if (status === 'playing' && !GameState.isHost && !GameState.gameActive && !GameState._coopWaitingForReady) {
                 // Get game config
                 roomRef.child('gameConfig').once('value').then(function(configSnap) {
                     var config = configSnap.val();
@@ -4115,6 +4115,10 @@ function proceedJoinRoom(roomId) {
                         launchMultiGame(config);
                     }
                 });
+            }
+            if (status === 'staging' && !GameState.isHost && GameState.gameActive) {
+                // Host signalled stage end — guest should also transition to result screen
+                // (usually guest has already transitioned via checkMultiGameEnd, but this handles edge cases)
             }
             if (status === 'waiting' && GameState.gameActive) {
                 // Host reset game
@@ -5659,6 +5663,7 @@ function launchMultiGame(config) {
         }
     }
 
+    GameState._coopWaitingForReady = false; // Clear co-op waiting flag when game starts
     GameState.gameMode = 'multi_' + GameState.multiMode;
     GameState.currentStage = GameState.multiCurrentStage;
     GameState.multiEscapeOrder = 0;
@@ -6143,6 +6148,9 @@ function checkMultiGameEnd(playersData) {
             GameState.gameActive = false;
             if (GameState.timerInterval) clearInterval(GameState.timerInterval);
             GameState.teamScores.oni++;
+            if (GameState.isHost && firebaseReady && GameState.roomId) {
+                database.ref('rooms/' + GameState.roomId + '/status').set('staging');
+            }
             setTimeout(function() { showMultiStageResult(); }, 1500);
         }
     } else if (GameState.multiMode === 'coop') {
@@ -6156,12 +6164,19 @@ function checkMultiGameEnd(playersData) {
         if (anyEscaped) {
             GameState.gameActive = false;
             if (GameState.timerInterval) clearInterval(GameState.timerInterval);
+            // Set status to 'staging' to prevent guest status listener from auto-starting
+            if (GameState.isHost && firebaseReady && GameState.roomId) {
+                database.ref('rooms/' + GameState.roomId + '/status').set('staging');
+            }
             setTimeout(function() { showMultiStageResult(); }, 1500);
         } else if (allCaught) {
             GameState.gameActive = false;
             if (GameState.timerInterval) clearInterval(GameState.timerInterval);
             // Retry same stage in coop
             GameState.coopRetrying = true;
+            if (GameState.isHost && firebaseReady && GameState.roomId) {
+                database.ref('rooms/' + GameState.roomId + '/status').set('staging');
+            }
             setTimeout(function() { showMultiStageResult(); }, 1500);
         }
     }
@@ -6355,6 +6370,8 @@ function nextMultiStage() {
                 '<button class="btn btn-thin" onclick="cancelCoopReady()">' +
                 (GameState.language === 'ja' ? 'タイトルへ' : 'Back to Title') + '</button>';
         }
+        // Mark that we're in co-op ready-wait (prevents status listener from auto-starting game)
+        GameState._coopWaitingForReady = true;
         // Start listening for all players' ready status (both host and guest)
         _startCoopReadyListener();
         return;
@@ -6400,6 +6417,8 @@ function _startCoopReadyListener() {
         });
 
         if (allReady) {
+            // Clear co-op waiting flag before starting game
+            GameState._coopWaitingForReady = false;
             // Clean up listener and coopReady data
             _coopReadyListenerRef.off();
             _coopReadyListenerRef = null;
@@ -6495,6 +6514,8 @@ function _updateCoopReadyDisplay(readyIndices, activePlayers) {
 }
 
 function cancelCoopReady() {
+    // Clear co-op waiting flag
+    GameState._coopWaitingForReady = false;
     // Remove own ready flag and go back to title
     if (firebaseReady && GameState.roomId && GameState.playerIndex !== null) {
         database.ref('rooms/' + GameState.roomId + '/coopReady/' + GameState.playerIndex).remove();
@@ -6543,6 +6564,8 @@ function rematchMulti() {
 }
 
 function backToMultiTitle() {
+    // Clear co-op waiting flag
+    GameState._coopWaitingForReady = false;
     // Clean up co-op ready state
     if (_coopReadyListenerRef) {
         _coopReadyListenerRef.off();
@@ -12030,12 +12053,18 @@ function startTimer(seconds) {
                     // Time up = runners survive = runner wins
                     GameState.gameActive = false;
                     GameState.teamScores.runner++;
+                    if (GameState.isHost && firebaseReady && GameState.roomId) {
+                        database.ref('rooms/' + GameState.roomId + '/status').set('staging');
+                    }
                     setTimeout(function() { showMultiStageResult(); }, 1500);
                 } else if (GameState.multiMode === 'coop') {
                     // Time up = fail, retry
                     GameState.alive = false;
                     GameState.gameActive = false;
                     GameState.coopRetrying = true;
+                    if (GameState.isHost && firebaseReady && GameState.roomId) {
+                        database.ref('rooms/' + GameState.roomId + '/status').set('staging');
+                    }
                     setTimeout(function() { showMultiStageResult(); }, 1500);
                 } else {
                     // freeForAll - time up for remaining players
@@ -13974,6 +14003,7 @@ function cleanupGame() {
     var idleWarn = document.getElementById('hud-idle-warning');
     if (idleWarn) idleWarn.style.display = 'none';
     GameState.syncedOniModelIds = null; // Clear synced ONI model IDs for next game
+    GameState._coopWaitingForReady = false; // Clear co-op waiting flag
     // Clear co-op ready listener if active
     if (_coopReadyListenerRef) {
         _coopReadyListenerRef.off();
