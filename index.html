@@ -2436,7 +2436,6 @@ body {
         <div class="ranking-tabs">
             <button class="ranking-tab active" data-tab="score">スコアアタック</button>
             <button class="ranking-tab" data-tab="multi">マルチ個人戦</button>
-            <button class="ranking-tab" data-tab="coop">協力</button>
         </div>
         <div class="ranking-list" id="ranking-list">
             <div style="text-align:center;color:var(--text-dim);padding:40px 0;">データなし</div>
@@ -3659,7 +3658,7 @@ function buildStageList() {
 // Path: {gameMode}Stats/{deviceId} — overwrites only if new score is higher
 function saveRanking(entry) {
     if (!firebaseReady || !GameState.deviceId) return;
-    var pathMap = { scoreAttack: 'scoreStats', coop: 'coopStats' };
+    var pathMap = { scoreAttack: 'scoreStats' };
     var basePath = pathMap[entry.gameMode];
     if (!basePath) return;
     var ref = database.ref(basePath + '/' + GameState.deviceId);
@@ -3732,15 +3731,8 @@ function loadRankings(gameMode) {
         return;
     }
 
-    // Other modes: load from per-player stats (best score per player)
-    var pathMap = { scoreAttack: 'scoreStats', coop: 'coopStats' };
-    var basePath = pathMap[gameMode];
-    if (!basePath) {
-        // Fallback: try old rankings path
-        basePath = 'rankings';
-    }
-
-    database.ref(basePath)
+    // Score Attack: load from scoreStats (survival time per player)
+    database.ref('scoreStats')
         .orderByChild('score')
         .limitToLast(RANKING_MAX)
         .once('value')
@@ -3748,11 +3740,7 @@ function loadRankings(gameMode) {
             const entries = [];
             snap.forEach(child => {
                 const d = child.val();
-                if (d && d.username && (d.score || 0) > 0) {
-                    // Old rankings path has gameMode field; new stats path doesn't need it
-                    if (d.gameMode && d.gameMode !== gameMode) return;
-                    entries.push(d);
-                }
+                if (d && d.username && (d.score || 0) > 0) entries.push(d);
             });
             entries.sort((a, b) => b.score - a.score);
             entries.splice(RANKING_MAX);
@@ -3763,17 +3751,11 @@ function loadRankings(gameMode) {
             }
 
             listEl.innerHTML = entries.map((e, i) => {
-                var detail = '';
-                if (gameMode === 'story' && e.stage) {
-                    detail = ' <span style="color:var(--text-dim);font-size:11px;">Stage ' + e.stage + '</span>';
-                } else if (gameMode === 'scoreAttack' && e.survivalTime) {
-                    var m = Math.floor(e.survivalTime / 60);
-                    var s = e.survivalTime % 60;
-                    detail = ' <span style="color:var(--text-dim);font-size:11px;">' + m + ':' + (s < 10 ? '0' : '') + s + '</span>';
-                } else if (gameMode === 'coop') {
-                    detail = ' <span style="color:var(--text-dim);font-size:11px;">' + e.score + 'pt</span>';
-                }
-                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${e.score}${detail}</span></div>`;
+                var t = e.survivalTime || e.score;
+                var m = Math.floor(t / 60);
+                var s = t % 60;
+                var timeStr = m + ':' + (s < 10 ? '0' : '') + s;
+                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${timeStr}</span></div>`;
             }).join('');
         })
         .catch(() => {
@@ -6190,18 +6172,7 @@ function showMultiResult() {
 
     // Ranking registration for multiplayer (guest excluded)
     // Note: FFA ranking is saved in showMultiStageResult() (host saves winner only)
-    if (firebaseReady && !GameState.isGuest && GameState.username) {
-        if (GameState.multiMode === 'coop') {
-            // Register coop score: remaining time x 10
-            var coopScore = Math.floor(GameState.timeRemaining * 10);
-            saveRanking({
-                username: GameState.username,
-                score: coopScore,
-                gameMode: 'coop',
-                timestamp: firebase.database.ServerValue.TIMESTAMP,
-            });
-        }
-    }
+    // Note: Coop has no ranking (team-based, not competitive)
 
     btnsEl.innerHTML =
         '<button class="btn btn-neon" onclick="rematchMulti()">' +
@@ -6527,7 +6498,7 @@ function initButtons() {
             document.querySelectorAll('.ranking-tab').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             const mode = tab.dataset.tab;
-            const modeMap = { score: 'scoreAttack', multi: 'freeForAll', coop: 'coop' };
+            const modeMap = { score: 'scoreAttack', multi: 'freeForAll' };
             loadRankings(modeMap[mode] || mode);
         });
     });
@@ -10567,11 +10538,11 @@ function showScoreResult() {
     titleEl.className = 'gameover';
     infoEl.innerHTML = lang.score + ': ' + Math.floor(GameState.score) + '<br>' + lang.survivalTime + ': ' + formatTime(GameState.totalTime);
 
-    // Save to Firebase
+    // Save to Firebase (survival time is the ranking metric)
     if (firebaseReady && GameState.username && !GameState.isGuest) {
         saveRanking({
             username: GameState.username,
-            score: Math.floor(GameState.score),
+            score: Math.floor(GameState.totalTime),
             gameMode: 'scoreAttack',
             survivalTime: Math.floor(GameState.totalTime),
             timestamp: firebase.database.ServerValue.TIMESTAMP,

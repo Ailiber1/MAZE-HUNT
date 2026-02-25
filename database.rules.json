@@ -19,10 +19,6 @@
     "scoreStats": {
       ".read": true,
       ".write": true
-    },
-    "coopStats": {
-      ".read": true,
-      ".write": true
     }
   }
 }
