@@ -2884,6 +2884,9 @@ function showSoloCharSelect(stageId) {
     pendingSoloStageId = stageId;
     GameState.selectedCharacter = null;
 
+    // Preload ONI GLB models while user selects character
+    preloadOniGLBs(stageId);
+
     var screen = document.getElementById('solo-char-screen');
     var stageLabel = document.getElementById('solo-char-stage-label');
     var themeLabel = document.getElementById('solo-char-theme-label');
@@ -9131,14 +9134,57 @@ function processOniGLTF(group, gltf, stageId) {
     }
 }
 
+/* --- GLB Cache: preload and cache GLB models --- */
+var glbCache = {};
+
+function preloadGLB(charId) {
+    if (glbCache[charId]) return; // Already cached or loading
+    var charData = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
+    if (!charData) {
+        charData = CHARACTER_LIST.runners.find(function(e) { return e.id === charId; });
+    }
+    if (!charData) return;
+    glbCache[charId] = { loading: true, gltf: null };
+    console.log('[GLB Cache] Preloading: ' + charData.file);
+    var loader = new THREE.GLTFLoader();
+    loader.load(charData.file, function(gltf) {
+        glbCache[charId] = { loading: false, gltf: gltf };
+        console.log('[GLB Cache] Loaded: ' + charId);
+    }, undefined, function(err) {
+        console.error('[GLB Cache] Failed: ' + charId, err);
+        delete glbCache[charId];
+    });
+}
+
+function preloadOniGLBs(stageId) {
+    var oniModelIds = getOniModelsForStage(stageId);
+    // Cache the selected oni IDs so spawnOnis uses the same ones
+    GameState._preloadedOniModelIds = oniModelIds;
+    oniModelIds.forEach(function(id) { preloadGLB(id); });
+}
+
 /* --- C4: Load GLB model into ONI group (multi-mesh support) --- */
 function loadOniGLB(group, charId, stageId) {
     var enemy = CHARACTER_LIST.enemies.find(function(e) { return e.id === charId; });
     if (!enemy) { showGLBDiag('[ONI] enemy not found: ' + charId); return; }
+
+    // Check GLB cache first
+    var cached = glbCache[charId];
+    if (cached && cached.gltf) {
+        showGLBDiag('[ONI] Using cached GLB: ' + charId);
+        try {
+            processOniGLTF(group, cached.gltf, stageId);
+        } catch(e) {
+            console.error('[ONI] Cache Error:', e.message, e.stack);
+        }
+        return;
+    }
+
     showGLBDiag('[ONI] Loading: ' + enemy.file);
     var loader = new THREE.GLTFLoader();
     loader.load(enemy.file, function(gltf) {
         try {
+            glbCache[charId] = { loading: false, gltf: gltf };
             showGLBDiag('[ONI] GLB callback fired');
             processOniGLTF(group, gltf, stageId);
         } catch(e) {
@@ -9477,14 +9523,15 @@ function spawnOnis(stageId) {
     const rows = GameState.mazeRows;
     const numFloors = GameState.mazeFloors.length;
 
-    // Get assigned ONI models for this stage
-    const oniModelIds = getOniModelsForStage(stageId);
+    // Use preloaded ONI model IDs if available (same ones that were preloaded during char select)
+    const oniModelIds = GameState._preloadedOniModelIds || getOniModelsForStage(stageId);
+    GameState._preloadedOniModelIds = null; // Clear after use
 
     for (let i = 0; i < oniCount; i++) {
         const model = createOniModel();
         addOniLights(model, stageId);
 
-        // Load GLB model (cycles through assigned models)
+        // Load GLB model (cycles through assigned models, uses cache if available)
         const charId = oniModelIds[i % oniModelIds.length];
         loadOniGLB(model, charId, stageId);
 
