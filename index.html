@@ -3668,6 +3668,52 @@ function loadRankings(gameMode) {
 
     listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:20px 0;">Loading...</div>`;
 
+    // FFA: load from ffaStats (aggregated per-player stats)
+    if (gameMode === 'freeForAll') {
+        database.ref('ffaStats')
+            .orderByChild('wins')
+            .limitToLast(50)
+            .once('value')
+            .then(snap => {
+                const entries = [];
+                snap.forEach(child => {
+                    const d = child.val();
+                    if (d && d.username) entries.push(d);
+                });
+                // Sort by wins (desc), then bestTime (desc)
+                entries.sort((a, b) => {
+                    if ((b.wins || 0) !== (a.wins || 0)) return (b.wins || 0) - (a.wins || 0);
+                    return (b.bestTime || 0) - (a.bestTime || 0);
+                });
+
+                if (entries.length === 0) {
+                    listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
+                    return;
+                }
+
+                // Header
+                var headerLabel = lang ? '勝利数 / 最長タイム' : 'Wins / Best Time';
+                var headerHtml = '<div class="ranking-row" style="color:var(--text-dim);font-size:11px;border-bottom:1px solid var(--text-dim);padding-bottom:4px;margin-bottom:4px;">' +
+                    '<span class="rank"></span><span class="name">' + (lang ? '名前' : 'Name') + '</span>' +
+                    '<span class="score">' + headerLabel + '</span></div>';
+
+                listEl.innerHTML = headerHtml + entries.map((e, i) => {
+                    var wins = e.wins || 0;
+                    var bt = e.bestTime || 0;
+                    var bm = Math.floor(bt / 60);
+                    var bs = bt % 60;
+                    var timeStr = bm + ':' + (bs < 10 ? '0' : '') + bs;
+                    var winsLabel = lang ? wins + '勝' : wins + 'W';
+                    return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${winsLabel} / ${timeStr}</span></div>`;
+                }).join('');
+            })
+            .catch(() => {
+                listEl.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:40px 0;">${noData}</div>`;
+            });
+        return;
+    }
+
+    // Other modes: load from rankings (individual entries)
     database.ref('rankings')
         .orderByChild('score')
         .limitToLast(50)
@@ -3693,22 +3739,10 @@ function loadRankings(gameMode) {
                     var m = Math.floor(e.survivalTime / 60);
                     var s = e.survivalTime % 60;
                     detail = ' <span style="color:var(--text-dim);font-size:11px;">' + m + ':' + (s < 10 ? '0' : '') + s + '</span>';
-                } else if (e.gameMode === 'freeForAll') {
-                    var ft = e.survivalTime || e.score;
-                    var fm = Math.floor(ft / 60);
-                    var fs = ft % 60;
-                    detail = ' <span style="color:var(--text-dim);font-size:11px;">' + fm + ':' + (fs < 10 ? '0' : '') + fs + '</span>';
                 } else if (e.gameMode === 'coop') {
                     detail = ' <span style="color:var(--text-dim);font-size:11px;">' + e.score + 'pt</span>';
                 }
-                var displayScore = e.score;
-                if (e.gameMode === 'freeForAll') {
-                    var wt = e.survivalTime || e.score;
-                    var wm = Math.floor(wt / 60);
-                    var ws = wt % 60;
-                    displayScore = wm + ':' + (ws < 10 ? '0' : '') + ws;
-                }
-                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${displayScore}${detail}</span></div>`;
+                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${e.score}${detail}</span></div>`;
             }).join('');
         })
         .catch(() => {
@@ -3831,6 +3865,7 @@ function proceedJoinRoom(roomId) {
                     0: {
                         username: GameState.username || 'PLAYER 1',
                         sessionId: GameState.sessionId,
+                        deviceId: GameState.deviceId,
                         alive: true,
                         selectedRole: GameState.selectedRole || 'runner'
                     }
@@ -3917,6 +3952,7 @@ function proceedJoinRoom(roomId) {
             roomRef.child('players/' + emptySlot).set({
                 username: GameState.username || ('PLAYER ' + (emptySlot + 1)),
                 sessionId: GameState.sessionId,
+                deviceId: GameState.deviceId,
                 alive: true,
                 selectedRole: GameState.selectedRole || 'runner'
             });
@@ -6029,24 +6065,46 @@ function showMultiStageResult() {
         }
     }
 
-    // FFA: Save ranking (winner name + survival time)
-    if (GameState.multiMode === 'freeForAll' && firebaseReady && GameState.ffaWinner >= 0) {
-        // Save winner's record
-        var winnerPlayer = GameState.players[GameState.ffaWinner];
-        var winnerName = winnerPlayer ? winnerPlayer.username : 'P' + (GameState.ffaWinner + 1);
-        var winnerTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(GameState.ffaWinner)
-            ? GameState.ffaPlayerCaughtTimes[GameState.ffaWinner] : GameState.ffaSurvivalTime;
-        // Only the host saves the winner's ranking to avoid duplicates
-        if (GameState.isHost) {
-            database.ref('rankings').push({
-                username: winnerName,
-                score: winnerTime,
-                survivalTime: winnerTime,
-                wins: 1,
-                gameMode: 'freeForAll',
-                timestamp: firebase.database.ServerValue.TIMESTAMP,
-            });
+    // FFA: Save stats per player (wins + bestTime) using transaction
+    if (GameState.multiMode === 'freeForAll' && firebaseReady && GameState.isHost) {
+        // Save winner's stats
+        if (GameState.ffaWinner >= 0) {
+            var winnerPlayer = GameState.players[GameState.ffaWinner];
+            if (winnerPlayer && winnerPlayer.deviceId) {
+                var winnerTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(GameState.ffaWinner)
+                    ? GameState.ffaPlayerCaughtTimes[GameState.ffaWinner] : GameState.ffaSurvivalTime;
+                var winnerRef = database.ref('ffaStats/' + winnerPlayer.deviceId);
+                winnerRef.transaction(function(current) {
+                    if (!current) {
+                        return { username: winnerPlayer.username, wins: 1, bestTime: winnerTime, timestamp: Date.now() };
+                    }
+                    current.username = winnerPlayer.username;
+                    current.wins = (current.wins || 0) + 1;
+                    if (winnerTime > (current.bestTime || 0)) current.bestTime = winnerTime;
+                    current.timestamp = Date.now();
+                    return current;
+                });
+            }
         }
+        // Save all players' bestTime (even losers, for tracking longest survival)
+        Object.keys(GameState.players).forEach(function(idx) {
+            var pi = parseInt(idx);
+            var p = GameState.players[pi];
+            if (!p || !p.deviceId || pi === GameState.ffaWinner) return;
+            var survTime = GameState.ffaPlayerCaughtTimes.hasOwnProperty(pi)
+                ? GameState.ffaPlayerCaughtTimes[pi] : 0;
+            if (survTime <= 0) return;
+            var playerRef = database.ref('ffaStats/' + p.deviceId);
+            playerRef.transaction(function(current) {
+                if (!current) {
+                    return { username: p.username, wins: 0, bestTime: survTime, timestamp: Date.now() };
+                }
+                current.username = p.username;
+                if (survTime > (current.bestTime || 0)) current.bestTime = survTime;
+                current.timestamp = Date.now();
+                return current;
+            });
+        });
     }
 
     // Buttons
