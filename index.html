@@ -9893,9 +9893,11 @@ function spawnOnis(stageId) {
             pathTimer: 0,
             speed: ONI_CONFIG.baseSpeed * speedMul,
             onStairs: false,
+            _stairTraversal: null,      // cross-floor stair traversal state
             // AI state machine
             aiState: 'patrol',          // 'patrol', 'alert', 'chase'
             lastKnownPos: null,         // {x, z} last detected player position
+            lastKnownFloor: null,       // floor of last detected player position
             alertTimer: 0,              // time since last detection
             patrolTarget: null,         // {x, z, floor} current wander destination
             patrolPauseTimer: 0,        // pause at destination before moving again
@@ -10234,22 +10236,53 @@ function updateOniAI(delta) {
         // ─── Movement along path (WALL-SAFE: only follow BFS path, never beeline) ───
         if (oni.path.length > 0) {
             const target = oni.path[0];
-            const targetX = target.x * CL + CL / 2;
-            const targetZ = target.z * CL + CL / 2;
-            const dx = targetX - oni.position.x;
-            const dz = targetZ - oni.position.z;
-            const dist = Math.sqrt(dx * dx + dz * dz);
 
-            if (dist < 0.3) {
-                oni.cellX = target.x;
-                oni.cellZ = target.z;
-                if (target.floor !== oni.currentFloor) {
-                    oni.currentFloor = target.floor;
+            // Cross-floor stair transition: BFS produces same x,z with different floor.
+            // Instead of teleporting, skip the cross-floor node and let updateOniY()
+            // handle the physical stair climb via progress-based Y interpolation.
+            if (target.floor !== oni.currentFloor && target.x === oni.cellX && target.z === oni.cellZ) {
+                // Oni is ON the stair cell and needs to traverse to other floor.
+                // Mark that oni is traversing stairs so movement continues through the cell.
+                if (!oni._stairTraversal) {
+                    oni._stairTraversal = { targetFloor: target.floor, cellX: target.x, cellZ: target.z };
                 }
-                oni.path.shift();
+                // Determine stair direction to know which way to walk through the cell
+                var stCell = floors[oni.currentFloor] && floors[oni.currentFloor][oni.cellZ] && floors[oni.currentFloor][oni.cellZ][oni.cellX];
+                if (stCell && stCell.isStairs && stCell.stairDirection) {
+                    var stDir = stCell.stairDirection;
+                    var goingUp = target.floor > oni.currentFloor;
+                    // Walk toward the HIGH end (progress=1) to go up, LOW end (progress=0) to go down
+                    var stMoveX = 0, stMoveZ = 0;
+                    if (stDir === 'north') { stMoveZ = goingUp ? 1 : -1; }
+                    else if (stDir === 'south') { stMoveZ = goingUp ? -1 : 1; }
+                    else if (stDir === 'east') { stMoveX = goingUp ? -1 : 1; }
+                    else if (stDir === 'west') { stMoveX = goingUp ? 1 : -1; }
+                    oni.position.x += stMoveX * speed * delta;
+                    oni.position.z += stMoveZ * speed * delta;
+                }
+                // updateOniY() will change oni.currentFloor when progress threshold is crossed.
+                // Once floor matches target, consume this path node.
+                if (oni.currentFloor === target.floor) {
+                    oni._stairTraversal = null;
+                    oni.path.shift();
+                }
             } else {
-                oni.position.x += (dx / dist) * speed * delta;
-                oni.position.z += (dz / dist) * speed * delta;
+                // Normal same-floor movement
+                oni._stairTraversal = null;
+                const targetX = target.x * CL + CL / 2;
+                const targetZ = target.z * CL + CL / 2;
+                const dx = targetX - oni.position.x;
+                const dz = targetZ - oni.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+
+                if (dist < 0.3) {
+                    oni.cellX = target.x;
+                    oni.cellZ = target.z;
+                    oni.path.shift();
+                } else {
+                    oni.position.x += (dx / dist) * speed * delta;
+                    oni.position.z += (dz / dist) * speed * delta;
+                }
             }
         } else if (hasTargets && closestTargetDist > CL && (sameFloor || oni.aiState === 'chase')) {
             // Path exhausted but target exists — force immediate BFS recalculation (NO beeline)
@@ -10260,26 +10293,29 @@ function updateOniAI(delta) {
         }
 
         // ─── WALL CONTAINMENT: ensure ONI stays inside valid maze cell ───
-        var newCellX = Math.floor(oni.position.x / CL);
-        var newCellZ = Math.floor(oni.position.z / CL);
-        var grid = floors[oni.currentFloor];
-        if (grid) {
-            // Clamp to grid bounds
-            newCellX = Math.max(0, Math.min(grid[0].length - 1, newCellX));
-            newCellZ = Math.max(0, Math.min(grid.length - 1, newCellZ));
-            // Check if moved to an adjacent cell — verify wall passage is allowed
-            if (newCellX !== oni.cellX || newCellZ !== oni.cellZ) {
-                var oldCell = grid[oni.cellZ] && grid[oni.cellZ][oni.cellX];
-                if (oldCell) {
-                    var blocked = false;
-                    if (newCellX > oni.cellX && oldCell.right) blocked = true;
-                    if (newCellX < oni.cellX && oldCell.left) blocked = true;
-                    if (newCellZ > oni.cellZ && oldCell.bottom) blocked = true;
-                    if (newCellZ < oni.cellZ && oldCell.top) blocked = true;
-                    if (blocked) {
-                        // Revert position to cell center of current cell
-                        oni.position.x = oni.cellX * CL + CL / 2;
-                        oni.position.z = oni.cellZ * CL + CL / 2;
+        // Skip wall containment while oni is traversing stairs (movement is progress-based)
+        if (!oni._stairTraversal) {
+            var newCellX = Math.floor(oni.position.x / CL);
+            var newCellZ = Math.floor(oni.position.z / CL);
+            var grid = floors[oni.currentFloor];
+            if (grid) {
+                // Clamp to grid bounds
+                newCellX = Math.max(0, Math.min(grid[0].length - 1, newCellX));
+                newCellZ = Math.max(0, Math.min(grid.length - 1, newCellZ));
+                // Check if moved to an adjacent cell — verify wall passage is allowed
+                if (newCellX !== oni.cellX || newCellZ !== oni.cellZ) {
+                    var oldCell = grid[oni.cellZ] && grid[oni.cellZ][oni.cellX];
+                    if (oldCell) {
+                        var blocked = false;
+                        if (newCellX > oni.cellX && oldCell.right) blocked = true;
+                        if (newCellX < oni.cellX && oldCell.left) blocked = true;
+                        if (newCellZ > oni.cellZ && oldCell.bottom) blocked = true;
+                        if (newCellZ < oni.cellZ && oldCell.top) blocked = true;
+                        if (blocked) {
+                            // Revert position to cell center of current cell
+                            oni.position.x = oni.cellX * CL + CL / 2;
+                            oni.position.z = oni.cellZ * CL + CL / 2;
+                        }
                     }
                 }
             }
@@ -10290,7 +10326,10 @@ function updateOniAI(delta) {
             console.warn('[ONI-STUCK] Recovery! stuckT=' + oni._stuckTimer.toFixed(1) +
                 ' state=' + oni.aiState + ' path=' + oni.path.length +
                 ' targets=' + oniTargets.length + ' dist=' + (distToPlayer === Infinity ? 'INF' : distToPlayer.toFixed(1)) +
-                ' cell=(' + oni.cellX + ',' + oni.cellZ + ') floor=' + oni.currentFloor);
+                ' cell=(' + oni.cellX + ',' + oni.cellZ + ') floor=' + oni.currentFloor +
+                ' stairTraversal=' + !!oni._stairTraversal);
+            // Clear stair traversal state if stuck
+            oni._stairTraversal = null;
             // Snap to cell center first (escape wall)
             oni.position.x = oni.cellX * CL + CL / 2;
             oni.position.z = oni.cellZ * CL + CL / 2;
@@ -10338,8 +10377,11 @@ function updateOniAI(delta) {
         }
 
         // ─── Cell / position updates ───
-        oni.cellX = Math.max(0, Math.min(GameState.mazeCols - 1, Math.floor(oni.position.x / CL)));
-        oni.cellZ = Math.max(0, Math.min(GameState.mazeRows - 1, Math.floor(oni.position.z / CL)));
+        // During stair traversal, keep cell fixed to the stair cell
+        if (!oni._stairTraversal) {
+            oni.cellX = Math.max(0, Math.min(GameState.mazeCols - 1, Math.floor(oni.position.x / CL)));
+            oni.cellZ = Math.max(0, Math.min(GameState.mazeRows - 1, Math.floor(oni.position.z / CL)));
+        }
         updateOniY(oni);
         oni.group.position.set(oni.position.x, oni.position.y, oni.position.z);
 
@@ -12278,8 +12320,10 @@ function spawnAdditionalOni(cols, rows, numFloors, speedMul) {
         path: [], pathTimer: 0,
         speed: ONI_CONFIG.baseSpeed * (speedMul || 1.0),
         onStairs: false,
+        _stairTraversal: null,
         aiState: 'patrol',
         lastKnownPos: null,
+        lastKnownFloor: null,
         alertTimer: 0,
         patrolTarget: null,
         patrolPauseTimer: 0,
