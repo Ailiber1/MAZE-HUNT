@@ -7312,22 +7312,35 @@ function hasLineOfSight(grid, fromX, fromZ, toX, toZ) {
 
 /* --- Random patrol target for oni --- */
 function getRandomPatrolTarget(oni, floors) {
-    const grid = floors[oni.currentFloor];
+    // 30% chance to patrol to a different floor (if multi-floor stage with stairs)
+    var targetFloor = oni.currentFloor;
+    if (floors.length > 1 && Math.random() < 0.3) {
+        // Pick a random different floor
+        var otherFloors = [];
+        for (var f = 0; f < floors.length; f++) {
+            if (f !== oni.currentFloor && floors[f]) otherFloors.push(f);
+        }
+        if (otherFloors.length > 0) {
+            targetFloor = otherFloors[Math.floor(Math.random() * otherFloors.length)];
+        }
+    }
+    const grid = floors[targetFloor];
     if (!grid) return null;
     const rows = grid.length;
     const cols = grid[0].length;
-    // Pick a random cell at least 3 cells away from current position
+    // Pick a random cell at least 3 cells away from current position (or any cell if cross-floor)
+    var minDist = (targetFloor === oni.currentFloor) ? 3 : 0;
     for (let attempt = 0; attempt < 10; attempt++) {
         const tx = Math.floor(Math.random() * cols);
         const tz = Math.floor(Math.random() * rows);
         const dx = tx - oni.cellX;
         const dz = tz - oni.cellZ;
-        if (Math.abs(dx) + Math.abs(dz) >= 3) {
-            return { x: tx, z: tz, floor: oni.currentFloor };
+        if (Math.abs(dx) + Math.abs(dz) >= minDist) {
+            return { x: tx, z: tz, floor: targetFloor };
         }
     }
     // Fallback: just pick any random cell
-    return { x: Math.floor(Math.random() * cols), z: Math.floor(Math.random() * rows), floor: oni.currentFloor };
+    return { x: Math.floor(Math.random() * cols), z: Math.floor(Math.random() * rows), floor: targetFloor };
 }
 
 /* --- Three.js Globals --- */
@@ -9985,6 +9998,9 @@ function updateOniAI(delta) {
         let closestTargetFloor = 0;
         let closestVisibleDist = Infinity;
 
+        // Score Attack 1000+ : oni always knows player position (cross-floor)
+        var scoreTrack = (GameState.gameMode === 'scoreAttack' && GameState.score >= 1000);
+
         for (var ti = 0; ti < oniTargets.length; ti++) {
             var tgt = oniTargets[ti];
             var tdx = tgt.x - oni.position.x;
@@ -9992,12 +10008,19 @@ function updateOniAI(delta) {
             var tDist = Math.sqrt(tdx * tdx + tdz * tdz);
             var tSameFloor = oni.currentFloor === tgt.floor;
 
-            // Track closest target on same floor for pathfinding fallback
-            if (tDist < closestTargetDist && tSameFloor) {
+            // Track closest target (cross-floor allowed when scoreTrack active)
+            if (tDist < closestTargetDist && (tSameFloor || scoreTrack)) {
                 closestTargetDist = tDist;
                 closestTargetX = tgt.x;
                 closestTargetZ = tgt.z;
                 closestTargetFloor = tgt.floor;
+            }
+
+            // Score Attack 1000+: oni detects player position regardless of floor/range
+            if (scoreTrack && tDist < closestTargetDist + 1) {
+                canDetect = true;
+                inSight = true;
+                detectionPos = { x: tgt.x, z: tgt.z };
             }
 
             // Sound detection (moving players or idle-penalty players)
@@ -10058,6 +10081,7 @@ function updateOniAI(delta) {
         // ─── State transitions ───
         if (canDetect) {
             oni.lastKnownPos = detectionPos;
+            oni.lastKnownFloor = closestTargetFloor;
             oni.alertTimer = 0;
             if (inSight || distToPlayer < ONI_CONFIG.lungeDistance) {
                 oni.aiState = 'chase';
@@ -10117,7 +10141,8 @@ function updateOniAI(delta) {
                 var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
                 var tCX = Math.max(0, Math.min(GameState.mazeCols - 1, Math.floor(oni.lastKnownPos.x / CL)));
                 var tCZ = Math.max(0, Math.min(GameState.mazeRows - 1, Math.floor(oni.lastKnownPos.z / CL)));
-                var goal = { x: tCX, z: tCZ, floor: oni.currentFloor };
+                var goalFloor = (oni.lastKnownFloor != null) ? oni.lastKnownFloor : oni.currentFloor;
+                var goal = { x: tCX, z: tCZ, floor: goalFloor };
                 oni.path = bfsPathfind3D(floors, start, goal);
             }
             // If reached last known position, clear it
@@ -10174,7 +10199,7 @@ function updateOniAI(delta) {
                 oni.position.x += (dx / dist) * speed * delta;
                 oni.position.z += (dz / dist) * speed * delta;
             }
-        } else if (hasTargets && closestTargetDist > CL && sameFloor) {
+        } else if (hasTargets && closestTargetDist > CL && (sameFloor || oni.aiState === 'chase')) {
             // Path exhausted but target exists — force immediate BFS recalculation (NO beeline)
             var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
             var goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
