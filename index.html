@@ -4035,6 +4035,12 @@ function proceedJoinRoom(roomId) {
         // Listen for player changes
         roomRef.child('players').on('value', function(pSnap) {
             GameState.players = pSnap.val() || {};
+            // Auto-delete room when all players have left
+            var activeCount = Object.keys(GameState.players).filter(function(k) { return GameState.players[k]; }).length;
+            if (activeCount === 0) {
+                roomRef.remove();
+                return;
+            }
             updateLobbyPlayerList();
             refreshCharacterGrid();
             if (GameState.multiMode === 'teamBattle') {
@@ -4184,11 +4190,9 @@ function leaveLobby() {
         roomRef.child('selectedStage').off();
         if (GameState.playerIndex !== null) {
             roomRef.child('players/' + GameState.playerIndex).remove();
+            roomRef.child('playerPositions/' + GameState.playerIndex).remove();
         }
-        // If host, delete room
-        if (GameState.isHost) {
-            roomRef.remove();
-        }
+        // Room auto-deletes when all players leave (via players listener)
     }
     CharacterPreview.stopAll();
     GameState.roomId = null;
@@ -10657,6 +10661,24 @@ function goNextStage() {
 }
 
 function backToTitle() {
+    // Leave multiplayer room if in one
+    if (firebaseReady && GameState.roomId) {
+        var roomRef = database.ref('rooms/' + GameState.roomId);
+        SyncLayer.disconnect();
+        roomRef.child('players').off();
+        roomRef.child('status').off();
+        roomRef.child('teamAssignment').off();
+        roomRef.child('selectedStage').off();
+        if (GameState.playerIndex !== null) {
+            roomRef.child('players/' + GameState.playerIndex).remove();
+            roomRef.child('playerPositions/' + GameState.playerIndex).remove();
+        }
+        GameState.roomId = null;
+        GameState.playerIndex = null;
+        GameState.isHost = false;
+        GameState.players = {};
+        GameState.teamAssignment = {};
+    }
     showScreen('title-screen');
     document.getElementById('matrix-bg').style.display = '';
     document.getElementById('red-glow').style.display = '';
