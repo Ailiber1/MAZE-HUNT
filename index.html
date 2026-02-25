@@ -11624,54 +11624,76 @@ function checkWallCollision(newX, newZ, grid_unused) {
     const cols = GameState.mazeCols;
     const rows = GameState.mazeRows;
     const r = PLAYER_RADIUS;
+    const hw = WALL_THICK / 2; // half wall thickness
 
     // Clamp to maze bounds
     newX = Math.max(r, Math.min(cols * CL - r, newX));
     newZ = Math.max(r, Math.min(rows * CL - r, newZ));
 
-    // Check which cell(s) the player overlaps
-    const minCX = Math.max(0, Math.floor((newX - r) / CL));
-    const maxCX = Math.min(cols - 1, Math.floor((newX + r) / CL));
-    const minCY = Math.max(0, Math.floor((newZ - r) / CL));
-    const maxCY = Math.min(rows - 1, Math.floor((newZ + r) / CL));
+    // Use previous position to determine push-out direction
+    // camera may not exist yet during spawn validation — fallback to newX/newZ
+    var oldX = (typeof camera !== 'undefined' && camera && camera.position) ? camera.position.x : newX;
+    var oldZ = (typeof camera !== 'undefined' && camera && camera.position) ? camera.position.z : newZ;
 
-    for (let cy = minCY; cy <= maxCY; cy++) {
-        for (let cx = minCX; cx <= maxCX; cx++) {
-            const cell = grid[cy][cx];
-            const wallX = cx * CL;
-            const wallZ = cy * CL;
+    // Run collision resolution twice to handle corner cases (X fix may create new Z overlap)
+    for (var pass = 0; pass < 2; pass++) {
+        // Recalculate overlapping cells after each pass
+        var minCX = Math.max(0, Math.floor((newX - r) / CL));
+        var maxCX = Math.min(cols - 1, Math.floor((newX + r) / CL));
+        var minCY = Math.max(0, Math.floor((newZ - r) / CL));
+        var maxCY = Math.min(rows - 1, Math.floor((newZ + r) / CL));
 
-            // Top wall
-            if (cell.top) {
-                if (newZ - r < wallZ + WALL_THICK / 2 && newZ + r > wallZ - WALL_THICK / 2) {
-                    if (newX + r > wallX && newX - r < wallX + CL) {
-                        newZ = wallZ + WALL_THICK / 2 + r;
+        for (var cy = minCY; cy <= maxCY; cy++) {
+            for (var cx = minCX; cx <= maxCX; cx++) {
+                var cell = grid[cy][cx];
+                var cellX = cx * CL;
+                var cellZ = cy * CL;
+
+                // Top wall (Z = cellZ)
+                if (cell.top) {
+                    var wMin = cellZ - hw, wMax = cellZ + hw;
+                    if (newZ - r < wMax && newZ + r > wMin && newX + r > cellX && newX - r < cellX + CL) {
+                        // Push out based on which side the player came from
+                        if (oldZ >= cellZ) {
+                            newZ = wMax + r;
+                        } else {
+                            newZ = wMin - r;
+                        }
                     }
                 }
-            }
-            // Bottom wall
-            if (cell.bottom) {
-                const bz = wallZ + CL;
-                if (newZ + r > bz - WALL_THICK / 2 && newZ - r < bz + WALL_THICK / 2) {
-                    if (newX + r > wallX && newX - r < wallX + CL) {
-                        newZ = bz - WALL_THICK / 2 - r;
+                // Bottom wall (Z = cellZ + CL)
+                if (cell.bottom) {
+                    var bz = cellZ + CL;
+                    var wMin = bz - hw, wMax = bz + hw;
+                    if (newZ + r > wMin && newZ - r < wMax && newX + r > cellX && newX - r < cellX + CL) {
+                        if (oldZ <= bz) {
+                            newZ = wMin - r;
+                        } else {
+                            newZ = wMax + r;
+                        }
                     }
                 }
-            }
-            // Left wall
-            if (cell.left) {
-                if (newX - r < wallX + WALL_THICK / 2 && newX + r > wallX - WALL_THICK / 2) {
-                    if (newZ + r > wallZ && newZ - r < wallZ + CL) {
-                        newX = wallX + WALL_THICK / 2 + r;
+                // Left wall (X = cellX)
+                if (cell.left) {
+                    var wMin = cellX - hw, wMax = cellX + hw;
+                    if (newX - r < wMax && newX + r > wMin && newZ + r > cellZ && newZ - r < cellZ + CL) {
+                        if (oldX >= cellX) {
+                            newX = wMax + r;
+                        } else {
+                            newX = wMin - r;
+                        }
                     }
                 }
-            }
-            // Right wall
-            if (cell.right) {
-                const rx = wallX + CL;
-                if (newX + r > rx - WALL_THICK / 2 && newX - r < rx + WALL_THICK / 2) {
-                    if (newZ + r > wallZ && newZ - r < wallZ + CL) {
-                        newX = rx - WALL_THICK / 2 - r;
+                // Right wall (X = cellX + CL)
+                if (cell.right) {
+                    var rx = cellX + CL;
+                    var wMin = rx - hw, wMax = rx + hw;
+                    if (newX + r > wMin && newX - r < wMax && newZ + r > cellZ && newZ - r < cellZ + CL) {
+                        if (oldX <= rx) {
+                            newX = wMin - r;
+                        } else {
+                            newX = wMax + r;
+                        }
                     }
                 }
             }
@@ -11730,12 +11752,19 @@ function updatePlayerMovement(delta) {
     if (dir.lengthSq() > 0) {
         dir.normalize();
         dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), GameState.playerRotationY);
-        const newX = camera.position.x + dir.x * speed * delta;
-        const newZ = camera.position.z + dir.z * speed * delta;
-        var result = checkWallCollision(newX, newZ, grid);
-        // Stair entry direction is enforced by Y-gate in updatePlayerY (not walls).
-        camera.position.x = result.x;
-        camera.position.z = result.z;
+        var totalDist = speed * delta;
+        // Sub-step movement: break into small steps to prevent tunneling through walls
+        var MAX_STEP = PLAYER_RADIUS; // max distance per sub-step = player radius
+        var steps = Math.ceil(totalDist / MAX_STEP);
+        var stepDist = totalDist / steps;
+        for (var si = 0; si < steps; si++) {
+            var newX = camera.position.x + dir.x * stepDist;
+            var newZ = camera.position.z + dir.z * stepDist;
+            var result = checkWallCollision(newX, newZ, grid);
+            // Stair entry direction is enforced by Y-gate in updatePlayerY (not walls).
+            camera.position.x = result.x;
+            camera.position.z = result.z;
+        }
     }
 
     // Sync camera rotation
