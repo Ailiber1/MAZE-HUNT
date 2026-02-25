@@ -10188,7 +10188,7 @@ function updateOniY(oni) {
 function placeExit(cols, rows, stageId, numFloors) {
     let exitFloor = 0;
     if (stageId === 4) exitFloor = 1;
-    else if (stageId === 5) exitFloor = numFloors - 1;
+    else if (stageId === 5) exitFloor = Math.floor(Math.random() * numFloors);
     else if (stageId === 'hidden') exitFloor = numFloors - 1;
     else if (stageId === 3) exitFloor = Math.max(0, numFloors - 1); // Stage 3: top floor
     else exitFloor = 0;
