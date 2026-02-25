@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>MAZE HUNT</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
@@ -47,8 +47,12 @@ body {
     font-family: 'Share Tech Mono', monospace;
     overflow: hidden;
     width: 100vw; height: 100vh;
+    height: 100dvh;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
+    overscroll-behavior: none;
+    touch-action: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* ============================================
@@ -592,7 +596,7 @@ body {
 }
 #hud-stamina {
     position: absolute;
-    bottom: 20px; left: 50%;
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px)); left: 50%;
     transform: translateX(-50%);
     width: 220px; height: 8px;
     background: rgba(0,0,0,0.7);
@@ -1750,7 +1754,7 @@ body {
 }
 #joystick-zone {
     position: absolute;
-    left: 0; bottom: 0;
+    left: 0; bottom: env(safe-area-inset-bottom, 0px);
     width: 50%; height: 60%;
     pointer-events: auto;
     touch-action: none;
@@ -1832,7 +1836,8 @@ body {
 }
 #mobile-actions {
     position: absolute;
-    right: 20px; bottom: 120px;
+    right: calc(20px + env(safe-area-inset-right, 0px));
+    bottom: calc(120px + env(safe-area-inset-bottom, 0px));
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -11369,7 +11374,7 @@ function cleanupMobileControls() {
     if (actions) actions.innerHTML = '';
 }
 
-/* --- Prevent Scroll/Zoom on Mobile --- */
+/* --- Prevent Scroll/Zoom on Mobile (including Safari pinch) --- */
 document.addEventListener('touchmove', (e) => {
     if (GameState.gameActive) e.preventDefault();
 }, { passive: false });
@@ -11382,6 +11387,11 @@ document.addEventListener('touchend', (e) => {
     }
     _lastTapTime = now;
 }, { passive: false });
+
+// Safari: prevent pinch-to-zoom gesture
+document.addEventListener('gesturestart', (e) => { e.preventDefault(); }, { passive: false });
+document.addEventListener('gesturechange', (e) => { e.preventDefault(); }, { passive: false });
+document.addEventListener('gestureend', (e) => { e.preventDefault(); }, { passive: false });
 
 /* --- Wall Collision --- */
 function checkWallCollision(newX, newZ, grid_unused) {
