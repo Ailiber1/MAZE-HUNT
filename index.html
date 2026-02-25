@@ -5350,13 +5350,18 @@ function getMultiStageConfig(mode, stageNum) {
     } else if (mode === 'coop') {
         var cs = COOP_STAGES[Math.min(stageNum - 1, COOP_STAGES.length - 1)];
         var cparts = cs.size.split('x');
+        // Scale difficulty by player count (base = 2 players)
+        var pCount = Object.keys(GameState.players).length;
+        var extraPlayers = Math.max(0, pCount - 2);
+        var bonusOni = Math.floor(extraPlayers * 1.5); // +1~2 oni per extra player
+        var speedBonus = extraPlayers * 0.05;           // +0.05x speed per extra player
         return {
             cols: parseInt(cparts[0]),
             rows: parseInt(cparts[1]),
             floors: cs.floors,
-            oni: cs.oni,
+            oni: cs.oni + bonusOni,
             time: cs.time,
-            speedMul: cs.speedMul
+            speedMul: Math.round((cs.speedMul + speedBonus) * 100) / 100
         };
     }
     return { cols: 10, rows: 10, floors: 1, oni: 1, time: 90, speedMul: 1.0 };
