@@ -148,6 +148,10 @@ body {
     96%     { opacity: 1.0; }
     100%    { opacity: 0.4; }
 }
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+}
 
 /* ============================================
    Catchcopy
@@ -2312,6 +2316,7 @@ body {
             <div id="hud-status"></div>
             <div id="hud-objective"></div>
             <div id="hud-enemy-dist"></div>
+            <div id="hud-idle-warning" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:18px;font-weight:bold;text-shadow:0 0 10px currentColor;z-index:800;pointer-events:none;animation:pulse 1s infinite;"></div>
             <div id="hud-stair-debug" style="position:absolute;top:100px;left:12px;color:#0f0;font-size:11px;font-family:monospace;white-space:pre;pointer-events:none;text-shadow:0 0 2px #000;display:none;z-index:999;"></div>
             <div id="hud-bpm"></div>
             <div id="minimap-container"><canvas id="minimap-canvas" width="180" height="180"></canvas></div>
@@ -5665,6 +5670,8 @@ function launchMultiGame(config) {
     GameState.captureInProgress = false;
     GameState.nearestOniDistance = Infinity;
     GameState.currentBPM = 72;
+    GameState._prevPosX = 0; GameState._prevPosZ = 0;
+    GameState._idleTime = 0; GameState.idlePenalty = false;
 
     // Reset catch diagnostic counter for new game
     if (typeof checkCatch === 'function') checkCatch._diagCount = 0;
@@ -9487,12 +9494,15 @@ function updateOniAI(delta) {
     // Build list of alive targets (local player + alive remote players)
     var oniTargets = [];
     if (GameState.alive) {
+        var playerMoving = GameState.moveForward || GameState.moveBackward;
+        // Idle penalty: stopped player emits sound as if walking (ONI can detect)
+        var idleSound = GameState.idlePenalty && !playerMoving;
         oniTargets.push({
             x: camera.position.x,
             z: camera.position.z,
             floor: GameState.playerCurrentFloor,
-            isMoving: GameState.moveForward || GameState.moveBackward,
-            isSprinting: GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0 && (GameState.moveForward || GameState.moveBackward)
+            isMoving: playerMoving || idleSound,
+            isSprinting: GameState.sprint && !GameState.sprintLocked && GameState.stamina > 0 && playerMoving
         });
     }
     // In multiplayer, also consider alive remote players
@@ -10309,7 +10319,8 @@ function updateGameHUD() {
         var exitFloorLabel = (GameState.exitFloor + 1) + 'F';
         objEl.textContent = lang.obj_exit + ' ' + exitFloorLabel + ' \u2014 ' + exitDist.toFixed(1) + 'm';
     } else if (objEl && GameState.gameMode === 'scoreAttack') {
-        objEl.textContent = lang.score + ': ' + Math.floor(GameState.score);
+        var moveLabel = GameState.language === 'ja' ? '移動スコア' : 'Move Score';
+        objEl.textContent = moveLabel + ': ' + Math.floor(GameState.score);
     }
 
     // Update danger frame
@@ -10536,7 +10547,8 @@ function showScoreResult() {
 
     titleEl.textContent = lang.caught_big;
     titleEl.className = 'gameover';
-    infoEl.innerHTML = lang.score + ': ' + Math.floor(GameState.score) + '<br>' + lang.survivalTime + ': ' + formatTime(GameState.totalTime);
+    var moveScoreLabel = GameState.language === 'ja' ? '移動スコア' : 'Move Score';
+    infoEl.innerHTML = moveScoreLabel + ': ' + Math.floor(GameState.score) + '<br>' + lang.survivalTime + ': ' + formatTime(GameState.totalTime);
 
     // Save to Firebase (survival time is the ranking metric)
     if (firebaseReady && GameState.username && !GameState.isGuest) {
@@ -13069,10 +13081,52 @@ function gameLoop() {
     // Phase 7: Dust particles
     updateDustParticles(delta);
 
-    // Score attack: accumulate score
+    // Score attack: movement-based scoring + idle penalty
     if (GameState.gameMode === 'scoreAttack' && GameState.alive) {
-        GameState.score += delta;
         GameState.totalTime += delta;
+
+        // Calculate movement distance this frame
+        var px = camera.position.x, pz = camera.position.z;
+        if (GameState._prevPosX === 0 && GameState._prevPosZ === 0) {
+            GameState._prevPosX = px; GameState._prevPosZ = pz;
+        }
+        var dx = px - GameState._prevPosX;
+        var dz = pz - GameState._prevPosZ;
+        var moveDist = Math.sqrt(dx * dx + dz * dz);
+        GameState._prevPosX = px; GameState._prevPosZ = pz;
+
+        // Score = accumulated movement distance (1 unit = 1 point)
+        if (moveDist > 0.01) {
+            GameState.score += moveDist * 10; // 10 points per unit moved
+            GameState._idleTime = 0;
+            GameState.idlePenalty = false;
+        } else {
+            // Player is stationary
+            GameState._idleTime += delta;
+        }
+
+        // Idle penalty: after 5 seconds stopped, emit sound (ONI can detect)
+        var IDLE_PENALTY_THRESHOLD = 5.0;
+        if (GameState._idleTime >= IDLE_PENALTY_THRESHOLD) {
+            GameState.idlePenalty = true;
+        }
+
+        // Show/hide idle warning on HUD
+        var idleWarn = document.getElementById('hud-idle-warning');
+        if (idleWarn) {
+            if (GameState._idleTime >= IDLE_PENALTY_THRESHOLD - 2) {
+                idleWarn.style.display = 'block';
+                if (GameState.idlePenalty) {
+                    idleWarn.textContent = GameState.language === 'ja' ? '⚠ 停止中！鬼に感知されています！' : '⚠ IDLE! ONI detects you!';
+                    idleWarn.style.color = '#ff3333';
+                } else {
+                    idleWarn.textContent = GameState.language === 'ja' ? '⚠ まもなく鬼に感知されます...' : '⚠ ONI will detect you soon...';
+                    idleWarn.style.color = '#ffaa00';
+                }
+            } else {
+                idleWarn.style.display = 'none';
+            }
+        }
 
         // Phase 7: Score attack ambient layers
         AmbientSoundManager.addScoreAttackLayer(GameState.totalTime);
@@ -13310,6 +13364,8 @@ function startGame(stageId) {
     GameState.captureInProgress = false;
     GameState.nearestOniDistance = Infinity;
     GameState.currentBPM = 72;
+    GameState._prevPosX = 0; GameState._prevPosZ = 0;
+    GameState._idleTime = 0; GameState.idlePenalty = false;
 
     // Set player start position
     camera.position.set(CL * 1.5, PLAYER_HEIGHT, CL * 1.5);
@@ -13381,6 +13437,9 @@ function cleanupGame() {
     if (pauseScreen) pauseScreen.classList.remove('active');
 
     GameState.gameActive = false;
+    GameState.idlePenalty = false;
+    var idleWarn = document.getElementById('hud-idle-warning');
+    if (idleWarn) idleWarn.style.display = 'none';
     GameState.syncedOniModelIds = null; // Clear synced ONI model IDs for next game
     // Clear background loop if running (multiplayer host tab hidden)
     if (_bgLoopInterval) {
