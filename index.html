@@ -2434,8 +2434,7 @@ body {
         <button class="modal-close" onclick="hideModal('ranking-modal')">&times;</button>
         <div class="modal-title">RANKING</div>
         <div class="ranking-tabs">
-            <button class="ranking-tab active" data-tab="story">ストーリー</button>
-            <button class="ranking-tab" data-tab="score">スコアアタック</button>
+            <button class="ranking-tab active" data-tab="score">スコアアタック</button>
             <button class="ranking-tab" data-tab="multi">マルチ個人戦</button>
             <button class="ranking-tab" data-tab="coop">協力</button>
         </div>
@@ -3660,7 +3659,7 @@ function buildStageList() {
 // Path: {gameMode}Stats/{deviceId} — overwrites only if new score is higher
 function saveRanking(entry) {
     if (!firebaseReady || !GameState.deviceId) return;
-    var pathMap = { story: 'storyStats', scoreAttack: 'scoreStats', coop: 'coopStats' };
+    var pathMap = { scoreAttack: 'scoreStats', coop: 'coopStats' };
     var basePath = pathMap[entry.gameMode];
     if (!basePath) return;
     var ref = database.ref(basePath + '/' + GameState.deviceId);
@@ -3734,7 +3733,7 @@ function loadRankings(gameMode) {
     }
 
     // Other modes: load from per-player stats (best score per player)
-    var pathMap = { story: 'storyStats', scoreAttack: 'scoreStats', coop: 'coopStats' };
+    var pathMap = { scoreAttack: 'scoreStats', coop: 'coopStats' };
     var basePath = pathMap[gameMode];
     if (!basePath) {
         // Fallback: try old rankings path
@@ -6519,7 +6518,7 @@ function initButtons() {
     // Ranking
     document.getElementById('btn-ranking').addEventListener('click', () => {
         showModal('ranking-modal');
-        loadRankings('story');
+        loadRankings('scoreAttack');
     });
 
     // Ranking tabs
@@ -6528,7 +6527,7 @@ function initButtons() {
             document.querySelectorAll('.ranking-tab').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             const mode = tab.dataset.tab;
-            const modeMap = { story: 'story', score: 'scoreAttack', multi: 'freeForAll', coop: 'coop' };
+            const modeMap = { score: 'scoreAttack', multi: 'freeForAll', coop: 'coop' };
             loadRankings(modeMap[mode] || mode);
         });
     });
@@ -10526,14 +10525,7 @@ function onStageCleared() {
             bestStage: Math.max(stageId, 0),
         });
 
-        // Ranking registration for story mode
-        saveRanking({
-            username: GameState.username,
-            score: Math.floor(GameState.timeRemaining),
-            gameMode: 'story',
-            stage: GameState.currentStage,
-            timestamp: firebase.database.ServerValue.TIMESTAMP,
-        });
+        // Note: Story mode has no ranking (progression-based, not competitive)
     }
 
     // Check if all stages cleared
