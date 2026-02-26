@@ -2535,6 +2535,11 @@ const firebaseConfig = {
 let database = null;
 let firebaseReady = false;
 
+function escapeHTML(str) {
+    if (typeof str !== 'string') return str;
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function initFirebase() {
     try {
         if (typeof firebase !== 'undefined' && firebaseConfig.apiKey !== 'YOUR_API_KEY') {
@@ -3854,7 +3859,7 @@ function loadRankings(gameMode) {
                 listEl.innerHTML = entries.map((e, i) => {
                     var wins = e.wins || 0;
                     var winsLabel = lang ? wins + '勝' : wins + (wins === 1 ? ' Win' : ' Wins');
-                    return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${winsLabel}</span></div>`;
+                    return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${escapeHTML(e.username)}</span><span class="score">${winsLabel}</span></div>`;
                 }).join('');
             })
             .catch(() => {
@@ -3885,7 +3890,7 @@ function loadRankings(gameMode) {
             var scoreLabel = lang === 'ja' ? 'スコア' : 'Score';
             listEl.innerHTML = entries.map((e, i) => {
                 var scoreVal = e.score || 0;
-                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${e.username}</span><span class="score">${scoreVal.toLocaleString()}</span></div>`;
+                return `<div class="ranking-row"><span class="rank">${i + 1}</span><span class="name">${escapeHTML(e.username)}</span><span class="score">${scoreVal.toLocaleString()}</span></div>`;
             }).join('');
         })
         .catch(() => {
@@ -6265,7 +6270,7 @@ function showMultiStageResult() {
                 : (GameState.language === 'ja' ? '捕獲' : 'CAUGHT');
             resultRows += '<div class="multi-result-row' + (r.isWinner ? ' winner' : '') + '">' +
                 '<span class="multi-result-rank">#' + (i + 1) + '</span>' +
-                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[r.index] + '">' + r.name + '</span>' +
+                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[r.index] + '">' + escapeHTML(r.name) + '</span>' +
                 '<span class="multi-result-status">' + statusLabel + '</span>' +
                 '<span class="multi-result-pts">' + timeStr + '</span></div>';
         });
@@ -6356,7 +6361,7 @@ function showMultiResult() {
             var timeStr = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
             rows += '<div class="multi-result-row' + (r.isWinner ? ' winner' : '') + '">' +
                 '<span class="multi-result-rank">#' + (i + 1) + '</span>' +
-                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[r.index] + '">' + r.name + '</span>' +
+                '<span class="multi-result-name" style="color:' + PLAYER_COLOR_HEX[r.index] + '">' + escapeHTML(r.name) + '</span>' +
                 '<span class="multi-result-pts">' + timeStr + '</span></div>';
         });
         infoEl.innerHTML = '<div id="multi-result-table">' + rows + '</div>';
