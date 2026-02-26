@@ -7491,34 +7491,47 @@ function placeStairs(floors, cols, rows, numStairs) {
 
         let cell = null;
         let attempts = 0;
+        var minStairDist = 3; // Relax distance if too many failures
 
-        while (!cell && attempts < 1000) {
+        while (!cell && attempts < 2000) {
             attempts++;
+            // After 1000 attempts, relax distance constraint
+            if (attempts === 1000) minStairDist = 2;
+            // After 1500 attempts, remove distance constraint entirely
+            if (attempts === 1500) minStairDist = 0;
+
             const x = Math.floor(Math.random() * cols);
             const z = Math.floor(Math.random() * rows);
 
             // Must not be boundary
             if (x === 0 || z === 0 || x >= cols - 1 || z >= rows - 1) continue;
 
-            // Not a dead end on either floor
-            if (isDeadEnd(floors[fromFloor], x, z) || isDeadEnd(floors[toFloor], x, z)) continue;
+            // Not a dead end on either floor (relax after 1500 attempts)
+            if (attempts < 1500) {
+                if (isDeadEnd(floors[fromFloor], x, z) || isDeadEnd(floors[toFloor], x, z)) continue;
+            }
 
             // Not already a stair
-            if (floors[fromFloor][z][x].isStairs) continue;
+            if (floors[fromFloor][z][x].isStairs || floors[toFloor][z][x].isStairs) continue;
 
-            // Minimum 3-cell distance from other stairs
-            let tooClose = false;
-            for (const s of stairs) {
-                const dx = Math.abs(s.x - x);
-                const dz = Math.abs(s.z - z);
-                if (dx + dz < 3) { tooClose = true; break; }
+            // Minimum distance from other stairs (relaxed progressively)
+            if (minStairDist > 0) {
+                let tooClose = false;
+                for (const s of stairs) {
+                    const dx = Math.abs(s.x - x);
+                    const dz = Math.abs(s.z - z);
+                    if (dx + dz < minStairDist) { tooClose = true; break; }
+                }
+                if (tooClose) continue;
             }
-            if (tooClose) continue;
 
             cell = { x, z };
         }
 
-        if (!cell) continue;
+        if (!cell) {
+            console.warn('[STAIRS] Failed to place stair ' + i + ' after 2000 attempts (fromFloor=' + fromFloor + ')');
+            continue;
+        }
 
         // Choose stair direction based on entry accessibility
         // For dir 'X': lower floor entry from opposite(X), upper floor entry from X
@@ -7571,6 +7584,43 @@ function placeStairs(floors, cols, rows, numStairs) {
 
         stairs.push({ fromFloor, toFloor, x: cell.x, z: cell.z, direction: dir });
     }
+
+    // Guarantee: every adjacent floor pair must have at least 1 stair
+    for (var fp = 0; fp < floors.length - 1; fp++) {
+        var hasStair = stairs.some(function(s) { return s.fromFloor === fp; });
+        if (!hasStair) {
+            console.warn('[STAIRS] No stair for floor pair ' + fp + '->' + (fp + 1) + ', forcing placement');
+            // Brute-force scan for any valid cell
+            for (var z = 1; z < rows - 1; z++) {
+                for (var x = 1; x < cols - 1; x++) {
+                    if (floors[fp][z][x].isStairs || floors[fp + 1][z][x].isStairs) continue;
+                    var fCell = floors[fp][z][x];
+                    var openings = 0;
+                    if (!fCell.top) openings++;
+                    if (!fCell.bottom) openings++;
+                    if (!fCell.left) openings++;
+                    if (!fCell.right) openings++;
+                    if (openings < 2) continue;
+                    // Place stair here
+                    var fDir = directions[Math.floor(Math.random() * directions.length)];
+                    var fOpp = { north: 'south', south: 'north', east: 'west', west: 'east' }[fDir];
+                    floors[fp][z][x].isStairs = true;
+                    floors[fp][z][x].connectsTo = { floor: fp + 1, x: x, z: z };
+                    floors[fp][z][x].stairDirection = fDir;
+                    floors[fp + 1][z][x].isStairs = true;
+                    floors[fp + 1][z][x].connectsTo = { floor: fp, x: x, z: z };
+                    floors[fp + 1][z][x].stairDirection = fOpp;
+                    removeAllStairWalls(floors[fp], cols, rows, x, z);
+                    removeAllStairWalls(floors[fp + 1], cols, rows, x, z);
+                    stairs.push({ fromFloor: fp, toFloor: fp + 1, x: x, z: z, direction: fDir });
+                    console.log('[STAIRS] Forced stair at (' + x + ',' + z + ') floor ' + fp + '->' + (fp + 1));
+                    break;
+                }
+                if (stairs.some(function(s) { return s.fromFloor === fp; })) break;
+            }
+        }
+    }
+
     return stairs;
 }
 
