@@ -10180,13 +10180,48 @@ function updateOniAI(delta) {
         oni.pathTimer -= delta;
 
         if (oni.aiState === 'chase') {
-            // Chase: BFS directly to player position
+            // Chase: BFS with flanking tactics (pincer attack)
             var recalcInterval = isLunging ? ONI_CONFIG.lungeRecalcInterval : ONI_CONFIG.pathRecalcInterval;
             if (oni.pathTimer <= 0) {
                 oni.pathTimer = recalcInterval;
                 var start = { x: oni.cellX, z: oni.cellZ, floor: oni.currentFloor };
                 var goal = { x: playerCellX, z: playerCellZ, floor: playerFloor };
-                oni.path = bfsPathfind3D(floors, start, goal);
+
+                // Flanking: assign different approach angles to each oni
+                // oni index 0 = direct chase, 1+ = flank from different directions
+                var oniIdx = GameState.onis.indexOf(oni);
+                var chasingCount = 0;
+                for (var ci = 0; ci < GameState.onis.length; ci++) {
+                    if (GameState.onis[ci].aiState === 'chase') chasingCount++;
+                }
+                // Only flank if 2+ oni chasing AND not in lunge range
+                if (chasingCount >= 2 && !isLunging && oniIdx > 0 && sameFloor) {
+                    // Flank offsets: circle around player at ~3 cells distance
+                    var flankDist = 3;
+                    var flankAngle = (oniIdx / chasingCount) * Math.PI * 2;
+                    var flankX = playerCellX + Math.round(Math.cos(flankAngle) * flankDist);
+                    var flankZ = playerCellZ + Math.round(Math.sin(flankAngle) * flankDist);
+                    // Clamp to grid bounds
+                    flankX = Math.max(0, Math.min(GameState.mazeCols - 1, flankX));
+                    flankZ = Math.max(0, Math.min(GameState.mazeRows - 1, flankZ));
+                    // Check if flank cell is reachable (not inside a wall)
+                    var flankGrid = floors[playerFloor];
+                    if (flankGrid && flankGrid[flankZ] && flankGrid[flankZ][flankX]) {
+                        var flankGoal = { x: flankX, z: flankZ, floor: playerFloor };
+                        var flankPath = bfsPathfind3D(floors, start, flankGoal);
+                        if (flankPath.length > 0) {
+                            oni.path = flankPath;
+                        } else {
+                            // Fallback: direct chase
+                            oni.path = bfsPathfind3D(floors, start, goal);
+                        }
+                    } else {
+                        oni.path = bfsPathfind3D(floors, start, goal);
+                    }
+                } else {
+                    // Direct chase (oni 0, lunge range, or only 1 chaser)
+                    oni.path = bfsPathfind3D(floors, start, goal);
+                }
             }
         } else if (oni.aiState === 'alert' && oni.lastKnownPos) {
             // Alert: BFS to last known player position
